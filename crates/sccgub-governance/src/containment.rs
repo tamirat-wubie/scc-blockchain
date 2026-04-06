@@ -54,13 +54,18 @@ impl NodeBehaviorProfile {
     }
 
     /// Compute the hostility index: negative / (positive + epsilon).
+    /// Uses split-multiply to prevent overflow.
     pub fn hostility_index(&self, epsilon: TensionValue) -> TensionValue {
         let denominator = self.positive_delta + epsilon;
-        if denominator.raw() == 0 {
+        if denominator.raw() <= 0 {
             return TensionValue::ZERO;
         }
-        // Fixed-point division: (negative * SCALE) / denominator.
-        TensionValue(self.negative_delta.raw() * TensionValue::SCALE / denominator.raw())
+        let d = denominator.raw();
+        // Split-multiply: (n / d) * SCALE + (n % d) * SCALE / d
+        let n = self.negative_delta.raw();
+        let whole = (n / d).saturating_mul(TensionValue::SCALE);
+        let frac = (n % d).saturating_mul(TensionValue::SCALE) / d;
+        TensionValue(whole.saturating_add(frac))
     }
 }
 
@@ -85,7 +90,7 @@ impl ContainmentState {
             .entry(node_id)
             .or_insert_with(|| NodeBehaviorProfile::new(node_id));
         profile.positive_delta = profile.positive_delta + delta;
-        profile.valid_count += 1;
+        profile.valid_count = profile.valid_count.saturating_add(1);
     }
 
     /// Record an invalid/destabilizing transition from a node.
@@ -95,7 +100,7 @@ impl ContainmentState {
             .entry(node_id)
             .or_insert_with(|| NodeBehaviorProfile::new(node_id));
         profile.negative_delta = profile.negative_delta + delta;
-        profile.invalid_count += 1;
+        profile.invalid_count = profile.invalid_count.saturating_add(1);
     }
 
     /// Evaluate all nodes and apply/release containment.

@@ -30,13 +30,18 @@ pub fn validate_transition(
         }
     }
 
-    // Check nonce for replay protection.
+    // Nonce must be >= 1 (nonce 0 is not valid).
+    if tx.nonce == 0 {
+        errors.push("Nonce must be >= 1".into());
+    }
+
+    // Check nonce for replay protection (strictly increasing).
     let last_nonce = state
         .agent_nonces
         .get(&tx.actor.agent_id)
         .copied()
         .unwrap_or(0);
-    if tx.nonce <= last_nonce && last_nonce > 0 {
+    if tx.nonce <= last_nonce {
         errors.push(format!(
             "Nonce replay: {} <= last seen {}",
             tx.nonce, last_nonce
@@ -74,7 +79,8 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
         }
         sccgub_types::transition::OperationPayload::Noop => [0u8; 32],
         _ => {
-            let serialized = serde_json::to_vec(&tx.payload).unwrap_or_default();
+            let serialized = serde_json::to_vec(&tx.payload)
+                .expect("canonical_tx_bytes: payload serialization cannot fail");
             sccgub_crypto::hash::blake3_hash(&serialized)
         }
     };
@@ -86,7 +92,7 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
         &tx.nonce,
         &payload_tag,
     ))
-    .unwrap_or_default()
+    .expect("canonical_tx_bytes: serialization of primitive types cannot fail")
 }
 
 #[cfg(test)]

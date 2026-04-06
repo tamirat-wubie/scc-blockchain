@@ -31,8 +31,9 @@ impl CausalTimestamp {
     }
 
     /// Create a successor timestamp from a parent.
-    /// `wall_hint` is passed explicitly to keep the type deterministic.
-    pub fn successor(&self, node_id: NodeId, parent_hash: Hash) -> Self {
+    /// `wall_hint` is passed explicitly to keep the type fully deterministic
+    /// (no SystemTime calls inside consensus-critical types).
+    pub fn successor(&self, node_id: NodeId, parent_hash: Hash, wall_hint: u64) -> Self {
         let epoch = self.lamport_counter.saturating_add(1);
         let mut vc = self.vector_clock.clone();
         vc.increment(node_id, epoch);
@@ -40,12 +41,17 @@ impl CausalTimestamp {
             lamport_counter: epoch,
             vector_clock: vc,
             causal_depth: self.causal_depth.saturating_add(1),
-            wall_hint: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            wall_hint,
             parent_timestamp_hash: parent_hash,
         }
+    }
+
+    /// Convenience: get current wall clock time as seconds since epoch.
+    pub fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 }
 
@@ -92,20 +98,15 @@ impl BoundedVectorClock {
     }
 
     /// Remove least recently active entries to stay within max_size.
+    /// O(n log n) via sort + truncate instead of O(n^2) repeated min-scan.
     fn prune(&mut self) {
-        while self.entries.len() as u32 > self.max_size {
-            if let Some(oldest_idx) = self
-                .entries
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, (_, e))| e.last_active_epoch)
-                .map(|(i, _)| i)
-            {
-                self.entries.remove(oldest_idx);
-            } else {
-                break;
-            }
+        if self.entries.len() as u32 <= self.max_size {
+            return;
         }
+        // Sort by last_active_epoch descending — keep the most recently active.
+        self.entries
+            .sort_by(|a, b| b.1.last_active_epoch.cmp(&a.1.last_active_epoch));
+        self.entries.truncate(self.max_size as usize);
     }
 
     /// Merge with another vector clock (component-wise max).
@@ -142,7 +143,7 @@ mod tests {
         let genesis = CausalTimestamp::genesis();
         let node_id = [1u8; 32];
         let parent_hash = [2u8; 32];
-        let next = genesis.successor(node_id, parent_hash);
+        let next = genesis.successor(node_id, parent_hash, 1000);
         assert_eq!(next.lamport_counter, 1);
         assert_eq!(next.causal_depth, 1);
         assert_eq!(next.parent_timestamp_hash, parent_hash);
@@ -161,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_json_roundtrip() {
-        let ts = CausalTimestamp::genesis().successor([1u8; 32], [2u8; 32]);
+        let ts = CausalTimestamp::genesis().successor([1u8; 32], [2u8; 32], 12345);
         let json = serde_json::to_string(&ts).unwrap();
         let ts2: CausalTimestamp = serde_json::from_str(&json).unwrap();
         assert_eq!(ts, ts2);

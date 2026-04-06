@@ -29,6 +29,12 @@ impl EmergencyPolicy {
         if self.emergency_max_txs == 0 {
             return Err("emergency_max_txs must be > 0".into());
         }
+        if self.normal_max_txs == 0 {
+            return Err("normal_max_txs must be > 0".into());
+        }
+        if self.normal_max_txs < self.emergency_max_txs {
+            return Err("normal_max_txs must be >= emergency_max_txs".into());
+        }
         Ok(())
     }
 }

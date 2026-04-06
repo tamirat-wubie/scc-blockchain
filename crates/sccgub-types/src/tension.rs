@@ -28,16 +28,19 @@ impl TensionValue {
     }
 
     /// Multiply two tension values (fixed-point multiplication).
-    /// Uses widening multiplication to avoid intermediate overflow.
+    /// Uses unsigned absolute values to handle negative operands correctly,
+    /// and split-multiply to avoid intermediate overflow.
     pub fn mul_fp(self, other: Self) -> Self {
-        // Use i128 division approach: (a * b) / SCALE
-        // To avoid overflow, compute (a / SCALE) * b + (a % SCALE) * b / SCALE
         let a = self.0;
         let b = other.0;
-        let whole = (a / Self::SCALE).saturating_mul(b);
-        let frac_numer = (a % Self::SCALE).saturating_mul(b);
-        let frac = frac_numer / Self::SCALE;
-        Self(whole.saturating_add(frac))
+        let sign: i128 = if (a < 0) ^ (b < 0) { -1 } else { 1 };
+        let a_abs = a.unsigned_abs();
+        let b_abs = b.unsigned_abs();
+        let scale = Self::SCALE as u128;
+        let whole = (a_abs / scale).saturating_mul(b_abs);
+        let frac = (a_abs % scale).saturating_mul(b_abs) / scale;
+        let result = whole.saturating_add(frac).min(i128::MAX as u128) as i128;
+        Self(result.saturating_mul(sign))
     }
 
     /// Saturating addition.

@@ -72,18 +72,13 @@ fn create_write_tx(
         value: data.to_vec(),
     };
 
-    let target = addr.to_vec();
-    // Sign canonical bytes: (agent_id, target, nonce) — matches validate.rs::canonical_tx_bytes.
-    let canonical = serde_json::to_vec(&(&agent.agent_id, &target, &nonce)).unwrap();
-    let tx_id = blake3_hash(&canonical);
-    let signature = sign(key, &canonical);
-
-    SymbolicTransition {
-        tx_id,
+    // Build tx first, then sign using canonical_tx_bytes for consistency.
+    let mut tx = SymbolicTransition {
+        tx_id: [0u8; 32],
         actor: agent.clone(),
         intent: TransitionIntent {
             kind: TransitionKind::StateWrite,
-            target,
+            target: addr.to_vec(),
             declared_purpose: "Integration test write".into(),
         },
         preconditions: vec![],
@@ -92,8 +87,12 @@ fn create_write_tx(
         causal_chain: vec![],
         wh_binding_intent: intent,
         nonce,
-        signature,
-    }
+        signature: vec![],
+    };
+    let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+    tx.tx_id = blake3_hash(&canonical);
+    tx.signature = sign(key, &canonical);
+    tx
 }
 
 /// Helper: build a minimal valid block.
@@ -107,7 +106,7 @@ fn build_test_block(
 ) -> Block {
     let validator_id = blake3_hash(validator_key.verifying_key().as_bytes());
     let chain_id = blake3_hash(b"test-chain");
-    let timestamp = parent_timestamp.successor(validator_id, blake3_hash(&parent_id));
+    let timestamp = parent_timestamp.successor(validator_id, blake3_hash(&parent_id), 0);
     let seal = MfidelAtomicSeal::from_height(height);
 
     let tx_bytes: Vec<&[u8]> = transitions.iter().map(|tx| tx.tx_id.as_slice()).collect();
@@ -322,8 +321,8 @@ fn test_causal_timestamp_ordering() {
     let genesis_ts = CausalTimestamp::genesis();
     let node_id = [1u8; 32];
 
-    let ts1 = genesis_ts.successor(node_id, blake3_hash(b"parent1"));
-    let ts2 = ts1.successor(node_id, blake3_hash(b"parent2"));
+    let ts1 = genesis_ts.successor(node_id, blake3_hash(b"parent1"), 100);
+    let ts2 = ts1.successor(node_id, blake3_hash(b"parent2"), 200);
 
     // Lamport counter must strictly increase.
     assert!(ts1.lamport_counter > genesis_ts.lamport_counter);

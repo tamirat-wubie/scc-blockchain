@@ -265,18 +265,19 @@ fn phase_execution(block: &Block) -> PhiPhaseResult {
 
 fn phase_body(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     // Block-only: check chain homeostasis — tension must not grow unboundedly (INV-5).
-    let tension_delta = block.header.tension_after - block.header.tension_before;
-    let within_budget = tension_delta <= state.state.tension_field.budget.current_budget;
+    // Use spec formula directly: tension_after <= tension_before + budget.
+    let budget = state.state.tension_field.budget.current_budget;
+    let within_budget = block.header.tension_after <= block.header.tension_before + budget;
 
     PhiPhaseResult {
         phase: PhiPhase::Body,
         passed: within_budget,
         details: if within_budget {
-            format!("Tension delta {} within budget", tension_delta)
+            format!("Tension {} within budget", block.header.tension_after)
         } else {
             format!(
-                "Tension delta {} EXCEEDS budget {}",
-                tension_delta, state.state.tension_field.budget.current_budget
+                "Tension {} exceeds {} + budget {}",
+                block.header.tension_after, block.header.tension_before, budget
             )
         },
     }

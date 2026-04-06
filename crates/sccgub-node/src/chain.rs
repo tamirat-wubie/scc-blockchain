@@ -259,9 +259,11 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         transitions,
         state,
     } = params;
+    let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
     let timestamp = parent_timestamp.successor(
         validator_id,
         blake3_hash(&serde_json::to_vec(parent_timestamp).unwrap_or_default()),
+        wall_hint,
     );
     let seal = MfidelAtomicSeal::from_height(height);
 
