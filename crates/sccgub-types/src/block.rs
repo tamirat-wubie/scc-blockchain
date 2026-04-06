@@ -75,13 +75,24 @@ impl Block {
         if self.header.height == 0 && self.header.parent_id != ZERO_HASH {
             return false;
         }
+        // Non-genesis blocks must have non-zero parent.
+        if self.header.height > 0 && self.header.parent_id == ZERO_HASH {
+            return false;
+        }
         // Mfidel seal must match deterministic assignment.
         let expected_seal = MfidelAtomicSeal::from_height(self.header.height);
         if self.header.mfidel_seal != expected_seal {
             return false;
         }
-        // Body transition count must match.
-        if self.body.transition_count != self.body.transitions.len() as u32 {
+        // Body transition count must match actual transitions.
+        if u32::try_from(self.body.transitions.len()) != Ok(self.body.transition_count) {
+            return false;
+        }
+        // Receipt count must match transition count (one receipt per transition).
+        // Genesis blocks may have zero receipts with zero transitions.
+        if !self.receipts.is_empty()
+            && self.receipts.len() != self.body.transitions.len()
+        {
             return false;
         }
         // Version check.

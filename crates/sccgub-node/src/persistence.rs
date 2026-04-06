@@ -20,33 +20,45 @@ impl ChainStore {
         })
     }
 
-    /// Save a block to disk as JSON.
+    /// Save a block to disk as JSON using atomic write (write-then-rename).
     pub fn save_block(&self, block: &Block) -> std::io::Result<()> {
         let filename = format!("block_{:010}.json", block.header.height);
-        let path = self.base_dir.join("blocks").join(filename);
+        let path = self.base_dir.join("blocks").join(&filename);
+        let tmp_path = self.base_dir.join("blocks").join(format!("{}.tmp", filename));
         let json = serde_json::to_string_pretty(block)
             .map_err(std::io::Error::other)?;
-        fs::write(path, json)
+        // Write to temp file first, then rename for atomicity.
+        fs::write(&tmp_path, &json)?;
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
     }
 
-    /// Load a block from disk by height.
+    /// Load a block from disk by height. Verifies structural integrity after load.
     pub fn load_block(&self, height: u64) -> std::io::Result<Block> {
         let filename = format!("block_{:010}.json", height);
         let path = self.base_dir.join("blocks").join(filename);
         let json = fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(std::io::Error::other)
+        let block: Block = serde_json::from_str(&json)
+            .map_err(std::io::Error::other)?;
+        // Verify structural integrity on load.
+        if !block.is_structurally_valid() {
+            return Err(std::io::Error::other(format!(
+                "Block #{} failed structural validation after load",
+                height
+            )));
+        }
+        Ok(block)
     }
 
-    /// Load all blocks from disk in order.
+    /// Load all blocks from disk in order. Filters to valid block files only.
     pub fn load_all_blocks(&self) -> std::io::Result<Vec<Block>> {
         let blocks_dir = self.base_dir.join("blocks");
         let mut entries: Vec<_> = fs::read_dir(&blocks_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json")
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with("block_") && s.ends_with(".json") && !s.ends_with(".tmp")
             })
             .collect();
 
@@ -57,18 +69,41 @@ impl ChainStore {
             let json = fs::read_to_string(entry.path())?;
             let block: Block = serde_json::from_str(&json)
                 .map_err(std::io::Error::other)?;
+            if !block.is_structurally_valid() {
+                return Err(std::io::Error::other(format!(
+                    "Block #{} failed structural validation",
+                    block.header.height
+                )));
+            }
             blocks.push(block);
         }
         Ok(blocks)
     }
 
-    /// Get the latest block height on disk.
+    /// Get the latest block height on disk (reads only the last file).
     pub fn latest_height(&self) -> std::io::Result<Option<u64>> {
-        let blocks = self.load_all_blocks()?;
-        Ok(blocks.last().map(|b| b.header.height))
+        let blocks_dir = self.base_dir.join("blocks");
+        let mut entries: Vec<_> = fs::read_dir(&blocks_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with("block_") && s.ends_with(".json") && !s.ends_with(".tmp")
+            })
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        match entries.last() {
+            None => Ok(None),
+            Some(entry) => {
+                let json = fs::read_to_string(entry.path())?;
+                let block: Block = serde_json::from_str(&json)
+                    .map_err(std::io::Error::other)?;
+                Ok(Some(block.header.height))
+            }
+        }
     }
 
-    /// Save chain metadata (chain_id, etc.).
+    /// Save chain metadata.
     pub fn save_metadata(&self, chain_id: &[u8; 32]) -> std::io::Result<()> {
         let path = self.base_dir.join("chain_meta.json");
         let json = serde_json::json!({
@@ -79,7 +114,6 @@ impl ChainStore {
         fs::write(path, serde_json::to_string_pretty(&json).unwrap())
     }
 
-    /// Get the data directory path.
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
@@ -100,9 +134,14 @@ mod tests {
     fn test_block(height: u64) -> Block {
         Block {
             header: BlockHeader {
-                chain_id: ZERO_HASH,
+                chain_id: [1u8; 32], // Non-zero for non-genesis validity.
                 block_id: [height as u8; 32],
-                parent_id: ZERO_HASH,
+                parent_id: if height == 0 {
+                    ZERO_HASH
+                } else {
+                    // Use height+100 offset to avoid ZERO_HASH for height=1.
+                    [(height as u8).wrapping_add(100); 32]
+                },
                 height,
                 timestamp: CausalTimestamp::genesis(),
                 state_root: ZERO_HASH,
@@ -148,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_save_and_load_block() {
-        let dir = std::env::temp_dir().join("sccgub_test_persistence");
+        let dir = std::env::temp_dir().join(format!("sccgub_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let store = ChainStore::new(&dir).unwrap();
 
@@ -164,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_load_all_blocks() {
-        let dir = std::env::temp_dir().join("sccgub_test_persistence_all");
+        let dir = std::env::temp_dir().join(format!("sccgub_test_all_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let store = ChainStore::new(&dir).unwrap();
 

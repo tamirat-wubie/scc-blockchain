@@ -1,13 +1,17 @@
+use std::collections::{HashSet, VecDeque};
+
 use sccgub_execution::validate::validate_transition;
 use sccgub_governance::containment::ContainmentState;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::SymbolicTransition;
+use sccgub_types::Hash;
 
-/// Transaction mempool with admission, validation, and containment checking.
+/// Transaction mempool with admission, dedup, validation, and containment.
 /// Per v2.1 FIX B-14: explicit mempool specification.
 pub struct Mempool {
-    pending: Vec<SymbolicTransition>,
+    pending: VecDeque<SymbolicTransition>,
+    seen_ids: HashSet<Hash>,
     max_size: usize,
     pub containment: ContainmentState,
 }
@@ -15,37 +19,48 @@ pub struct Mempool {
 impl Mempool {
     pub fn new(max_size: usize) -> Self {
         Self {
-            pending: Vec::new(),
+            pending: VecDeque::new(),
+            seen_ids: HashSet::new(),
             max_size,
             containment: ContainmentState::default(),
         }
     }
 
     /// Add a transition to the mempool.
-    /// Checks containment — quarantined nodes cannot submit.
+    /// Rejects duplicates and quarantined agents.
     pub fn add(&mut self, tx: SymbolicTransition) -> Result<(), String> {
         let node_id = tx.actor.agent_id;
 
-        // Check containment status.
+        // Check containment.
         if !self.containment.is_allowed(&node_id) {
             return Err(format!(
-                "Agent {} is quarantined — transaction rejected at mempool admission",
+                "Agent {} is quarantined",
                 hex::encode(node_id)
             ));
         }
 
-        if self.pending.len() >= self.max_size {
-            // Evict oldest.
-            self.pending.remove(0);
+        // Reject duplicate tx_id.
+        if self.seen_ids.contains(&tx.tx_id) {
+            return Err("Duplicate transaction ID".into());
         }
-        self.pending.push(tx);
+
+        // Evict oldest if at capacity (O(1) with VecDeque).
+        if self.pending.len() >= self.max_size {
+            if let Some(evicted) = self.pending.pop_front() {
+                self.seen_ids.remove(&evicted.tx_id);
+            }
+        }
+
+        self.seen_ids.insert(tx.tx_id);
+        self.pending.push_back(tx);
         Ok(())
     }
 
     /// Drain validated transitions from the mempool.
-    /// Updates containment state based on validation results.
+    /// Removes both valid and invalid transactions. Updates containment.
     pub fn drain_validated(&mut self, state: &ManagedWorldState) -> Vec<SymbolicTransition> {
         let mut validated = Vec::new();
+        let mut to_remove: Vec<Hash> = Vec::new();
 
         for tx in &self.pending {
             let node_id = tx.actor.agent_id;
@@ -60,17 +75,17 @@ impl Mempool {
                         .record_invalid(node_id, TensionValue::from_integer(1));
                 }
             }
+            to_remove.push(tx.tx_id);
         }
 
-        // Remove drained transactions.
-        let validated_ids: std::collections::HashSet<_> =
-            validated.iter().map(|tx| tx.tx_id).collect();
-        self.pending
-            .retain(|tx| !validated_ids.contains(&tx.tx_id));
+        // Remove all processed transactions (both valid and invalid).
+        let remove_set: HashSet<Hash> = to_remove.into_iter().collect();
+        self.pending.retain(|tx| !remove_set.contains(&tx.tx_id));
+        for id in &remove_set {
+            self.seen_ids.remove(id);
+        }
 
-        // Evaluate containment after processing.
         self.containment.evaluate();
-
         validated
     }
 

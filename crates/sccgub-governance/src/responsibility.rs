@@ -2,35 +2,46 @@ use sccgub_types::agent::{ResponsibilityEntry, ResponsibilityState};
 use sccgub_types::tension::TensionValue;
 use sccgub_types::TransitionId;
 
+/// Maximum entries per contribution list before pruning.
+const MAX_CONTRIBUTIONS: usize = 1000;
+
 /// Apply temporal decay to a responsibility state.
 /// R_i(t) = R_i(t_0) · e^{-λ(t - t_0)}
-/// Approximated in discrete time with fixed-point arithmetic.
+/// Approximated using exponentiation by squaring for efficiency.
+/// Updates block_height on each entry to prevent double-decay.
 pub fn apply_decay(state: &mut ResponsibilityState, current_height: u64) {
     let decay = state.decay_factor;
+    let one = TensionValue(TensionValue::SCALE);
+    let factor = one - decay;
 
-    // Decay positive contributions.
-    for entry in &mut state.positive_contributions {
+    fn decay_entry(entry: &mut ResponsibilityEntry, factor: TensionValue, current_height: u64) {
         let age = current_height.saturating_sub(entry.block_height);
         if age > 0 {
-            // Approximate exponential decay: multiply by (1 - λ) for each step.
-            let one = TensionValue(TensionValue::SCALE);
-            let factor = one - decay;
-            for _ in 0..age.min(100) {
-                entry.r_value = entry.r_value.mul_fp(factor);
-            }
+            // Exponentiation by squaring: factor^age
+            let decayed = exp_by_squaring(factor, age.min(200));
+            entry.r_value = entry.r_value.mul_fp(decayed);
+            entry.block_height = current_height; // Prevent double-decay.
         }
     }
 
-    // Same for negative contributions.
+    for entry in &mut state.positive_contributions {
+        decay_entry(entry, factor, current_height);
+    }
     for entry in &mut state.negative_contributions {
-        let age = current_height.saturating_sub(entry.block_height);
-        if age > 0 {
-            let one = TensionValue(TensionValue::SCALE);
-            let factor = one - decay;
-            for _ in 0..age.min(100) {
-                entry.r_value = entry.r_value.mul_fp(factor);
-            }
-        }
+        decay_entry(entry, factor, current_height);
+    }
+
+    // Prune near-zero entries to prevent unbounded growth.
+    let threshold = TensionValue(1); // ~10^-18, effectively zero.
+    state.positive_contributions.retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
+    state.negative_contributions.retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
+
+    // Hard cap on contribution list size.
+    if state.positive_contributions.len() > MAX_CONTRIBUTIONS {
+        state.positive_contributions.drain(0..state.positive_contributions.len() - MAX_CONTRIBUTIONS);
+    }
+    if state.negative_contributions.len() > MAX_CONTRIBUTIONS {
+        state.negative_contributions.drain(0..state.negative_contributions.len() - MAX_CONTRIBUTIONS);
     }
 
     // Recompute net responsibility.
@@ -43,6 +54,24 @@ pub fn apply_decay(state: &mut ResponsibilityState, current_height: u64) {
         .iter()
         .fold(TensionValue::ZERO, |acc, e| acc + e.r_value);
     state.net_responsibility = pos_sum - neg_sum;
+}
+
+/// Fixed-point exponentiation by squaring: base^exp.
+fn exp_by_squaring(base: TensionValue, exp: u64) -> TensionValue {
+    if exp == 0 {
+        return TensionValue(TensionValue::SCALE); // 1.0
+    }
+    let mut result = TensionValue(TensionValue::SCALE);
+    let mut b = base;
+    let mut e = exp;
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result.mul_fp(b);
+        }
+        b = b.mul_fp(b);
+        e >>= 1;
+    }
+    result
 }
 
 /// Record a positive contribution.

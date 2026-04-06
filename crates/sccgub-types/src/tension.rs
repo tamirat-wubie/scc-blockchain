@@ -8,15 +8,19 @@ use crate::SymbolAddress;
 /// Fixed-point tension value with 18 decimal places.
 /// Stored as i128 where the value represents `raw / 10^18`.
 /// This ensures deterministic arithmetic across all platforms (v2.1 fix C-9).
+///
+/// All arithmetic uses saturating operations to prevent panics from untrusted input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TensionValue(pub i128);
 
 impl TensionValue {
     pub const ZERO: Self = Self(0);
     pub const SCALE: i128 = 1_000_000_000_000_000_000; // 10^18
+    pub const MAX: Self = Self(i128::MAX);
+    pub const MIN: Self = Self(i128::MIN);
 
     pub fn from_integer(n: i64) -> Self {
-        Self(n as i128 * Self::SCALE)
+        Self((n as i128).saturating_mul(Self::SCALE))
     }
 
     pub fn raw(&self) -> i128 {
@@ -24,22 +28,49 @@ impl TensionValue {
     }
 
     /// Multiply two tension values (fixed-point multiplication).
+    /// Uses widening multiplication to avoid intermediate overflow.
     pub fn mul_fp(self, other: Self) -> Self {
-        Self(self.0.checked_mul(other.0).expect("tension overflow") / Self::SCALE)
+        // Use i128 division approach: (a * b) / SCALE
+        // To avoid overflow, compute (a / SCALE) * b + (a % SCALE) * b / SCALE
+        let a = self.0;
+        let b = other.0;
+        let whole = (a / Self::SCALE).saturating_mul(b);
+        let frac_numer = (a % Self::SCALE).saturating_mul(b);
+        let frac = frac_numer / Self::SCALE;
+        Self(whole.saturating_add(frac))
+    }
+
+    /// Saturating addition.
+    pub fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+
+    /// Saturating subtraction.
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+
+    /// Clamp to non-negative.
+    pub fn max(self, other: Self) -> Self {
+        if self.0 >= other.0 {
+            self
+        } else {
+            other
+        }
     }
 }
 
 impl Add for TensionValue {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        Self(self.0.checked_add(rhs.0).expect("tension overflow"))
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
 impl Sub for TensionValue {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0.checked_sub(rhs.0).expect("tension underflow"))
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -53,14 +84,19 @@ impl fmt::Display for TensionValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let whole = self.0 / Self::SCALE;
         let frac = (self.0 % Self::SCALE).unsigned_abs();
-        write!(f, "{}.{:018}", whole, frac)
+        // Handle negative fractional values (e.g., -0.5)
+        if self.0 < 0 && whole == 0 {
+            write!(f, "-0.{:018}", frac)
+        } else {
+            write!(f, "{}.{:018}", whole, frac)
+        }
     }
 }
 
 /// Tension field across the entire chain state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensionField {
-    /// Total system tension: T = α·T_logic + β·T_grounding + γ·T_value + δ·T_resource
+    /// Total system tension: T = alpha*T_logic + beta*T_grounding + gamma*T_value + delta*T_resource
     pub total: TensionValue,
     /// Per-symbol tension map.
     pub map: HashMap<SymbolAddress, TensionValue>,
@@ -100,11 +136,8 @@ impl Default for TensionBudget {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TensionBudgetMode {
-    /// Budget never changes.
     Fixed,
-    /// Requires SAFETY precedence governance proposal to change.
     Governance,
-    /// Auto-adjusts based on moving average utilization.
     Adaptive {
         window: u32,
         target_utilization: TensionValue,
@@ -122,7 +155,6 @@ pub struct TensionComponents {
 }
 
 impl TensionComponents {
-    /// Compute weighted total using fixed-point weights.
     pub fn weighted_total(
         &self,
         alpha: TensionValue,
@@ -142,22 +174,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fixed_point_arithmetic() {
+    fn test_saturating_arithmetic() {
         let a = TensionValue::from_integer(5);
         let b = TensionValue::from_integer(3);
         assert_eq!(a + b, TensionValue::from_integer(8));
         assert_eq!(a - b, TensionValue::from_integer(2));
+        // Saturating: no panic on overflow
+        let max = TensionValue::MAX;
+        assert_eq!(max + TensionValue::from_integer(1), TensionValue::MAX);
     }
 
     #[test]
-    fn test_fixed_point_mul() {
+    fn test_mul_fp_no_overflow() {
         let a = TensionValue::from_integer(5);
         let b = TensionValue::from_integer(3);
         assert_eq!(a.mul_fp(b), TensionValue::from_integer(15));
+        // Large values should not panic
+        let big = TensionValue::from_integer(1_000_000_000);
+        let result = big.mul_fp(big);
+        assert!(result.raw() > 0);
     }
 
     #[test]
-    fn test_display() {
+    fn test_display_negative_fractional() {
+        let v = TensionValue(-(TensionValue::SCALE / 2)); // -0.5
+        let s = format!("{}", v);
+        assert!(s.starts_with('-'), "Negative fractional should show minus: {}", s);
+    }
+
+    #[test]
+    fn test_display_positive() {
         let v = TensionValue::from_integer(42);
         assert_eq!(format!("{}", v), "42.000000000000000000");
     }

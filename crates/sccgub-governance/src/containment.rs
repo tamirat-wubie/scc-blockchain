@@ -106,8 +106,11 @@ impl ContainmentState {
         for profile in self.nodes.values_mut() {
             let hostility = profile.hostility_index(epsilon);
 
+            // Release threshold: half the activation threshold.
+            let release_threshold = TensionValue(threshold.raw() / 2);
+
             if hostility > threshold {
-                // Escalate containment.
+                // Escalate containment. Reset quarantine timer if still hostile.
                 profile.containment = match profile.containment {
                     ContainmentLevel::None => ContainmentLevel::ReducedThroughput {
                         max_txs_per_block: 1,
@@ -120,13 +123,29 @@ impl ContainmentState {
                             blocks_remaining: 100,
                         }
                     }
-                    ContainmentLevel::Quarantine { blocks_remaining } => {
-                        ContainmentLevel::Quarantine { blocks_remaining }
+                    ContainmentLevel::Quarantine { .. } => {
+                        // Reset quarantine timer — still hostile.
+                        ContainmentLevel::Quarantine {
+                            blocks_remaining: 100,
+                        }
                     }
                 };
-            } else if hostility.raw() == 0 && profile.containment != ContainmentLevel::None {
-                // Release containment if hostility drops to zero.
-                profile.containment = ContainmentLevel::None;
+            } else if hostility <= release_threshold
+                && profile.containment != ContainmentLevel::None
+            {
+                // De-escalate one level (gradual release, not instant).
+                profile.containment = match profile.containment {
+                    ContainmentLevel::Quarantine { .. } => {
+                        ContainmentLevel::IncreasedProofRequirements
+                    }
+                    ContainmentLevel::IncreasedProofRequirements => {
+                        ContainmentLevel::ReducedThroughput {
+                            max_txs_per_block: 5,
+                        }
+                    }
+                    ContainmentLevel::ReducedThroughput { .. } => ContainmentLevel::None,
+                    ContainmentLevel::None => ContainmentLevel::None,
+                };
             }
         }
     }

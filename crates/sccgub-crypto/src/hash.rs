@@ -3,10 +3,12 @@ pub fn blake3_hash(data: &[u8]) -> [u8; 32] {
     *blake3::hash(data).as_bytes()
 }
 
-/// Compute hash of multiple byte slices concatenated.
+/// Compute hash of multiple byte slices with length-prefix domain separation.
+/// Each part is prefixed with its length to prevent ambiguous concatenation.
 pub fn blake3_hash_concat(parts: &[&[u8]]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     for part in parts {
+        hasher.update(&(part.len() as u64).to_le_bytes());
         hasher.update(part);
     }
     *hasher.finalize().as_bytes()
@@ -31,8 +33,10 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_concat() {
-        let h = blake3_hash_concat(&[b"hello", b"world"]);
-        assert_ne!(h, [0u8; 32]);
+    fn test_hash_concat_domain_separated() {
+        // "ab" + "cd" should differ from "a" + "bcd" due to length prefixing.
+        let h1 = blake3_hash_concat(&[b"ab", b"cd"]);
+        let h2 = blake3_hash_concat(&[b"a", b"bcd"]);
+        assert_ne!(h1, h2, "Length-prefixed concat should prevent ambiguity");
     }
 }

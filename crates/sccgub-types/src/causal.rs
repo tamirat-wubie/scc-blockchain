@@ -22,52 +22,56 @@ impl CausalGraph {
 
     /// Check for cycles in the causal graph (INV-17 per v2.1 FIX B-16).
     /// Returns true if the graph is acyclic.
+    /// Uses iterative DFS to prevent stack overflow on deep graphs.
+    /// Includes phantom vertices (in edges but not in vertex set).
     pub fn is_acyclic(&self) -> bool {
-        // Simple DFS-based cycle detection.
         use std::collections::HashMap;
+
+        // Build adjacency list.
         let mut adj: HashMap<CausalVertex, Vec<CausalVertex>> = HashMap::new();
+        // Collect ALL vertices: both declared and referenced in edges.
+        let mut all_vertices: HashSet<CausalVertex> = self.vertices.clone();
         for edge in &self.edges {
             let (src, tgt) = edge.endpoints();
+            all_vertices.insert(src.clone());
+            all_vertices.insert(tgt.clone());
             adj.entry(src).or_default().push(tgt);
         }
 
-        #[derive(PartialEq)]
-        enum Color {
-            White,
-            Gray,
-            Black,
-        }
-        let mut color: HashMap<CausalVertex, Color> = HashMap::new();
-        for v in &self.vertices {
-            color.insert(v.clone(), Color::White);
-        }
+        #[derive(Clone, Copy, PartialEq)]
+        enum Color { White, Gray, Black }
 
-        fn dfs(
-            v: &CausalVertex,
-            adj: &HashMap<CausalVertex, Vec<CausalVertex>>,
-            color: &mut HashMap<CausalVertex, Color>,
-        ) -> bool {
-            color.insert(v.clone(), Color::Gray);
-            if let Some(neighbors) = adj.get(v) {
-                for n in neighbors {
-                    match color.get(n) {
-                        Some(Color::Gray) => return false, // cycle found
-                        Some(Color::White) => {
-                            if !dfs(n, adj, color) {
-                                return false;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+        let mut color: HashMap<CausalVertex, Color> = all_vertices
+            .iter()
+            .map(|v| (v.clone(), Color::White))
+            .collect();
+
+        // Iterative DFS with explicit stack (prevents stack overflow).
+        for start in &all_vertices {
+            if color.get(start) != Some(&Color::White) {
+                continue;
             }
-            color.insert(v.clone(), Color::Black);
-            true
-        }
+            // Stack entries: (vertex, neighbor_index, is_entering)
+            let mut stack: Vec<(CausalVertex, usize)> = vec![(start.clone(), 0)];
+            color.insert(start.clone(), Color::Gray);
 
-        for v in &self.vertices {
-            if color.get(v) == Some(&Color::White) && !dfs(v, &adj, &mut color) {
-                return false;
+            while let Some((v, idx)) = stack.last_mut() {
+                let neighbors = adj.get(v).cloned().unwrap_or_default();
+                if *idx < neighbors.len() {
+                    let neighbor = neighbors[*idx].clone();
+                    *idx += 1;
+                    match color.get(&neighbor) {
+                        Some(Color::Gray) => return false, // Cycle found.
+                        Some(Color::White) => {
+                            color.insert(neighbor.clone(), Color::Gray);
+                            stack.push((neighbor, 0));
+                        }
+                        _ => {} // Black — already fully explored.
+                    }
+                } else {
+                    color.insert(v.clone(), Color::Black);
+                    stack.pop();
+                }
             }
         }
         true

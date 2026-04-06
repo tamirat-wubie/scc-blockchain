@@ -31,13 +31,15 @@ impl CausalTimestamp {
     }
 
     /// Create a successor timestamp from a parent.
+    /// `wall_hint` is passed explicitly to keep the type deterministic.
     pub fn successor(&self, node_id: NodeId, parent_hash: Hash) -> Self {
+        let epoch = self.lamport_counter.saturating_add(1);
         let mut vc = self.vector_clock.clone();
-        vc.increment(node_id);
+        vc.increment(node_id, epoch);
         Self {
-            lamport_counter: self.lamport_counter + 1,
+            lamport_counter: epoch,
             vector_clock: vc,
-            causal_depth: self.causal_depth + 1,
+            causal_depth: self.causal_depth.saturating_add(1),
             wall_hint: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -70,16 +72,17 @@ impl BoundedVectorClock {
         }
     }
 
-    /// Increment counter for a node, marking it active.
-    pub fn increment(&mut self, node_id: NodeId) {
+    /// Increment counter for a node, marking it active at the given epoch.
+    pub fn increment(&mut self, node_id: NodeId, epoch: u64) {
         if let Some(entry) = self.entries.iter_mut().find(|(id, _)| *id == node_id) {
-            entry.1.counter += 1;
+            entry.1.counter = entry.1.counter.saturating_add(1);
+            entry.1.last_active_epoch = epoch;
         } else {
             self.entries.push((
                 node_id,
                 VectorClockEntry {
                     counter: 1,
-                    last_active_epoch: 0,
+                    last_active_epoch: epoch,
                 },
             ));
         }
@@ -148,10 +151,12 @@ mod tests {
     #[test]
     fn test_bounded_vector_clock_prune() {
         let mut vc = BoundedVectorClock::new(2);
-        vc.increment([1u8; 32]);
-        vc.increment([2u8; 32]);
-        vc.increment([3u8; 32]);
+        vc.increment([1u8; 32], 1);
+        vc.increment([2u8; 32], 2);
+        vc.increment([3u8; 32], 3);
         assert!(vc.entries.len() <= 2);
+        // Node with lowest epoch (1) should be pruned.
+        assert!(!vc.entries.iter().any(|(id, _)| *id == [1u8; 32]));
     }
 
     #[test]

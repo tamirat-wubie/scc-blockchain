@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sccgub_crypto::hash::blake3_hash;
+use sccgub_crypto::hash::blake3_hash_concat;
 use sccgub_crypto::merkle::compute_merkle_root;
 use sccgub_types::{Hash, MerkleRoot, SymbolAddress, ZERO_HASH};
 
@@ -49,13 +49,13 @@ impl StateTrie {
         if self.store.is_empty() {
             return ZERO_HASH;
         }
+        // Domain-separated hashing: hash(len(key) || key || len(value) || value)
+        // Prevents key/value boundary confusion attacks.
         let leaves: Vec<Hash> = self
             .store
             .iter()
             .map(|(k, v)| {
-                let mut data = k.clone();
-                data.extend_from_slice(v);
-                blake3_hash(&data)
+                blake3_hash_concat(&[k.as_slice(), v.as_slice()])
             })
             .collect();
         compute_merkle_root(&leaves)

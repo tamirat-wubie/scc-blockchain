@@ -45,12 +45,13 @@ impl NormRegistry {
             return;
         }
 
-        // Compute fitness for each norm: F(ν) = fitness - enforcement_cost.
+        // Compute fitness for each norm: F(ν) = max(0, fitness - enforcement_cost).
+        // Clamp to zero to prevent negative fitness corrupting dynamics.
         let fitnesses: HashMap<NormId, TensionValue> = active_norms
             .iter()
             .map(|id| {
                 let norm = &self.norms[id];
-                let f = norm.fitness - norm.enforcement_cost;
+                let f = (norm.fitness - norm.enforcement_cost).max(TensionValue::ZERO);
                 (*id, f)
             })
             .collect();
@@ -64,18 +65,44 @@ impl NormRegistry {
             })
             .fold(TensionValue::ZERO, |acc, v| acc + v);
 
-        // Guard against zero mean fitness.
-        if mean_fitness.raw() == 0 {
+        // Guard against zero or negative mean fitness.
+        if mean_fitness.raw() <= 0 {
             return;
         }
 
         // Update population shares: p_ν(t+1) = p_ν(t) · F(ν) / F̄.
+        // Uses safe division to prevent overflow.
         for id in &active_norms {
             let norm = self.norms.get_mut(id).unwrap();
-            let new_share = norm.population_share.mul_fp(fitnesses[id]);
-            // Divide by mean fitness (fixed-point division).
-            let raw = new_share.raw() * TensionValue::SCALE / mean_fitness.raw();
+            let numerator = norm.population_share.mul_fp(fitnesses[id]);
+            // Safe fixed-point division: (num / mean) with SCALE preservation.
+            // Restructure as (num / mean) * SCALE to avoid intermediate overflow.
+            let raw = if mean_fitness.raw() != 0 {
+                // (numerator * SCALE) / mean — use split multiply to avoid overflow.
+                let a = numerator.raw() / mean_fitness.raw();
+                let b = (numerator.raw() % mean_fitness.raw())
+                    .saturating_mul(TensionValue::SCALE)
+                    / mean_fitness.raw();
+                a.saturating_mul(TensionValue::SCALE).saturating_add(b)
+            } else {
+                0
+            };
             norm.population_share = TensionValue(raw);
+        }
+
+        // Renormalize: ensure shares sum to exactly SCALE (1.0).
+        let total: i128 = active_norms
+            .iter()
+            .map(|id| self.norms[id].population_share.raw())
+            .sum();
+        if total > 0 {
+            for id in &active_norms {
+                let norm = self.norms.get_mut(id).unwrap();
+                let raw = norm.population_share.raw()
+                    .saturating_mul(TensionValue::SCALE)
+                    / total;
+                norm.population_share = TensionValue(raw);
+            }
         }
     }
 }
