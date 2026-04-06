@@ -36,13 +36,17 @@ impl EconomicState {
         prior_block_tension: TensionValue,
         tension_budget: TensionValue,
     ) -> TensionValue {
-        if tension_budget.raw() == 0 {
-            return self.base_fee;
+        if tension_budget.raw() <= 0 {
+            return self.base_fee; // Reject zero or negative budget.
         }
         // fee = base_fee * (1 + alpha * T_prev / T_budget)
+        // Safe ratio: use split division to prevent overflow.
         let one = TensionValue(TensionValue::SCALE);
         let ratio = TensionValue(
-            prior_block_tension.raw() * TensionValue::SCALE / tension_budget.raw(),
+            prior_block_tension
+                .raw()
+                .saturating_mul(TensionValue::SCALE)
+                / tension_budget.raw(),
         );
         let multiplier = one + self.alpha.mul_fp(ratio);
         self.base_fee.mul_fp(multiplier)

@@ -19,7 +19,11 @@ pub type Hash = [u8; 32];
 pub const ZERO_HASH: Hash = [0u8; 32];
 
 /// Symbol address in the state trie.
+/// Maximum length enforced at validation boundaries.
 pub type SymbolAddress = Vec<u8>;
+
+/// Maximum allowed symbol address length (4 KB).
+pub const MAX_SYMBOL_ADDRESS_LEN: usize = 4096;
 
 /// Unique identifier for an agent.
 pub type AgentId = Hash;

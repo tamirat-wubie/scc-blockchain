@@ -37,6 +37,7 @@ pub struct TransitionProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhiTraversalLog {
     pub phases_completed: Vec<PhiPhaseResult>,
+    /// Stored for serialization; always recomputed via `is_all_passed()` for validation.
     pub all_phases_passed: bool,
     pub total_phases: u8,
 }
@@ -48,6 +49,17 @@ impl PhiTraversalLog {
             all_phases_passed: false,
             total_phases: 13,
         }
+    }
+
+    /// Compute whether all phases passed (source of truth — don't trust stored field).
+    pub fn is_all_passed(&self) -> bool {
+        self.phases_completed.len() >= self.total_phases as usize
+            && self.phases_completed.iter().all(|p| p.passed)
+    }
+
+    /// Finalize the log: set the stored field to match computed value.
+    pub fn finalize(&mut self) {
+        self.all_phases_passed = self.is_all_passed();
     }
 }
 

@@ -228,7 +228,7 @@ fn cmd_status(data_dir: &std::path::Path) {
     }
 
     let latest = blocks.last().unwrap();
-    let total_txs: u32 = blocks.iter().map(|b| b.body.transition_count).sum();
+    let total_txs: u64 = blocks.iter().map(|b| b.body.transition_count as u64).sum();
 
     println!("=== SCCGUB Chain Status ===");
     println!("  Data dir:       {:?}", data_dir);

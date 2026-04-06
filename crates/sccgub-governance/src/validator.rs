@@ -29,16 +29,19 @@ pub fn select_validator(validators: &[ValidatorAuthority]) -> Option<&ValidatorA
 }
 
 /// Round-robin proposer selection for DETERMINISTIC finality mode.
+/// Validators are sorted by node_id for deterministic ordering across all nodes.
 pub fn round_robin_proposer(
     validators: &[ValidatorAuthority],
     round: u64,
-) -> Option<&ValidatorAuthority> {
-    let active: Vec<&ValidatorAuthority> = validators.iter().filter(|v| v.active).collect();
+) -> Option<ValidatorAuthority> {
+    let mut active: Vec<&ValidatorAuthority> = validators.iter().filter(|v| v.active).collect();
     if active.is_empty() {
         return None;
     }
+    // Sort by node_id for deterministic ordering regardless of input order.
+    active.sort_by_key(|v| v.node_id);
     let idx = (round as usize) % active.len();
-    Some(active[idx])
+    Some(active[idx].clone())
 }
 
 #[cfg(test)]

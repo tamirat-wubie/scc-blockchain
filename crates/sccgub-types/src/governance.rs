@@ -53,7 +53,20 @@ pub enum FinalityMode {
     /// Exactly one authorized proposer per round. No competing blocks.
     Deterministic,
     /// Multiple proposers possible. Fork-choice by lower tension. Quorum required.
+    /// quorum_threshold must be >= 1 (validated at genesis).
     BftCertified { quorum_threshold: u32 },
+}
+
+impl FinalityMode {
+    /// Validate finality mode parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if let FinalityMode::BftCertified { quorum_threshold } = self {
+            if *quorum_threshold == 0 {
+                return Err("BFT quorum_threshold must be >= 1".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Authority level for an agent in governance.

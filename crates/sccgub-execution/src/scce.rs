@@ -35,7 +35,7 @@ pub fn scce_validate(
 
     // Step 1: Select relevant state subgraph (attention-gated).
     let relevant_count = select_relevant_subgraph(&active_symbols, state, constraint_weights);
-    steps_used += relevant_count as u64;
+    steps_used = steps_used.saturating_add(relevant_count);
 
     if steps_used > max_propagation_steps {
         return ScceResult {
@@ -140,30 +140,42 @@ pub struct ConstraintWeights {
 
 // --- Internal helpers ---
 
+/// Maximum activated symbols to prevent DoS from deeply nested paths.
+const MAX_ACTIVATED_SYMBOLS: usize = 16;
+
 fn activate_symbols(target: &[u8], state: &ManagedWorldState) -> Vec<Vec<u8>> {
     let mut symbols = vec![target.to_vec()];
-    // Also activate parent paths (e.g., "a/b/c" activates "a/b" and "a").
     let mut path = target.to_vec();
-    while let Some(pos) = path.iter().rposition(|&b| b == b'/') {
-        path.truncate(pos);
-        if !path.is_empty() && state.trie.contains(&path) {
-            symbols.push(path.clone());
+    while symbols.len() < MAX_ACTIVATED_SYMBOLS {
+        match path.iter().rposition(|&b| b == b'/') {
+            Some(pos) => {
+                path.truncate(pos);
+                if !path.is_empty() && state.trie.contains(&path) {
+                    symbols.push(path.clone());
+                }
+            }
+            None => break,
         }
     }
     symbols
 }
 
+/// Maximum entries to scan per symbol to prevent O(n*m) DoS.
+const MAX_SCAN_PER_SYMBOL: u64 = 1000;
+
 fn select_relevant_subgraph(
     active_symbols: &[Vec<u8>],
     state: &ManagedWorldState,
     _weights: &ConstraintWeights,
-) -> u32 {
-    // Count how many state entries share a prefix with active symbols.
-    let mut count = 0u32;
+) -> u64 {
+    let mut count = 0u64;
     for symbol in active_symbols {
         for (key, _) in state.trie.iter() {
             if key.starts_with(symbol) {
-                count += 1;
+                count = count.saturating_add(1);
+            }
+            if count >= MAX_SCAN_PER_SYMBOL * active_symbols.len() as u64 {
+                return count;
             }
         }
     }

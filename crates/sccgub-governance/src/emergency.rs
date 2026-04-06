@@ -20,6 +20,19 @@ pub struct EmergencyPolicy {
     pub normal_max_txs: u32,
 }
 
+impl EmergencyPolicy {
+    /// Validate policy parameters. Activation must exceed deactivation (hysteresis).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.activation_threshold <= self.deactivation_threshold {
+            return Err("activation_threshold must be > deactivation_threshold".into());
+        }
+        if self.emergency_max_txs == 0 {
+            return Err("emergency_max_txs must be > 0".into());
+        }
+        Ok(())
+    }
+}
+
 impl Default for EmergencyPolicy {
     fn default() -> Self {
         Self {
@@ -48,6 +61,7 @@ pub fn evaluate_emergency(
                     "Tension {} dropped below deactivation threshold {}",
                     total, policy.deactivation_threshold
                 ),
+                normal_max_txs: policy.normal_max_txs,
             }
         } else {
             EmergencyDecision::MaintainEmergency {
@@ -82,8 +96,8 @@ pub enum EmergencyDecision {
     Activate { reason: String, max_txs: u32 },
     /// Emergency mode remains active.
     MaintainEmergency { tension: TensionValue, max_txs: u32 },
-    /// Deactivate emergency mode.
-    Deactivate { reason: String },
+    /// Deactivate emergency mode. Carries the normal max_txs from policy.
+    Deactivate { reason: String, normal_max_txs: u32 },
 }
 
 impl EmergencyDecision {
@@ -92,7 +106,7 @@ impl EmergencyDecision {
             Self::Normal { max_txs } => *max_txs,
             Self::Activate { max_txs, .. } => *max_txs,
             Self::MaintainEmergency { max_txs, .. } => *max_txs,
-            Self::Deactivate { .. } => 1000, // Back to normal.
+            Self::Deactivate { normal_max_txs, .. } => *normal_max_txs,
         }
     }
 

@@ -4,33 +4,50 @@ use sccgub_types::receipt::Verdict;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{StateDelta, StateWrite, SymbolicTransition};
 
+/// Maximum computation steps for contract execution (decidability bound).
+pub const DEFAULT_MAX_STEPS: u64 = 10_000;
+
 /// Execute a Symbolic Causal Contract.
-///
-/// Per spec Section 10: contracts are decidable symbolic constraint programs.
-/// No halting problem. No gas estimation. Contracts terminate by construction.
-///
-/// Execution model:
-/// 1. Check preconditions against contract laws.
-/// 2. Apply Phi traversal.
-/// 3. Check postconditions.
-/// 4. Commit or rollback.
+/// Contracts are decidable — they terminate within bounded steps by construction.
 pub fn execute_contract(
     contract: &SymbolicCausalContract,
     transition: &SymbolicTransition,
-    state: &ManagedWorldState,
+    _state: &ManagedWorldState,
     max_steps: u64,
 ) -> ContractExecutionResult {
     let mut steps = 0u64;
 
+    // Authorization: actor must have sufficient governance level.
+    let actor_level = transition.actor.governance_level as u8;
+    let required_level = contract.governance_level as u8;
+    if actor_level > required_level {
+        return ContractExecutionResult {
+            verdict: Verdict::Reject {
+                reason: format!(
+                    "Insufficient authority: actor has {:?}, contract requires {:?}",
+                    transition.actor.governance_level, contract.governance_level
+                ),
+            },
+            state_delta: StateDelta::default(),
+            steps_used: 0,
+            tension_delta: TensionValue::ZERO,
+        };
+    }
+
     // Phase 1: Check preconditions against contract laws.
     for law in &contract.laws {
-        steps += 1;
+        steps = steps.saturating_add(1);
         if steps > max_steps {
+            return reject_step_limit(steps, max_steps, "precondition check");
+        }
+        // A precondition is satisfied if the transition declares it in its preconditions.
+        let satisfied = transition.preconditions.iter().any(|pc| pc.id == law.id);
+        if !satisfied {
             return ContractExecutionResult {
                 verdict: Verdict::Reject {
                     reason: format!(
-                        "Exceeded max execution steps ({}) during precondition check",
-                        max_steps
+                        "Precondition not satisfied: constraint {}",
+                        hex::encode(law.id)
                     ),
                 },
                 state_delta: StateDelta::default(),
@@ -38,35 +55,55 @@ pub fn execute_contract(
                 tension_delta: TensionValue::ZERO,
             };
         }
-
-        // Evaluate constraint (simplified: check if constraint ID matches any precondition).
-        let satisfied = transition
-            .preconditions
-            .iter()
-            .any(|pc| pc.id == law.id);
-
-        if !satisfied && !contract.laws.is_empty() {
-            // For MVP: if the transition doesn't reference this law's constraint,
-            // we check if it's a hard constraint.
-            // Simplified: all contract laws are treated as satisfied if preconditions match.
-        }
     }
 
-    // Phase 2: Determine state delta based on the transition payload.
+    // Phase 2: Execute based on payload.
     let state_delta = match &transition.payload {
         sccgub_types::transition::OperationPayload::InvokeContract {
             contract_id: _,
             method,
             args,
         } => {
-            steps += 1;
-            match execute_contract_method(contract, method, args, state, &mut steps, max_steps) {
-                Ok(delta) => delta,
-                Err(result) => return result,
+            steps = steps.saturating_add(1);
+            if steps > max_steps {
+                return reject_step_limit(steps, max_steps, "method execution");
+            }
+            // Validate method name is non-empty and args are bounded.
+            if method.is_empty() {
+                return ContractExecutionResult {
+                    verdict: Verdict::Reject {
+                        reason: "Empty method name".into(),
+                    },
+                    state_delta: StateDelta::default(),
+                    steps_used: steps,
+                    tension_delta: TensionValue::ZERO,
+                };
+            }
+            if args.len() > 1_048_576 {
+                return ContractExecutionResult {
+                    verdict: Verdict::Reject {
+                        reason: "Method args exceed 1MB limit".into(),
+                    },
+                    state_delta: StateDelta::default(),
+                    steps_used: steps,
+                    tension_delta: TensionValue::ZERO,
+                };
+            }
+            let result_key = format!(
+                "contract/{}/result/{}",
+                hex::encode(contract.contract_id),
+                method
+            );
+            StateDelta {
+                writes: vec![StateWrite {
+                    address: result_key.into_bytes(),
+                    value: args.to_vec(),
+                }],
+                deletes: vec![],
             }
         }
         sccgub_types::transition::OperationPayload::Write { key, value } => {
-            steps += 1;
+            steps = steps.saturating_add(1);
             StateDelta {
                 writes: vec![StateWrite {
                     address: key.clone(),
@@ -80,22 +117,24 @@ pub fn execute_contract(
 
     // Phase 3: Check postconditions.
     for law in &contract.laws {
-        steps += 1;
+        steps = steps.saturating_add(1);
         if steps > max_steps {
+            return reject_step_limit(steps, max_steps, "postcondition check");
+        }
+        let satisfied = transition.postconditions.iter().any(|pc| pc.id == law.id);
+        if !satisfied {
             return ContractExecutionResult {
                 verdict: Verdict::Reject {
-                    reason: "Exceeded max steps during postcondition check".into(),
+                    reason: format!(
+                        "Postcondition not satisfied: constraint {}",
+                        hex::encode(law.id)
+                    ),
                 },
                 state_delta: StateDelta::default(),
                 steps_used: steps,
                 tension_delta: TensionValue::ZERO,
             };
         }
-        // Postcondition check (simplified for MVP).
-        let _satisfied = transition
-            .postconditions
-            .iter()
-            .any(|pc| pc.id == law.id);
     }
 
     ContractExecutionResult {
@@ -106,39 +145,25 @@ pub fn execute_contract(
     }
 }
 
-/// Execute a specific method on a contract.
-fn execute_contract_method(
-    contract: &SymbolicCausalContract,
-    method: &str,
-    args: &[u8],
-    _state: &ManagedWorldState,
-    steps: &mut u64,
-    max_steps: u64,
-) -> Result<StateDelta, ContractExecutionResult> {
-    *steps += 1;
-    if *steps > max_steps {
-        return Err(ContractExecutionResult {
-            verdict: Verdict::Reject {
-                reason: "Exceeded max steps during method execution".into(),
-            },
-            state_delta: StateDelta::default(),
-            steps_used: *steps,
-            tension_delta: TensionValue::ZERO,
-        });
+fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResult {
+    ContractExecutionResult {
+        verdict: Verdict::Reject {
+            reason: format!("Exceeded max steps ({}) during {}", max, phase),
+        },
+        state_delta: StateDelta::default(),
+        steps_used: steps,
+        tension_delta: TensionValue::ZERO,
     }
-
-    // Simplified contract execution: write the method call result to a state key.
-    let result_key = format!("contract/{}/result/{}", hex::encode(contract.contract_id), method);
-    Ok(StateDelta {
-        writes: vec![StateWrite {
-            address: result_key.into_bytes(),
-            value: args.to_vec(),
-        }],
-        deletes: vec![],
-    })
 }
 
-/// Result of contract execution.
+/// Verify that a contract's ID matches the hash of its content.
+pub fn verify_contract_id(contract: &SymbolicCausalContract) -> bool {
+    let content = serde_json::to_vec(&(&contract.name, &contract.laws, &contract.deployer))
+        .unwrap_or_default();
+    let expected = sccgub_crypto::hash::blake3_hash(&content);
+    contract.contract_id == expected
+}
+
 #[derive(Debug, Clone)]
 pub struct ContractExecutionResult {
     pub verdict: Verdict,
@@ -170,99 +195,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_contract_execution_terminates() {
-        let contract = test_contract();
-        let state = ManagedWorldState::new();
-
-        let (agent, agent_key) = {
-            let key = sccgub_crypto::keys::generate_keypair();
-            let pk = *key.verifying_key().as_bytes();
-            let agent_id = sccgub_crypto::hash::blake3_hash(&pk);
-            let agent = sccgub_types::agent::AgentIdentity {
-                agent_id,
-                public_key: pk,
-                mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
-                registration_block: 0,
-                governance_level: PrecedenceLevel::Meaning,
-                norm_set: std::collections::HashSet::new(),
-                responsibility: sccgub_types::agent::ResponsibilityState::default(),
-            };
-            (agent, key)
-        };
-
-        let tx = sccgub_types::transition::SymbolicTransition {
-            tx_id: [0u8; 32],
-            actor: agent,
-            intent: sccgub_types::transition::TransitionIntent {
-                kind: sccgub_types::transition::TransitionKind::ContractInvoke,
-                target: b"contract/test".to_vec(),
-                declared_purpose: "test invocation".into(),
-            },
-            preconditions: vec![],
-            postconditions: vec![],
-            payload: sccgub_types::transition::OperationPayload::InvokeContract {
-                contract_id: contract.contract_id,
-                method: "transfer".into(),
-                args: b"test-args".to_vec(),
-            },
-            causal_chain: vec![],
-            wh_binding_intent: sccgub_types::transition::WHBindingIntent {
-                who: [1u8; 32],
-                when: sccgub_types::timestamp::CausalTimestamp::genesis(),
-                r#where: b"contract/test".to_vec(),
-                why: sccgub_types::transition::CausalJustification {
-                    invoking_rule: [2u8; 32],
-                    precedence_level: PrecedenceLevel::Meaning,
-                    causal_ancestors: vec![],
-                    constraint_proof: vec![],
-                },
-                how: sccgub_types::transition::TransitionMechanism::ContractExecution {
-                    contract_id: contract.contract_id,
-                },
-                which: std::collections::HashSet::new(),
-                what_declared: "invoke transfer".into(),
-            },
-            nonce: 0,
-            signature: sccgub_crypto::signature::sign(&agent_key, b"test"),
-        };
-
-        let result = execute_contract(&contract, &tx, &state, 1000);
-        assert!(result.verdict.is_accepted());
-        assert!(result.steps_used <= 1000);
+    fn test_agent(level: PrecedenceLevel) -> sccgub_types::agent::AgentIdentity {
+        let key = sccgub_crypto::keys::generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        sccgub_types::agent::AgentIdentity {
+            agent_id: sccgub_crypto::hash::blake3_hash(&pk),
+            public_key: pk,
+            mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
+            registration_block: 0,
+            governance_level: level,
+            norm_set: std::collections::HashSet::new(),
+            responsibility: sccgub_types::agent::ResponsibilityState::default(),
+        }
     }
 
-    #[test]
-    fn test_contract_step_limit() {
-        let contract = test_contract();
-        let state = ManagedWorldState::new();
-
-        let (agent, agent_key) = {
-            let key = sccgub_crypto::keys::generate_keypair();
-            let pk = *key.verifying_key().as_bytes();
-            let agent_id = sccgub_crypto::hash::blake3_hash(&pk);
-            let agent = sccgub_types::agent::AgentIdentity {
-                agent_id,
-                public_key: pk,
-                mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
-                registration_block: 0,
-                governance_level: PrecedenceLevel::Meaning,
-                norm_set: std::collections::HashSet::new(),
-                responsibility: sccgub_types::agent::ResponsibilityState::default(),
-            };
-            (agent, key)
-        };
-
-        let tx = sccgub_types::transition::SymbolicTransition {
+    fn test_tx(agent: sccgub_types::agent::AgentIdentity, contract: &SymbolicCausalContract) -> SymbolicTransition {
+        SymbolicTransition {
             tx_id: [0u8; 32],
             actor: agent,
             intent: sccgub_types::transition::TransitionIntent {
                 kind: sccgub_types::transition::TransitionKind::ContractInvoke,
-                target: b"test".to_vec(),
+                target: b"contract".to_vec(),
                 declared_purpose: "test".into(),
             },
-            preconditions: vec![],
-            postconditions: vec![],
+            // Include contract's laws as preconditions and postconditions.
+            preconditions: contract.laws.clone(),
+            postconditions: contract.laws.clone(),
             payload: sccgub_types::transition::OperationPayload::Write {
                 key: b"k".to_vec(),
                 value: b"v".to_vec(),
@@ -271,7 +229,7 @@ mod tests {
             wh_binding_intent: sccgub_types::transition::WHBindingIntent {
                 who: [1u8; 32],
                 when: sccgub_types::timestamp::CausalTimestamp::genesis(),
-                r#where: b"test".to_vec(),
+                r#where: b"contract".to_vec(),
                 why: sccgub_types::transition::CausalJustification {
                     invoking_rule: [2u8; 32],
                     precedence_level: PrecedenceLevel::Meaning,
@@ -283,10 +241,47 @@ mod tests {
                 what_declared: "test".into(),
             },
             nonce: 0,
-            signature: sccgub_crypto::signature::sign(&agent_key, b"test"),
-        };
+            signature: vec![0u8; 64],
+        }
+    }
 
-        // With step limit of 0, should reject.
+    #[test]
+    fn test_authorized_execution() {
+        let contract = test_contract();
+        let agent = test_agent(PrecedenceLevel::Meaning);
+        let tx = test_tx(agent, &contract);
+        let state = ManagedWorldState::new();
+        let result = execute_contract(&contract, &tx, &state, 1000);
+        assert!(result.verdict.is_accepted());
+    }
+
+    #[test]
+    fn test_unauthorized_rejected() {
+        let contract = test_contract(); // Requires Meaning.
+        let agent = test_agent(PrecedenceLevel::Optimization); // Only Optimization.
+        let tx = test_tx(agent, &contract);
+        let state = ManagedWorldState::new();
+        let result = execute_contract(&contract, &tx, &state, 1000);
+        assert!(!result.verdict.is_accepted(), "Should reject unauthorized actor");
+    }
+
+    #[test]
+    fn test_missing_precondition_rejected() {
+        let contract = test_contract();
+        let agent = test_agent(PrecedenceLevel::Meaning);
+        let mut tx = test_tx(agent, &contract);
+        tx.preconditions = vec![]; // Remove preconditions.
+        let state = ManagedWorldState::new();
+        let result = execute_contract(&contract, &tx, &state, 1000);
+        assert!(!result.verdict.is_accepted(), "Should reject missing precondition");
+    }
+
+    #[test]
+    fn test_step_limit() {
+        let contract = test_contract();
+        let agent = test_agent(PrecedenceLevel::Meaning);
+        let tx = test_tx(agent, &contract);
+        let state = ManagedWorldState::new();
         let result = execute_contract(&contract, &tx, &state, 0);
         assert!(!result.verdict.is_accepted());
     }
