@@ -67,7 +67,7 @@ impl Chain {
             ..GovernanceState::default()
         };
 
-        // Replay all block transitions to reconstruct state.
+        // Replay all block transitions to reconstruct state + nonces.
         for block in &blocks {
             for tx in &block.body.transitions {
                 if let sccgub_types::transition::OperationPayload::Write { key, value } =
@@ -81,6 +81,8 @@ impl Chain {
                         deletes: vec![],
                     });
                 }
+                // Replay nonces for replay protection.
+                let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
             }
             state.set_height(block.header.height);
         }

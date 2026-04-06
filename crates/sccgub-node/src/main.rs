@@ -127,15 +127,19 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     let mut chain = Chain::from_blocks(blocks);
 
-    // Create a test agent.
+    // Create a test agent with correctly derived agent_id.
     let agent_key = generate_keypair();
     let agent_pk = *agent_key.verifying_key().as_bytes();
-    let agent_id = blake3_hash(&agent_pk);
+    let seal = MfidelAtomicSeal::from_height(chain.height() + 1);
+    let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+        &agent_pk,
+        &serde_json::to_vec(&seal).unwrap(),
+    ]);
 
     let agent = AgentIdentity {
         agent_id,
         public_key: agent_pk,
-        mfidel_seal: MfidelAtomicSeal::from_height(chain.height() + 1),
+        mfidel_seal: seal,
         registration_block: chain.height(),
         governance_level: PrecedenceLevel::Meaning,
         norm_set: HashSet::new(),
@@ -421,11 +425,15 @@ fn cmd_demo() {
 
     let agent_key = generate_keypair();
     let agent_pk = *agent_key.verifying_key().as_bytes();
-    let agent_id = blake3_hash(&agent_pk);
+    let seal = MfidelAtomicSeal::from_height(1);
+    let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+        &agent_pk,
+        &serde_json::to_vec(&seal).unwrap(),
+    ]);
     let agent = AgentIdentity {
         agent_id,
         public_key: agent_pk,
-        mfidel_seal: MfidelAtomicSeal::from_height(1),
+        mfidel_seal: seal,
         registration_block: 0,
         governance_level: PrecedenceLevel::Meaning,
         norm_set: HashSet::new(),

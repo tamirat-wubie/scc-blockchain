@@ -53,15 +53,17 @@ impl ManagedWorldState {
         }
     }
 
-    /// Check and update nonce for an agent. Returns Err if nonce is not strictly increasing.
+    /// Check and update nonce for an agent.
+    /// Nonce must be >= 1 and strictly greater than last seen.
     pub fn check_nonce(&mut self, agent_id: &AgentId, nonce: u128) -> Result<(), String> {
+        if nonce == 0 {
+            return Err("Nonce must be >= 1".into());
+        }
         let last = self.agent_nonces.get(agent_id).copied().unwrap_or(0);
-        if nonce <= last && last > 0 {
+        if nonce <= last {
             return Err(format!(
                 "Nonce replay: got {} but last seen was {} for agent {}",
-                nonce,
-                last,
-                hex::encode(agent_id)
+                nonce, last, hex::encode(agent_id)
             ));
         }
         self.agent_nonces.insert(*agent_id, nonce);

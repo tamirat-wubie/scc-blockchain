@@ -90,12 +90,21 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         return log;
     }
 
+    // Phase 4: Topology — block-only (auto-pass at tx level).
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Topology,
+        passed: true,
+        details: "Block-only phase, auto-pass at tx level".into(),
+    });
+
     // Phase 5: Form — validate payload structure.
+    let addr_ok = tx.intent.target.len() <= sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Form,
-        passed: true,
-        details: "Form validation passed".into(),
+        passed: addr_ok,
+        details: if addr_ok { "Form validated".into() } else { "Address exceeds max length".into() },
     });
+    if !addr_ok { log.finalize(); return log; }
 
     // Phase 6: Organization — check invariant preservation.
     log.phases_completed.push(PhiPhaseResult {
@@ -111,22 +120,51 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         details: "Module boundaries respected".into(),
     });
 
-    // Phase 8: Execution — verify signature and termination.
+    // Phase 8: Execution — verify signature present and termination.
     let sig_ok = !tx.signature.is_empty();
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Execution,
         passed: sig_ok,
-        details: if sig_ok {
-            "Execution verified (signature present)".into()
-        } else {
-            "Missing signature".into()
-        },
+        details: if sig_ok { "Signature present".into() } else { "Missing signature".into() },
     });
-    if !sig_ok {
-        return log;
-    }
+    if !sig_ok { log.finalize(); return log; }
 
-    log.all_phases_passed = true;
+    // Phase 9: Body — block-only (auto-pass at tx level).
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Body,
+        passed: true,
+        details: "Block-only phase, auto-pass at tx level".into(),
+    });
+
+    // Phase 10: Architecture — block-only (auto-pass at tx level).
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Architecture,
+        passed: true,
+        details: "Block-only phase, auto-pass at tx level".into(),
+    });
+
+    // Phase 11: Performance — block-only (auto-pass at tx level).
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Performance,
+        passed: true,
+        details: "Block-only phase, auto-pass at tx level".into(),
+    });
+
+    // Phase 12: Feedback — per-tx feedback stable.
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Feedback,
+        passed: true,
+        details: "Feedback stable".into(),
+    });
+
+    // Phase 13: Evolution — per-tx evolution recorded.
+    log.phases_completed.push(PhiPhaseResult {
+        phase: PhiPhase::Evolution,
+        passed: true,
+        details: "Evolution recorded".into(),
+    });
+
+    log.finalize();
     log
 }
 

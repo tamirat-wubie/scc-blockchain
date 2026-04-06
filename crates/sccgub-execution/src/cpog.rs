@@ -71,7 +71,17 @@ pub fn validate_cpog(
         errors.push("Transition count mismatch".into());
     }
 
-    // 7. Run full 13-phase Phi traversal.
+    // 7. Receipt root must match actual receipts.
+    if !block.receipts.is_empty() {
+        let receipt_hashes: Vec<&[u8]> =
+            block.receipts.iter().map(|r| r.tx_id.as_slice()).collect();
+        let computed_receipt_root = merkle_root_of_bytes(&receipt_hashes);
+        if block.header.receipt_root != computed_receipt_root {
+            errors.push("Receipt root mismatch".into());
+        }
+    }
+
+    // 8. Run full 13-phase Phi traversal.
     let phi_log = phi_traversal_block(block, state);
     if !phi_log.is_all_passed() {
         for phase_result in &phi_log.phases_completed {

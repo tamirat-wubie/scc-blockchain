@@ -31,11 +31,15 @@ use sccgub_types::ZERO_HASH;
 fn create_test_agent() -> (AgentIdentity, ed25519_dalek::SigningKey) {
     let key = generate_keypair();
     let pk = *key.verifying_key().as_bytes();
-    let agent_id = blake3_hash(&pk);
+    let seal = MfidelAtomicSeal::from_height(1);
+    let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+        &pk,
+        &serde_json::to_vec(&seal).unwrap(),
+    ]);
     let agent = AgentIdentity {
         agent_id,
         public_key: pk,
-        mfidel_seal: MfidelAtomicSeal::from_height(1),
+        mfidel_seal: seal,
         registration_block: 0,
         governance_level: PrecedenceLevel::Meaning,
         norm_set: HashSet::new(),
