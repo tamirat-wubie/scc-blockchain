@@ -168,13 +168,13 @@ fn select_relevant_subgraph(
     state: &ManagedWorldState,
     _weights: &ConstraintWeights,
 ) -> u64 {
+    let total_cap = MAX_SCAN_PER_SYMBOL * active_symbols.len() as u64;
     let mut count = 0u64;
     for symbol in active_symbols {
-        for (key, _) in state.trie.iter() {
-            if key.starts_with(symbol) {
-                count = count.saturating_add(1);
-            }
-            if count >= MAX_SCAN_PER_SYMBOL * active_symbols.len() as u64 {
+        // Use efficient prefix range scan instead of full trie iteration.
+        for _ in state.trie.prefix_iter(symbol) {
+            count = count.saturating_add(1);
+            if count >= total_cap {
                 return count;
             }
         }

@@ -384,7 +384,7 @@ fn cmd_verify(data_dir: &std::path::Path) {
             }
         }
 
-        // Replay state.
+        // Replay state + nonces.
         for tx in &block.body.transitions {
             if let OperationPayload::Write { key, value } = &tx.payload {
                 state.apply_delta(&StateDelta {
@@ -395,8 +395,32 @@ fn cmd_verify(data_dir: &std::path::Path) {
                     deletes: vec![],
                 });
             }
+            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
         state.set_height(block.header.height);
+
+        // Verify state root matches block header (skip genesis which has no transitions).
+        if block.header.height > 0 {
+            let computed_root = state.state_root();
+            if block.header.state_root != computed_root {
+                println!(
+                    "  [FAIL] Block #{}: state root mismatch (header: {}, computed: {})",
+                    block.header.height,
+                    hex::encode(block.header.state_root),
+                    hex::encode(computed_root),
+                );
+                errors += 1;
+            }
+        }
+
+        // Check block height continuity.
+        if block.header.height != i as u64 {
+            println!(
+                "  [FAIL] Block #{}: height gap (expected {}, got {})",
+                block.header.height, i, block.header.height
+            );
+            errors += 1;
+        }
     }
 
     println!();

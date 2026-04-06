@@ -12,6 +12,8 @@ use sccgub_types::Hash;
 pub struct Mempool {
     pending: VecDeque<SymbolicTransition>,
     seen_ids: HashSet<Hash>,
+    /// IDs of transactions already included in blocks — prevents re-submission.
+    confirmed_ids: HashSet<Hash>,
     max_size: usize,
     pub containment: ContainmentState,
 }
@@ -21,8 +23,16 @@ impl Mempool {
         Self {
             pending: VecDeque::new(),
             seen_ids: HashSet::new(),
+            confirmed_ids: HashSet::new(),
             max_size,
             containment: ContainmentState::default(),
+        }
+    }
+
+    /// Mark transaction IDs as confirmed (included in a block).
+    pub fn mark_confirmed(&mut self, ids: &[Hash]) {
+        for id in ids {
+            self.confirmed_ids.insert(*id);
         }
     }
 
@@ -42,6 +52,11 @@ impl Mempool {
         // Reject duplicate tx_id.
         if self.seen_ids.contains(&tx.tx_id) {
             return Err("Duplicate transaction ID".into());
+        }
+
+        // Reject already-confirmed (included in block) transactions.
+        if self.confirmed_ids.contains(&tx.tx_id) {
+            return Err("Transaction already included in a block".into());
         }
 
         // Evict oldest if at capacity (O(1) with VecDeque).

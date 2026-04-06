@@ -147,6 +147,9 @@ impl Chain {
         let result = validate_cpog(&block, &self.state, &parent_id);
         match result {
             CpogResult::Valid => {
+                // Mark included tx IDs as confirmed in mempool.
+                let confirmed: Vec<_> = block.body.transitions.iter().map(|tx| tx.tx_id).collect();
+                self.mempool.mark_confirmed(&confirmed);
                 // Commit speculative state.
                 self.state = speculative_state;
                 self.blocks.push(block);

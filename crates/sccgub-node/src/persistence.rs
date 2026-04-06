@@ -12,9 +12,22 @@ pub struct ChainStore {
 #[allow(dead_code)]
 impl ChainStore {
     /// Create a new chain store at the given directory.
+    /// Cleans up any stale .tmp files from interrupted writes.
     pub fn new(base_dir: &Path) -> std::io::Result<Self> {
         fs::create_dir_all(base_dir.join("blocks"))?;
         fs::create_dir_all(base_dir.join("state"))?;
+        // Clean up stale .tmp files from interrupted atomic writes.
+        if let Ok(entries) = fs::read_dir(base_dir.join("blocks")) {
+            for entry in entries.flatten() {
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+                {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
         Ok(Self {
             base_dir: base_dir.to_path_buf(),
         })
@@ -75,6 +88,25 @@ impl ChainStore {
                     block.header.height
                 )));
             }
+            // Verify height continuity and parent chain linkage.
+            let expected_height = blocks.len() as u64;
+            if block.header.height != expected_height {
+                return Err(std::io::Error::other(format!(
+                    "Block height gap: expected {}, got {}",
+                    expected_height, block.header.height
+                )));
+            }
+            if expected_height > 0 {
+                let prev: &Block = &blocks[blocks.len() - 1];
+                if block.header.parent_id != prev.header.block_id {
+                    return Err(std::io::Error::other(format!(
+                        "Parent chain broken at height {}: parent {} != prev block {}",
+                        block.header.height,
+                        hex::encode(block.header.parent_id),
+                        hex::encode(prev.header.block_id),
+                    )));
+                }
+            }
             blocks.push(block);
         }
         Ok(blocks)
@@ -103,15 +135,17 @@ impl ChainStore {
         }
     }
 
-    /// Save chain metadata.
+    /// Save chain metadata (atomic write).
     pub fn save_metadata(&self, chain_id: &[u8; 32]) -> std::io::Result<()> {
         let path = self.base_dir.join("chain_meta.json");
+        let tmp_path = self.base_dir.join("chain_meta.json.tmp");
         let json = serde_json::json!({
             "chain_id": hex::encode(chain_id),
             "version": "0.1.0",
             "spec": "SCCGUB v2.1"
         });
-        fs::write(path, serde_json::to_string_pretty(&json).unwrap())
+        fs::write(&tmp_path, serde_json::to_string_pretty(&json).unwrap())?;
+        fs::rename(&tmp_path, &path)
     }
 
     pub fn base_dir(&self) -> &Path {
@@ -135,12 +169,13 @@ mod tests {
         Block {
             header: BlockHeader {
                 chain_id: [1u8; 32], // Non-zero for non-genesis validity.
-                block_id: [height as u8; 32],
+                // block_id uses height+1 so block 0 is non-zero.
+                block_id: [(height + 1) as u8; 32],
                 parent_id: if height == 0 {
                     ZERO_HASH
                 } else {
-                    // Use height+100 offset to avoid ZERO_HASH for height=1.
-                    [(height as u8).wrapping_add(100); 32]
+                    // Must match prev block_id: [height as u8; 32].
+                    [height as u8; 32]
                 },
                 height,
                 timestamp: CausalTimestamp::genesis(),

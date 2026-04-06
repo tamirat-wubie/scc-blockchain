@@ -26,6 +26,9 @@ pub struct WorldState {
     pub height: u64,
 }
 
+/// Maximum causal history entries per symbol (ring buffer behavior).
+pub const MAX_CAUSAL_HISTORY: usize = 256;
+
 /// State of a symbol in the state trie.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolState {
@@ -35,6 +38,16 @@ pub struct SymbolState {
     pub version: u64,
     pub constraints: HashSet<ConstraintId>,
     pub causal_history: Vec<Hash>,
+}
+
+impl SymbolState {
+    /// Append to causal history with bounded size.
+    pub fn push_history(&mut self, hash: Hash) {
+        if self.causal_history.len() >= MAX_CAUSAL_HISTORY {
+            self.causal_history.remove(0);
+        }
+        self.causal_history.push(hash);
+    }
 }
 
 impl SymbolState {

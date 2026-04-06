@@ -74,7 +74,7 @@ fn exp_by_squaring(base: TensionValue, exp: u64) -> TensionValue {
     result
 }
 
-/// Record a positive contribution.
+/// Record a positive contribution. Enforces MAX_CONTRIBUTIONS cap.
 pub fn record_positive(
     state: &mut ResponsibilityState,
     tx_id: TransitionId,
@@ -87,9 +87,13 @@ pub fn record_positive(
         block_height: height,
     });
     state.net_responsibility = state.net_responsibility + value;
+    if state.positive_contributions.len() > MAX_CONTRIBUTIONS {
+        let drain = state.positive_contributions.len() - MAX_CONTRIBUTIONS;
+        state.positive_contributions.drain(0..drain);
+    }
 }
 
-/// Record a negative contribution.
+/// Record a negative contribution. Enforces MAX_CONTRIBUTIONS cap.
 pub fn record_negative(
     state: &mut ResponsibilityState,
     tx_id: TransitionId,
@@ -102,6 +106,10 @@ pub fn record_negative(
         block_height: height,
     });
     state.net_responsibility = state.net_responsibility - value;
+    if state.negative_contributions.len() > MAX_CONTRIBUTIONS {
+        let drain = state.negative_contributions.len() - MAX_CONTRIBUTIONS;
+        state.negative_contributions.drain(0..drain);
+    }
 }
 
 /// Check INV-13 (v2.1): |Σ R_i_net| <= R_max_imbalance.

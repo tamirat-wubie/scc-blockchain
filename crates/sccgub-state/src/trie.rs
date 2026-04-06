@@ -65,6 +65,20 @@ impl StateTrie {
     pub fn iter(&self) -> impl Iterator<Item = (&SymbolAddress, &Vec<u8>)> {
         self.store.iter()
     }
+
+    /// Iterate entries with a given prefix (efficient range scan on BTreeMap).
+    pub fn prefix_iter<'a>(
+        &'a self,
+        prefix: &'a [u8],
+    ) -> impl Iterator<Item = (&'a SymbolAddress, &'a Vec<u8>)> {
+        let start = prefix.to_vec();
+        self.store.range(start..).take_while(move |(k, _)| k.starts_with(prefix))
+    }
+
+    /// Count entries matching a prefix (efficient).
+    pub fn count_prefix(&self, prefix: &[u8]) -> usize {
+        self.prefix_iter(prefix).count()
+    }
 }
 
 impl Default for StateTrie {
