@@ -150,6 +150,10 @@ impl Chain {
                 // Mark included tx IDs as confirmed in mempool.
                 let confirmed: Vec<_> = block.body.transitions.iter().map(|tx| tx.tx_id).collect();
                 self.mempool.mark_confirmed(&confirmed);
+
+                // Tick containment counters (quarantine decay).
+                self.mempool.containment.tick_block();
+
                 // Commit speculative state.
                 self.state = speculative_state;
                 self.blocks.push(block);

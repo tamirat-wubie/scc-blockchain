@@ -60,6 +60,16 @@ enum Commands {
         /// Transaction ID prefix (hex).
         prefix: String,
     },
+    /// Export the entire chain to a single JSON file.
+    Export {
+        /// Output file path.
+        output: std::path::PathBuf,
+    },
+    /// Import a chain from an exported JSON file.
+    Import {
+        /// Input file path.
+        input: std::path::PathBuf,
+    },
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -77,6 +87,8 @@ fn main() {
         Commands::ShowState => cmd_show_state(&cli.data_dir),
         Commands::Verify => cmd_verify(&cli.data_dir),
         Commands::SearchTx { prefix } => cmd_search_tx(&cli.data_dir, &prefix),
+        Commands::Export { output } => cmd_export(&cli.data_dir, &output),
+        Commands::Import { input } => cmd_import(&cli.data_dir, &input),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -438,6 +450,132 @@ fn cmd_verify(data_dir: &std::path::Path) {
         println!("  Verification FAILED: {} block(s) invalid.", errors);
         std::process::exit(1);
     }
+}
+
+fn cmd_export(data_dir: &std::path::Path, output: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found.");
+            std::process::exit(1);
+        }
+    };
+
+    let snapshot = serde_json::json!({
+        "format": "sccgub-chain-export",
+        "version": "1.0",
+        "chain_id": hex::encode(blocks[0].header.chain_id),
+        "height": blocks.last().unwrap().header.height,
+        "block_count": blocks.len(),
+        "blocks": blocks,
+    });
+
+    let json = serde_json::to_string_pretty(&snapshot).expect("Serialization failed");
+
+    // Write atomically.
+    let tmp = output.with_extension("tmp");
+    std::fs::write(&tmp, &json).expect("Failed to write export file");
+    std::fs::rename(&tmp, output).expect("Failed to finalize export file");
+
+    println!(
+        "Exported {} blocks (height {}) to {:?} ({:.1} KB)",
+        blocks.len(),
+        blocks.last().unwrap().header.height,
+        output,
+        json.len() as f64 / 1024.0
+    );
+}
+
+fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Check if chain already exists.
+    if store.load_block(0).is_ok() {
+        eprintln!("Chain already exists at {:?}. Delete it first to import.", data_dir);
+        std::process::exit(1);
+    }
+
+    let json = std::fs::read_to_string(input).expect("Failed to read import file");
+    let snapshot: serde_json::Value = serde_json::from_str(&json).expect("Invalid JSON");
+
+    let format = snapshot.get("format").and_then(|v| v.as_str()).unwrap_or("");
+    if format != "sccgub-chain-export" {
+        eprintln!("Invalid export format: expected 'sccgub-chain-export', got '{}'", format);
+        std::process::exit(1);
+    }
+
+    let blocks: Vec<sccgub_types::block::Block> = serde_json::from_value(
+        snapshot.get("blocks").cloned().unwrap_or_default(),
+    )
+    .expect("Failed to parse blocks from export");
+
+    // Verify and save each block.
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+    state.state.governance_state = sccgub_types::governance::GovernanceState {
+        finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+        ..Default::default()
+    };
+
+    for (i, block) in blocks.iter().enumerate() {
+        if !block.is_structurally_valid() {
+            eprintln!("Block #{} failed structural validation", block.header.height);
+            std::process::exit(1);
+        }
+
+        let parent_id = if i == 0 {
+            sccgub_types::ZERO_HASH
+        } else {
+            blocks[i - 1].header.block_id
+        };
+
+        let result = sccgub_execution::cpog::validate_cpog(block, &state, &parent_id);
+        if !result.is_valid() {
+            eprintln!("Block #{} failed CPoG validation: {:?}", block.header.height, result);
+            std::process::exit(1);
+        }
+
+        store.save_block(block).expect("Failed to save block");
+
+        // Replay state.
+        for tx in &block.body.transitions {
+            if let OperationPayload::Write { key, value } = &tx.payload {
+                state.apply_delta(&StateDelta {
+                    writes: vec![StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+        }
+        state.set_height(block.header.height);
+    }
+
+    if let Some(chain_id) = blocks.first().map(|b| b.header.chain_id) {
+        store.save_metadata(&chain_id).expect("Failed to save metadata");
+    }
+
+    println!(
+        "Imported {} blocks (height {}) from {:?}",
+        blocks.len(),
+        blocks.last().map_or(0, |b| b.header.height),
+        input
+    );
 }
 
 fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
