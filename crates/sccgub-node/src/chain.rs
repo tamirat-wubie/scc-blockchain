@@ -3,9 +3,11 @@ use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
 use sccgub_crypto::signature::sign;
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
+use sccgub_state::balances::BalanceLedger;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::{Block, BlockBody, BlockHeader};
 use sccgub_types::causal::{CausalEdge, CausalGraphDelta, CausalVertex};
+use sccgub_types::economics::EconomicState;
 use sccgub_types::governance::{FinalityMode, GovernanceSnapshot, GovernanceState};
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::proof::{CausalProof, PhiTraversalLog};
@@ -24,6 +26,10 @@ pub struct Chain {
     pub mempool: Mempool,
     pub chain_id: Hash,
     pub validator_key: ed25519_dalek::SigningKey,
+    #[allow(dead_code)]
+    pub economics: EconomicState,
+    #[allow(dead_code)]
+    pub balances: BalanceLedger,
 }
 
 impl Chain {
@@ -41,12 +47,18 @@ impl Chain {
 
         let genesis = build_genesis_block(chain_id, validator_id, &validator_key);
 
+        // Mint initial supply to the validator (genesis allocation).
+        let mut balances = BalanceLedger::new();
+        balances.credit(&validator_id, TensionValue::from_integer(1_000_000));
+
         let mut chain = Chain {
             blocks: vec![genesis],
             state,
             mempool: Mempool::new(10_000),
             chain_id,
             validator_key,
+            economics: EconomicState::default(),
+            balances,
         };
 
         chain.state.set_height(0);
@@ -93,6 +105,8 @@ impl Chain {
             mempool: Mempool::new(10_000),
             chain_id,
             validator_key,
+            economics: EconomicState::default(),
+            balances: BalanceLedger::new(),
         }
     }
 

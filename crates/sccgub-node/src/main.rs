@@ -70,6 +70,8 @@ enum Commands {
         /// Input file path.
         input: std::path::PathBuf,
     },
+    /// Show chain economics: total supply, accounts, fees.
+    Stats,
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -89,6 +91,7 @@ fn main() {
         Commands::SearchTx { prefix } => cmd_search_tx(&cli.data_dir, &prefix),
         Commands::Export { output } => cmd_export(&cli.data_dir, &output),
         Commands::Import { input } => cmd_import(&cli.data_dir, &input),
+        Commands::Stats => cmd_stats(&cli.data_dir),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -628,6 +631,91 @@ fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
     if !found {
         println!("No transaction found with prefix '{}'", prefix);
     }
+}
+
+fn cmd_stats(data_dir: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found.");
+            std::process::exit(1);
+        }
+    };
+
+    let total_txs: u64 = blocks.iter().map(|b| b.body.transition_count as u64).sum();
+    let total_receipts: u64 = blocks.iter().map(|b| b.receipts.len() as u64).sum();
+    let total_causal_edges: u64 = blocks
+        .iter()
+        .map(|b| b.causal_delta.new_edges.len() as u64)
+        .sum();
+    let total_causal_vertices: u64 = blocks
+        .iter()
+        .map(|b| b.causal_delta.new_vertices.len() as u64)
+        .sum();
+
+    // Count unique agents.
+    let mut agents = std::collections::HashSet::new();
+    for block in &blocks {
+        for tx in &block.body.transitions {
+            agents.insert(tx.actor.agent_id);
+        }
+    }
+
+    // State size.
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+    for block in &blocks {
+        for tx in &block.body.transitions {
+            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
+                state.apply_delta(&sccgub_types::transition::StateDelta {
+                    writes: vec![sccgub_types::transition::StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+        }
+    }
+
+    let latest = blocks.last().unwrap();
+    let mfidel_cycle = sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height);
+
+    println!("=== SCCGUB Chain Statistics ===");
+    println!();
+    println!("  Chain");
+    println!("    Height:            {}", latest.header.height);
+    println!("    Blocks:            {}", blocks.len());
+    println!("    Mfidel cycle:      {}", mfidel_cycle);
+    println!();
+    println!("  Transactions");
+    println!("    Total:             {}", total_txs);
+    println!("    Receipts:          {}", total_receipts);
+    println!("    Avg per block:     {:.1}", if blocks.len() > 1 { total_txs as f64 / (blocks.len() - 1) as f64 } else { 0.0 });
+    println!();
+    println!("  Causal Graph");
+    println!("    Vertices:          {}", total_causal_vertices);
+    println!("    Edges:             {}", total_causal_edges);
+    println!();
+    println!("  State");
+    println!("    Entries:           {}", state.trie.len());
+    println!("    State root:        {}", hex::encode(state.state_root()));
+    println!("    Unique agents:     {}", agents.len());
+    println!();
+    println!("  Governance");
+    println!("    Finality:          {:?}", latest.governance.finality_mode);
+    println!("    Emergency:         {}", latest.governance.emergency_mode);
+    println!("    Active norms:      {}", latest.governance.active_norm_count);
+    println!();
+    println!("  Tension");
+    println!("    Current:           {}", latest.header.tension_after);
 }
 
 fn cmd_demo() {
