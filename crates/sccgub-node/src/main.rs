@@ -1,5 +1,6 @@
 mod chain;
 mod mempool;
+mod persistence;
 
 use clap::{Parser, Subcommand};
 use std::collections::HashSet;

@@ -70,16 +70,16 @@ impl Chain {
 
         let validator_id = blake3_hash(self.validator_key.verifying_key().as_bytes());
 
-        let block = build_block(
-            self.chain_id,
+        let block = build_block(BlockBuildParams {
+            chain_id: self.chain_id,
             height,
             parent_id,
-            &parent.header.timestamp,
+            parent_timestamp: &parent.header.timestamp,
             validator_id,
-            &self.validator_key,
+            validator_key: &self.validator_key,
             transitions,
-            &self.state,
-        );
+            state: &self.state,
+        });
 
         // Validate via CPoG.
         let result = validate_cpog(&block, &self.state, &parent_id);
@@ -115,6 +115,7 @@ impl Chain {
     }
 
     /// Get block by height.
+    #[allow(dead_code)]
     pub fn block_at(&self, height: u64) -> Option<&Block> {
         self.blocks.get(height as usize)
     }
@@ -189,16 +190,28 @@ fn build_genesis_block(
     }
 }
 
-fn build_block(
+struct BlockBuildParams<'a> {
     chain_id: Hash,
     height: u64,
     parent_id: Hash,
-    parent_timestamp: &CausalTimestamp,
+    parent_timestamp: &'a CausalTimestamp,
     validator_id: Hash,
-    validator_key: &ed25519_dalek::SigningKey,
+    validator_key: &'a ed25519_dalek::SigningKey,
     transitions: Vec<SymbolicTransition>,
-    state: &ManagedWorldState,
-) -> Block {
+    state: &'a ManagedWorldState,
+}
+
+fn build_block(params: BlockBuildParams<'_>) -> Block {
+    let BlockBuildParams {
+        chain_id,
+        height,
+        parent_id,
+        parent_timestamp,
+        validator_id,
+        validator_key,
+        transitions,
+        state,
+    } = params;
     let timestamp = parent_timestamp.successor(validator_id, blake3_hash(&serde_json::to_vec(parent_timestamp).unwrap_or_default()));
     let seal = MfidelAtomicSeal::from_height(height);
 

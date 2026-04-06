@@ -66,10 +66,8 @@ impl CausalGraph {
         }
 
         for v in &self.vertices {
-            if color.get(v) == Some(&Color::White) {
-                if !dfs(v, &adj, &mut color) {
-                    return false;
-                }
+            if color.get(v) == Some(&Color::White) && !dfs(v, &adj, &mut color) {
+                return false;
             }
         }
         true

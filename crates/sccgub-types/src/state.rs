@@ -8,7 +8,7 @@ use crate::tension::TensionField;
 use crate::{AgentId, ConstraintId, ContractId, Hash, SymbolAddress};
 
 /// World state — the entire chain state at a given block height.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldState {
     /// Symbol-addressed state store.
     pub symbol_store: HashMap<SymbolAddress, SymbolState>,
@@ -24,20 +24,6 @@ pub struct WorldState {
     pub contract_registry: HashMap<ContractId, SymbolicCausalContract>,
     /// Current block height.
     pub height: u64,
-}
-
-impl Default for WorldState {
-    fn default() -> Self {
-        Self {
-            symbol_store: HashMap::new(),
-            agent_registry: HashMap::new(),
-            constraint_set: HashSet::new(),
-            tension_field: TensionField::default(),
-            governance_state: GovernanceState::default(),
-            contract_registry: HashMap::new(),
-            height: 0,
-        }
-    }
 }
 
 /// State of a symbol in the state trie.

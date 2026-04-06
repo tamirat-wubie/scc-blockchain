@@ -1,3 +1,4 @@
+pub mod contract;
 pub mod cpog;
 pub mod phi;
 pub mod validate;

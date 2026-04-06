@@ -125,19 +125,10 @@ pub struct ConstraintSatisfaction {
 }
 
 /// The actual state change performed by a transition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StateDelta {
     pub writes: Vec<StateWrite>,
     pub deletes: Vec<SymbolAddress>,
-}
-
-impl Default for StateDelta {
-    fn default() -> Self {
-        Self {
-            writes: Vec::new(),
-            deletes: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

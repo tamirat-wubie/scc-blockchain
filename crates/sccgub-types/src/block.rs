@@ -73,10 +73,8 @@ impl Block {
     /// Check basic structural validity (not full CPoG — just format).
     pub fn is_structurally_valid(&self) -> bool {
         // Height 0 means genesis: parent must be ZERO_HASH.
-        if self.header.height == 0 {
-            if self.header.parent_id != ZERO_HASH {
-                return false;
-            }
+        if self.header.height == 0 && self.header.parent_id != ZERO_HASH {
+            return false;
         }
         // Mfidel seal must match deterministic assignment.
         let expected_seal = MfidelAtomicSeal::from_height(self.header.height);
