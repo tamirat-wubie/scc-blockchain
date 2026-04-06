@@ -72,6 +72,11 @@ enum Commands {
     },
     /// Show chain economics: total supply, accounts, fees.
     Stats,
+    /// Show the balance of a specific agent (by hex ID prefix).
+    Balance {
+        /// Agent ID (hex, can be prefix).
+        agent: String,
+    },
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -92,6 +97,7 @@ fn main() {
         Commands::Export { output } => cmd_export(&cli.data_dir, &output),
         Commands::Import { input } => cmd_import(&cli.data_dir, &input),
         Commands::Stats => cmd_stats(&cli.data_dir),
+        Commands::Balance { agent } => cmd_balance(&cli.data_dir, &agent),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -631,6 +637,73 @@ fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
     if !found {
         println!("No transaction found with prefix '{}'", prefix);
     }
+}
+
+fn cmd_balance(data_dir: &std::path::Path, agent_prefix: &str) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found.");
+            std::process::exit(1);
+        }
+    };
+
+    // Replay to reconstruct balances.
+    let mut balances = sccgub_state::balances::BalanceLedger::new();
+
+    // Genesis mint: validator of block 0 gets initial supply.
+    balances.credit(
+        &blocks[0].header.validator_id,
+        sccgub_types::tension::TensionValue::from_integer(1_000_000),
+    );
+
+    for block in &blocks {
+        for tx in &block.body.transitions {
+            if let sccgub_types::transition::OperationPayload::AssetTransfer {
+                from,
+                to,
+                amount,
+            } = &tx.payload
+            {
+                let _ = balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount));
+            }
+        }
+    }
+
+    let prefix_lower = agent_prefix.to_lowercase();
+
+    // Show all balances matching prefix, or all if prefix is empty.
+    let mut found = false;
+    for (agent_id, balance) in &balances.balances {
+        let hex_id = hex::encode(agent_id);
+        if (prefix_lower.is_empty() || hex_id.starts_with(&prefix_lower))
+            && balance.raw() > 0
+        {
+            found = true;
+            println!("Agent: {}", hex_id);
+            println!("  Balance: {}", balance);
+            println!();
+        }
+    }
+
+    if !found {
+        if prefix_lower.is_empty() {
+            println!("No accounts with positive balance.");
+        } else {
+            println!("No agent found with prefix '{}'", agent_prefix);
+        }
+    }
+
+    println!("Total supply: {}", balances.total_supply());
+    println!("Accounts:     {}", balances.account_count());
 }
 
 fn cmd_stats(data_dir: &std::path::Path) {

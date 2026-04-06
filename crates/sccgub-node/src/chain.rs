@@ -129,15 +129,31 @@ impl Chain {
 
         // Speculatively apply state changes to compute post-transition root.
         let mut speculative_state = self.state.clone();
+        let mut speculative_balances = self.balances.clone();
         for tx in &transitions {
-            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
-                speculative_state.apply_delta(&sccgub_types::transition::StateDelta {
-                    writes: vec![sccgub_types::transition::StateWrite {
-                        address: key.clone(),
-                        value: value.clone(),
-                    }],
-                    deletes: vec![],
-                });
+            match &tx.payload {
+                sccgub_types::transition::OperationPayload::Write { key, value } => {
+                    speculative_state.apply_delta(&sccgub_types::transition::StateDelta {
+                        writes: vec![sccgub_types::transition::StateWrite {
+                            address: key.clone(),
+                            value: value.clone(),
+                        }],
+                        deletes: vec![],
+                    });
+                }
+                sccgub_types::transition::OperationPayload::AssetTransfer {
+                    from,
+                    to,
+                    amount,
+                } => {
+                    let amt = TensionValue(*amount);
+                    if let Err(e) = speculative_balances.transfer(from, to, amt) {
+                        // Transfer failed — skip this tx (it passed validation
+                        // but state changed between validation and application).
+                        eprintln!("Transfer failed during speculative apply: {}", e);
+                    }
+                }
+                _ => {}
             }
             // Commit nonce.
             let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
@@ -168,8 +184,9 @@ impl Chain {
                 // Tick containment counters (quarantine decay).
                 self.mempool.containment.tick_block();
 
-                // Commit speculative state.
+                // Commit speculative state and balances.
                 self.state = speculative_state;
+                self.balances = speculative_balances;
                 self.blocks.push(block);
                 Ok(self.blocks.last().unwrap())
             }

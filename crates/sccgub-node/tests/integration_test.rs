@@ -744,3 +744,70 @@ fn test_agent_registration_and_lookup() {
     registry.revoke(&id).unwrap();
     assert!(!registry.is_active(&id));
 }
+
+#[test]
+fn test_balance_transfer() {
+    use sccgub_state::balances::BalanceLedger;
+
+    let mut ledger = BalanceLedger::new();
+    let alice = [1u8; 32];
+    let bob = [2u8; 32];
+    let charlie = [3u8; 32];
+
+    // Mint initial supply.
+    ledger.credit(&alice, TensionValue::from_integer(10_000));
+
+    // Transfer chain: alice -> bob -> charlie.
+    ledger
+        .transfer(&alice, &bob, TensionValue::from_integer(3000))
+        .unwrap();
+    ledger
+        .transfer(&bob, &charlie, TensionValue::from_integer(1000))
+        .unwrap();
+
+    assert_eq!(ledger.balance_of(&alice), TensionValue::from_integer(7000));
+    assert_eq!(ledger.balance_of(&bob), TensionValue::from_integer(2000));
+    assert_eq!(ledger.balance_of(&charlie), TensionValue::from_integer(1000));
+
+    // Total supply conserved.
+    assert_eq!(ledger.total_supply(), TensionValue::from_integer(10_000));
+
+    // Insufficient funds rejected.
+    assert!(ledger
+        .transfer(&charlie, &alice, TensionValue::from_integer(5000))
+        .is_err());
+
+    // Zero transfer rejected.
+    assert!(ledger
+        .transfer(&alice, &bob, TensionValue::ZERO)
+        .is_err());
+
+    // Self-transfer rejected.
+    assert!(ledger
+        .transfer(&alice, &alice, TensionValue::from_integer(100))
+        .is_err());
+}
+
+#[test]
+fn test_economic_fee_computation() {
+    use sccgub_types::economics::EconomicState;
+
+    let econ = EconomicState::default();
+    let budget = TensionValue::from_integer(100);
+
+    // Zero tension -> fee equals base_fee.
+    let fee_zero = econ.effective_fee(TensionValue::ZERO, budget);
+    assert_eq!(fee_zero, econ.base_fee);
+
+    // Higher tension -> higher fee.
+    let fee_low = econ.effective_fee(TensionValue::from_integer(20), budget);
+    let fee_high = econ.effective_fee(TensionValue::from_integer(80), budget);
+    assert!(fee_high > fee_low, "Higher tension = higher fee");
+
+    // Negative budget -> base_fee (fallback).
+    let fee_neg = econ.effective_fee(
+        TensionValue::from_integer(50),
+        TensionValue(-(TensionValue::SCALE)),
+    );
+    assert_eq!(fee_neg, econ.base_fee);
+}

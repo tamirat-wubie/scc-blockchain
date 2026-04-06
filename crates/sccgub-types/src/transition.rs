@@ -149,6 +149,13 @@ pub enum ValidationResult {
 pub enum OperationPayload {
     /// Raw key-value write.
     Write { key: SymbolAddress, value: Vec<u8> },
+    /// Asset transfer between agents.
+    AssetTransfer {
+        from: crate::AgentId,
+        to: crate::AgentId,
+        /// Amount as raw fixed-point i128 (TensionValue scale).
+        amount: i128,
+    },
     /// Agent registration data.
     RegisterAgent { public_key: [u8; 32] },
     /// Norm proposal.
