@@ -1,14 +1,21 @@
+use std::collections::HashMap;
+
 use sccgub_types::state::{SymbolState, WorldState};
 use sccgub_types::transition::StateDelta;
-use sccgub_types::{MerkleRoot, SymbolAddress, ZERO_HASH};
+use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
 
 use crate::trie::StateTrie;
 
-/// Managed world state with an underlying Merkle trie.
+/// Maximum allowed key or value size (1 MB).
+pub const MAX_STATE_ENTRY_SIZE: usize = 1_048_576;
+
+/// Managed world state with an underlying Merkle trie and nonce tracking.
 #[derive(Debug, Clone)]
 pub struct ManagedWorldState {
     pub state: WorldState,
     pub trie: StateTrie,
+    /// Per-agent nonce tracking for replay protection.
+    pub agent_nonces: HashMap<AgentId, u128>,
 }
 
 impl ManagedWorldState {
@@ -16,12 +23,20 @@ impl ManagedWorldState {
         Self {
             state: WorldState::default(),
             trie: StateTrie::new(),
+            agent_nonces: HashMap::new(),
         }
     }
 
     /// Apply a state delta to the world state.
+    /// Validates entry sizes to prevent memory exhaustion.
     pub fn apply_delta(&mut self, delta: &StateDelta) {
         for write in &delta.writes {
+            // Enforce size limits.
+            if write.address.len() > MAX_STATE_ENTRY_SIZE
+                || write.value.len() > MAX_STATE_ENTRY_SIZE
+            {
+                continue; // Skip oversized entries.
+            }
             self.trie
                 .insert(write.address.clone(), write.value.clone());
             let symbol = self
@@ -30,12 +45,27 @@ impl ManagedWorldState {
                 .entry(write.address.clone())
                 .or_insert_with(|| SymbolState::new(write.address.clone(), Vec::new(), ZERO_HASH));
             symbol.data = write.value.clone();
-            symbol.version += 1;
+            symbol.version = symbol.version.saturating_add(1);
         }
         for addr in &delta.deletes {
             self.trie.remove(addr);
             self.state.symbol_store.remove(addr);
         }
+    }
+
+    /// Check and update nonce for an agent. Returns Err if nonce is not strictly increasing.
+    pub fn check_nonce(&mut self, agent_id: &AgentId, nonce: u128) -> Result<(), String> {
+        let last = self.agent_nonces.get(agent_id).copied().unwrap_or(0);
+        if nonce <= last && last > 0 {
+            return Err(format!(
+                "Nonce replay: got {} but last seen was {} for agent {}",
+                nonce,
+                last,
+                hex::encode(agent_id)
+            ));
+        }
+        self.agent_nonces.insert(*agent_id, nonce);
+        Ok(())
     }
 
     /// Get the current Merkle state root.

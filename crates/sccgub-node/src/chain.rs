@@ -102,6 +102,7 @@ impl Chain {
     }
 
     /// Produce a new block from mempool transactions.
+    /// Speculatively applies state to compute post-transition state root.
     pub fn produce_block(&mut self) -> Result<&Block, String> {
         let parent = self.blocks.last().ok_or("No blocks in chain")?;
         let parent_id = parent.header.block_id;
@@ -109,6 +110,23 @@ impl Chain {
 
         // Collect validated transitions from mempool.
         let transitions = self.mempool.drain_validated(&self.state);
+
+        // Speculatively apply state changes to compute post-transition root.
+        let mut speculative_state = self.state.clone();
+        for tx in &transitions {
+            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
+                speculative_state.apply_delta(&sccgub_types::transition::StateDelta {
+                    writes: vec![sccgub_types::transition::StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+            // Commit nonce.
+            let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
+        }
+        speculative_state.set_height(height);
 
         let validator_id = blake3_hash(self.validator_key.verifying_key().as_bytes());
 
@@ -120,28 +138,15 @@ impl Chain {
             validator_id,
             validator_key: &self.validator_key,
             transitions,
-            state: &self.state,
+            state: &speculative_state, // Use post-transition state for roots.
         });
 
-        // Validate via CPoG.
+        // Validate via CPoG against pre-transition state (governance checks).
         let result = validate_cpog(&block, &self.state, &parent_id);
         match result {
             CpogResult::Valid => {
-                // Apply state changes.
-                for tx in &block.body.transitions {
-                    if let sccgub_types::transition::OperationPayload::Write { key, value } =
-                        &tx.payload
-                    {
-                        self.state.apply_delta(&sccgub_types::transition::StateDelta {
-                            writes: vec![sccgub_types::transition::StateWrite {
-                                address: key.clone(),
-                                value: value.clone(),
-                            }],
-                            deletes: vec![],
-                        });
-                    }
-                }
-                self.state.set_height(height);
+                // Commit speculative state.
+                self.state = speculative_state;
                 self.blocks.push(block);
                 Ok(self.blocks.last().unwrap())
             }
@@ -350,11 +355,13 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let causal_root: MerkleRoot = if causal_edges.is_empty() {
         ZERO_HASH
     } else {
-        let edge_hashes: Vec<&[u8]> = causal_edges
+        // Serialize each edge to get unique hashes (not dummy bytes).
+        let edge_bytes: Vec<Vec<u8>> = causal_edges
             .iter()
-            .map(|_| b"edge" as &[u8])
+            .map(|e| serde_json::to_vec(e).unwrap_or_default())
             .collect();
-        merkle_root_of_bytes(&edge_hashes)
+        let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
+        merkle_root_of_bytes(&edge_refs)
     };
 
     let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();

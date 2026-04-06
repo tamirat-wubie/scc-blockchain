@@ -144,7 +144,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     let current_height = chain.height();
     for i in 0..num_txs {
-        let tx = create_test_transition(&agent, &agent_key, i as u8, current_height);
+        let tx = create_test_transition(&agent, &agent_key, i, current_height);
         chain.submit_transition(tx);
     }
     println!("Submitted {} transitions to mempool.", num_txs);
@@ -513,7 +513,7 @@ fn print_block_summary(block: &sccgub_types::block::Block) {
 fn create_test_transition(
     agent: &AgentIdentity,
     agent_key: &ed25519_dalek::SigningKey,
-    index: u8,
+    index: u32,
     base_height: u64,
 ) -> SymbolicTransition {
     let key = format!("data/h{}/entry/{}", base_height + 1, index).into_bytes();
@@ -539,20 +539,15 @@ fn create_test_transition(
         value: value.clone(),
     };
 
-    let nonce = index as u128;
-    let target = key.clone();
+    let nonce = (base_height * 1000 + index as u64) as u128 + 1; // Unique, monotonically increasing.
 
-    // Sign canonical bytes: (agent_id, target, nonce) — must match validate.rs::canonical_tx_bytes.
-    let canonical = serde_json::to_vec(&(&agent.agent_id, &target, &nonce)).unwrap_or_default();
-    let tx_id = blake3_hash(&canonical);
-    let signature = sign(agent_key, &canonical);
-
-    SymbolicTransition {
-        tx_id,
+    // Build tx first (without signature), then compute canonical bytes and sign.
+    let mut tx = SymbolicTransition {
+        tx_id: [0u8; 32],
         actor: agent.clone(),
         intent: TransitionIntent {
             kind: TransitionKind::StateWrite,
-            target,
+            target: key,
             declared_purpose: format!("Write entry #{}", index),
         },
         preconditions: vec![],
@@ -561,6 +556,11 @@ fn create_test_transition(
         causal_chain: vec![],
         wh_binding_intent: intent,
         nonce,
-        signature,
-    }
+        signature: vec![],
+    };
+
+    let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+    tx.tx_id = blake3_hash(&canonical);
+    tx.signature = sign(agent_key, &canonical);
+    tx
 }

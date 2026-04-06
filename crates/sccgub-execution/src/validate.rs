@@ -5,8 +5,7 @@ use crate::phi::phi_traversal_tx;
 use crate::wh_check::check_transition_wh;
 
 /// Validate a single transition before inclusion in a block.
-/// Returns Ok(()) if the transition passes per-transaction Phi phases
-/// and has a valid Ed25519 signature.
+/// Checks: WHBinding, signature, nonce replay, and per-tx Phi traversal.
 pub fn validate_transition(
     tx: &SymbolicTransition,
     state: &ManagedWorldState,
@@ -31,6 +30,19 @@ pub fn validate_transition(
         }
     }
 
+    // Check nonce for replay protection.
+    let last_nonce = state
+        .agent_nonces
+        .get(&tx.actor.agent_id)
+        .copied()
+        .unwrap_or(0);
+    if tx.nonce <= last_nonce && last_nonce > 0 {
+        errors.push(format!(
+            "Nonce replay: {} <= last seen {}",
+            tx.nonce, last_nonce
+        ));
+    }
+
     // Run per-tx Phi traversal.
     let phi_log = phi_traversal_tx(tx, state);
     if !phi_log.all_phases_passed {
@@ -49,12 +61,32 @@ pub fn validate_transition(
 }
 
 /// Compute canonical bytes for a transaction (used for signing and verification).
-/// This must match what was signed at submission time.
+/// Covers all semantically meaningful fields to prevent cross-type replay.
+/// Must match what was signed at submission time.
 pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
-    // Canonical form: (agent_id, target, nonce) serialized as JSON.
-    // This is what the test transition creator signs.
-    serde_json::to_vec(&(&tx.actor.agent_id, &tx.intent.target, &tx.nonce))
-        .unwrap_or_default()
+    // Canonical form includes: agent_id, intent kind, target, nonce, payload hash.
+    // This prevents replaying a StateWrite signature as a GovernanceUpdate.
+    let payload_tag = match &tx.payload {
+        sccgub_types::transition::OperationPayload::Write { key, value } => {
+            sccgub_crypto::hash::blake3_hash(
+                &[key.as_slice(), value.as_slice()].concat(),
+            )
+        }
+        sccgub_types::transition::OperationPayload::Noop => [0u8; 32],
+        _ => {
+            let serialized = serde_json::to_vec(&tx.payload).unwrap_or_default();
+            sccgub_crypto::hash::blake3_hash(&serialized)
+        }
+    };
+
+    serde_json::to_vec(&(
+        &tx.actor.agent_id,
+        tx.intent.kind as u8,
+        &tx.intent.target,
+        &tx.nonce,
+        &payload_tag,
+    ))
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -86,6 +118,10 @@ mod tests {
 
         let target = b"test/key".to_vec();
         let nonce = 42u128;
+        let payload = OperationPayload::Write {
+            key: b"test/key".to_vec(),
+            value: b"value".to_vec(),
+        };
 
         let intent = WHBindingIntent {
             who: agent_id,
@@ -102,13 +138,9 @@ mod tests {
             what_declared: "test write".into(),
         };
 
-        // Sign using canonical bytes.
-        let canonical = serde_json::to_vec(&(&agent_id, &target, &nonce)).unwrap();
-        let tx_id = blake3_hash(&canonical);
-        let signature = sign(&key, &canonical);
-
-        SymbolicTransition {
-            tx_id,
+        // Build the tx first to compute canonical bytes, then sign.
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
             actor: agent,
             intent: TransitionIntent {
                 kind: TransitionKind::StateWrite,
@@ -117,15 +149,17 @@ mod tests {
             },
             preconditions: vec![],
             postconditions: vec![],
-            payload: OperationPayload::Write {
-                key: b"test/key".to_vec(),
-                value: b"value".to_vec(),
-            },
+            payload,
             causal_chain: vec![],
             wh_binding_intent: intent,
             nonce,
-            signature,
-        }
+            signature: vec![],
+        };
+
+        let canonical = canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sign(&key, &canonical);
+        tx
     }
 
     #[test]
@@ -139,7 +173,7 @@ mod tests {
     #[test]
     fn test_tampered_signature_fails() {
         let mut tx = make_signed_tx();
-        tx.signature[0] ^= 0xFF; // Corrupt signature.
+        tx.signature[0] ^= 0xFF;
         let state = ManagedWorldState::new();
         let result = validate_transition(&tx, &state);
         assert!(result.is_err(), "Tampered signature should fail");
@@ -154,5 +188,26 @@ mod tests {
         let state = ManagedWorldState::new();
         let result = validate_transition(&tx, &state);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_nonce_replay_rejected() {
+        let tx = make_signed_tx();
+        let mut state = ManagedWorldState::new();
+        // Set last seen nonce to 100 (higher than tx.nonce=42).
+        state.agent_nonces.insert(tx.actor.agent_id, 100);
+        let result = validate_transition(&tx, &state);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Nonce replay")));
+    }
+
+    #[test]
+    fn test_different_intent_kind_different_canonical() {
+        let tx1 = make_signed_tx();
+        let mut tx2 = tx1.clone();
+        tx2.intent.kind = TransitionKind::GovernanceUpdate;
+        // Canonical bytes should differ when intent kind differs.
+        assert_ne!(canonical_tx_bytes(&tx1), canonical_tx_bytes(&tx2));
     }
 }
