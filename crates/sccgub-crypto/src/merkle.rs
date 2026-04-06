@@ -64,6 +64,73 @@ pub fn merkle_root_of_bytes(items: &[&[u8]]) -> [u8; 32] {
     compute_merkle_root(&leaves)
 }
 
+/// Merkle inclusion proof: a list of sibling hashes and their positions.
+#[derive(Debug, Clone)]
+pub struct MerkleProof {
+    /// Sibling hashes from leaf to root. Each entry is (hash, is_right_sibling).
+    pub siblings: Vec<([u8; 32], bool)>,
+}
+
+/// Generate a Merkle inclusion proof for a leaf at the given index.
+pub fn generate_proof(leaves: &[[u8; 32]], index: usize) -> Option<MerkleProof> {
+    if index >= leaves.len() || leaves.is_empty() {
+        return None;
+    }
+
+    let mut current_level: Vec<[u8; 32]> = leaves.iter().map(hash_leaf).collect();
+    let mut proof_index = index;
+    let mut siblings = Vec::new();
+
+    while current_level.len() > 1 {
+        let sibling_index = if proof_index.is_multiple_of(2) {
+            proof_index + 1
+        } else {
+            proof_index - 1
+        };
+
+        if sibling_index < current_level.len() {
+            siblings.push((current_level[sibling_index], proof_index.is_multiple_of(2)));
+        }
+        // else: odd leaf, no sibling — promoted
+
+        // Build next level.
+        let mut next_level = Vec::new();
+        let mut i = 0;
+        while i < current_level.len() {
+            if i + 1 < current_level.len() {
+                next_level.push(hash_internal(&current_level[i], &current_level[i + 1]));
+            } else {
+                next_level.push(current_level[i]); // Odd promote.
+            }
+            i += 2;
+        }
+
+        proof_index /= 2;
+        current_level = next_level;
+    }
+
+    Some(MerkleProof { siblings })
+}
+
+/// Verify a Merkle inclusion proof.
+pub fn verify_proof(
+    root: &[u8; 32],
+    leaf: &[u8; 32],
+    proof: &MerkleProof,
+) -> bool {
+    let mut current = hash_leaf(leaf);
+
+    for (sibling, is_right) in &proof.siblings {
+        if *is_right {
+            current = hash_internal(&current, sibling);
+        } else {
+            current = hash_internal(sibling, &current);
+        }
+    }
+
+    current == *root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,9 +179,53 @@ mod tests {
 
     #[test]
     fn test_length_prefix_prevents_ambiguity() {
-        // "ab" + "cd" should differ from "a" + "bcd"
         let r1 = merkle_root_of_bytes(&[b"ab", b"cd"]);
         let r2 = merkle_root_of_bytes(&[b"a", b"bcd"]);
         assert_ne!(r1, r2, "Length-prefixed hashing should prevent ambiguity");
+    }
+
+    #[test]
+    fn test_merkle_proof_verification() {
+        let leaves: Vec<[u8; 32]> = (0..8).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+
+        // Generate and verify proof for each leaf.
+        for i in 0..leaves.len() {
+            let proof = generate_proof(&leaves, i).unwrap();
+            assert!(
+                verify_proof(&root, &leaves[i], &proof),
+                "Proof failed for leaf {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_merkle_proof_odd_leaves() {
+        let leaves: Vec<[u8; 32]> = (0..5).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+
+        for i in 0..leaves.len() {
+            let proof = generate_proof(&leaves, i).unwrap();
+            assert!(verify_proof(&root, &leaves[i], &proof));
+        }
+    }
+
+    #[test]
+    fn test_merkle_proof_invalid_leaf() {
+        let leaves: Vec<[u8; 32]> = (0..4).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+        let proof = generate_proof(&leaves, 0).unwrap();
+
+        // Wrong leaf should fail.
+        let fake_leaf = blake3_hash(b"fake");
+        assert!(!verify_proof(&root, &fake_leaf, &proof));
+    }
+
+    #[test]
+    fn test_merkle_proof_out_of_bounds() {
+        let leaves: Vec<[u8; 32]> = (0..4).map(|i| blake3_hash(&[i])).collect();
+        assert!(generate_proof(&leaves, 10).is_none());
+        assert!(generate_proof(&[], 0).is_none());
     }
 }

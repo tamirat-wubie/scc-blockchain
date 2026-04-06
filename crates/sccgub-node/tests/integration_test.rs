@@ -657,3 +657,90 @@ fn test_norm_replicator_convergence() {
         l.population_share
     );
 }
+
+#[test]
+fn test_merkle_proof_for_transaction_inclusion() {
+    use sccgub_crypto::merkle::{generate_proof, verify_proof, compute_merkle_root};
+
+    let (agent, agent_key) = create_test_agent();
+    let txs: Vec<_> = (1..=5)
+        .map(|i| create_write_tx(&agent, &agent_key, format!("proof/key/{}", i).as_bytes(), b"data", i))
+        .collect();
+
+    let leaf_hashes: Vec<[u8; 32]> = txs.iter().map(|tx| tx.tx_id).collect();
+    let root = compute_merkle_root(&leaf_hashes);
+
+    // Verify inclusion proof for each transaction.
+    for (i, tx) in txs.iter().enumerate() {
+        let proof = generate_proof(&leaf_hashes, i).unwrap();
+        assert!(
+            verify_proof(&root, &tx.tx_id, &proof),
+            "Merkle inclusion proof failed for tx {}",
+            i
+        );
+    }
+
+    // Fake tx should fail proof.
+    let fake_id = blake3_hash(b"fake-tx");
+    let proof = generate_proof(&leaf_hashes, 0).unwrap();
+    assert!(!verify_proof(&root, &fake_id, &proof));
+}
+
+#[test]
+fn test_governance_proposal_lifecycle() {
+    use sccgub_governance::proposals::{ProposalKind, ProposalRegistry};
+
+    let mut proposals = ProposalRegistry::default();
+
+    // Submit a norm proposal.
+    let id = proposals
+        .submit(
+            [1u8; 32],
+            PrecedenceLevel::Meaning,
+            ProposalKind::AddNorm {
+                name: "test-norm".into(),
+                description: "Integration test norm".into(),
+                initial_fitness: TensionValue::from_integer(5),
+                enforcement_cost: TensionValue::from_integer(1),
+            },
+            10,
+            5,
+        )
+        .unwrap();
+
+    // Vote during valid period.
+    proposals.vote(&id, PrecedenceLevel::Meaning, true, 12).unwrap();
+    proposals.vote(&id, PrecedenceLevel::Meaning, true, 13).unwrap();
+
+    // Finalize after voting period.
+    let accepted = proposals.finalize(16);
+    assert_eq!(accepted.len(), 1);
+
+    // Activate and get the norm.
+    let norm = proposals.activate(&id).unwrap().unwrap();
+    assert_eq!(norm.name, "test-norm");
+    assert!(norm.active);
+}
+
+#[test]
+fn test_agent_registration_and_lookup() {
+    use sccgub_governance::registration::AgentRegistry;
+
+    let mut registry = AgentRegistry::default();
+    let key = sccgub_crypto::keys::generate_keypair();
+    let pk = *key.verifying_key().as_bytes();
+    let seal = MfidelAtomicSeal::from_height(1);
+
+    let id = registry
+        .register(pk, seal, PrecedenceLevel::Meaning, 0)
+        .unwrap();
+
+    assert!(registry.is_active(&id));
+
+    // Duplicate should fail.
+    assert!(registry.register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 1).is_err());
+
+    // Revoke.
+    registry.revoke(&id).unwrap();
+    assert!(!registry.is_active(&id));
+}

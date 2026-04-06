@@ -374,12 +374,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();
     let receipt_root = merkle_root_of_bytes(&receipt_hashes);
 
-    let header_data = serde_json::to_vec(&(chain_id, height, &parent_id)).unwrap_or_default();
-    let block_id = blake3_hash(&header_data);
+    let gov_hash = blake3_hash(&serde_json::to_vec(&governance).unwrap_or_default());
 
-    let header = BlockHeader {
+    // Build header with ZERO_HASH for block_id, then hash the full header to get block_id.
+    let mut header = BlockHeader {
         chain_id,
-        block_id,
+        block_id: ZERO_HASH, // Placeholder — computed below.
         parent_id,
         height,
         timestamp,
@@ -388,13 +388,16 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         receipt_root,
         causal_root,
         proof_root: ZERO_HASH,
-        governance_hash: blake3_hash(&serde_json::to_vec(&governance).unwrap_or_default()),
+        governance_hash: gov_hash,
         tension_before,
         tension_after: tension_before,
         mfidel_seal: seal,
         validator_id,
         version: 1,
     };
+    // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
+    let header_bytes = serde_json::to_vec(&header).unwrap_or_default();
+    header.block_id = blake3_hash(&header_bytes);
 
     let proof = CausalProof {
         block_height: height,
@@ -405,7 +408,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         tension_after: tension_before,
         constraint_results: vec![],
         recursion_depth: 0,
-        validator_signature: sign(validator_key, &header_data),
+        validator_signature: sign(validator_key, &header_bytes),
         causal_hash: blake3_hash_concat(&[&parent_id, &transition_root]),
     };
 

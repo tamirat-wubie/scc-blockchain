@@ -81,7 +81,30 @@ pub fn validate_cpog(
         }
     }
 
-    // 8. Run full 13-phase Phi traversal.
+    // 8. Governance hash must match snapshot.
+    let computed_gov_hash = sccgub_crypto::hash::blake3_hash(
+        &serde_json::to_vec(&block.governance).unwrap_or_default(),
+    );
+    if block.header.governance_hash != computed_gov_hash {
+        errors.push("Governance hash mismatch".into());
+    }
+
+    // 9. Causal root must match delta.
+    if !block.causal_delta.new_edges.is_empty() {
+        let edge_bytes: Vec<Vec<u8>> = block
+            .causal_delta
+            .new_edges
+            .iter()
+            .map(|e| serde_json::to_vec(e).unwrap_or_default())
+            .collect();
+        let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
+        let computed_causal_root = merkle_root_of_bytes(&edge_refs);
+        if block.header.causal_root != computed_causal_root {
+            errors.push("Causal root mismatch".into());
+        }
+    }
+
+    // 10. Run full 13-phase Phi traversal.
     let phi_log = phi_traversal_block(block, state);
     if !phi_log.is_all_passed() {
         for phase_result in &phi_log.phases_completed {
