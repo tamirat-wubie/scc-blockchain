@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 use sccgub_types::block::Block;
 
 /// Chain persistence — save and load chain state from disk.
+#[allow(dead_code)]
 pub struct ChainStore {
     base_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 impl ChainStore {
     /// Create a new chain store at the given directory.
     pub fn new(base_dir: &Path) -> std::io::Result<Self> {
@@ -23,7 +25,7 @@ impl ChainStore {
         let filename = format!("block_{:010}.json", block.header.height);
         let path = self.base_dir.join("blocks").join(filename);
         let json = serde_json::to_string_pretty(block)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         fs::write(path, json)
     }
 
@@ -33,7 +35,7 @@ impl ChainStore {
         let path = self.base_dir.join("blocks").join(filename);
         let json = fs::read_to_string(path)?;
         serde_json::from_str(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            .map_err(std::io::Error::other)
     }
 
     /// Load all blocks from disk in order.
@@ -44,7 +46,7 @@ impl ChainStore {
             .filter(|e| {
                 e.path()
                     .extension()
-                    .map_or(false, |ext| ext == "json")
+                    .is_some_and(|ext| ext == "json")
             })
             .collect();
 
@@ -54,7 +56,7 @@ impl ChainStore {
         for entry in entries {
             let json = fs::read_to_string(entry.path())?;
             let block: Block = serde_json::from_str(&json)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                .map_err(std::io::Error::other)?;
             blocks.push(block);
         }
         Ok(blocks)
