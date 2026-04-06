@@ -1,0 +1,10 @@
+[package]
+name = "sccgub-state"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+sccgub-types = { path = "../sccgub-types" }
+sccgub-crypto = { path = "../sccgub-crypto" }
+thiserror = { workspace = true }

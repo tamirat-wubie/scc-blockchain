@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sccgub-types",
+    "crates/sccgub-crypto",
+    "crates/sccgub-state",
+    "crates/sccgub-execution",
+    "crates/sccgub-governance",
+    "crates/sccgub-node",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/tmrtl/scc-blockchain"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
+rand = "0.8"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+hex = { version = "0.4", features = ["serde"] }

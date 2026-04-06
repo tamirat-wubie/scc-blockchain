@@ -1,0 +1,13 @@
+[package]
+name = "sccgub-crypto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+sccgub-types = { path = "../sccgub-types" }

@@ -1,0 +1,22 @@
+[package]
+name = "sccgub-node"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sccgub"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+sccgub-types = { path = "../sccgub-types" }
+sccgub-crypto = { path = "../sccgub-crypto" }
+sccgub-state = { path = "../sccgub-state" }
+sccgub-execution = { path = "../sccgub-execution" }
+sccgub-governance = { path = "../sccgub-governance" }
+thiserror = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
