@@ -72,16 +72,18 @@ fn create_write_tx(
         value: data.to_vec(),
     };
 
-    let tx_data = serde_json::to_vec(&(&agent.agent_id, addr, data, nonce)).unwrap();
-    let tx_id = blake3_hash(&tx_data);
-    let signature = sign(key, &tx_data);
+    let target = addr.to_vec();
+    // Sign canonical bytes: (agent_id, target, nonce) — matches validate.rs::canonical_tx_bytes.
+    let canonical = serde_json::to_vec(&(&agent.agent_id, &target, &nonce)).unwrap();
+    let tx_id = blake3_hash(&canonical);
+    let signature = sign(key, &canonical);
 
     SymbolicTransition {
         tx_id,
         actor: agent.clone(),
         intent: TransitionIntent {
             kind: TransitionKind::StateWrite,
-            target: addr.to_vec(),
+            target,
             declared_purpose: "Integration test write".into(),
         },
         preconditions: vec![],

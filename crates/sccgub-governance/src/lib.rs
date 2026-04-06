@@ -1,4 +1,5 @@
 pub mod containment;
+pub mod emergency;
 pub mod norms;
 pub mod precedence;
 pub mod responsibility;

@@ -53,6 +53,8 @@ enum Commands {
     Status,
     /// Show the current world state entries.
     ShowState,
+    /// Verify the entire chain by replaying and re-validating all blocks.
+    Verify,
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -68,6 +70,7 @@ fn main() {
         Commands::ShowBlock { height } => cmd_show_block(&cli.data_dir, height),
         Commands::Status => cmd_status(&cli.data_dir),
         Commands::ShowState => cmd_show_state(&cli.data_dir),
+        Commands::Verify => cmd_verify(&cli.data_dir),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -309,6 +312,100 @@ fn cmd_show_state(data_dir: &std::path::Path) {
     }
 }
 
+fn cmd_verify(data_dir: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    println!("=== Chain Verification ===");
+    println!("  Verifying {} blocks...\n", blocks.len());
+
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+    state.state.governance_state = sccgub_types::governance::GovernanceState {
+        finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+        ..Default::default()
+    };
+
+    let mut errors = 0u32;
+
+    for (i, block) in blocks.iter().enumerate() {
+        let parent_id = if i == 0 {
+            sccgub_types::ZERO_HASH
+        } else {
+            blocks[i - 1].header.block_id
+        };
+
+        // Check structural validity.
+        if !block.is_structurally_valid() {
+            println!("  [FAIL] Block #{}: structural validation failed", block.header.height);
+            errors += 1;
+            continue;
+        }
+
+        // Run full CPoG validation.
+        let result = sccgub_execution::cpog::validate_cpog(block, &state, &parent_id);
+        match result {
+            sccgub_execution::cpog::CpogResult::Valid => {
+                let seal = &block.header.mfidel_seal;
+                println!(
+                    "  [OK]   Block #{:>4}  txs:{:<3}  seal:f[{:>2}][{}]  receipts:{}",
+                    block.header.height,
+                    block.body.transition_count,
+                    seal.row,
+                    seal.column,
+                    block.receipts.len(),
+                );
+            }
+            sccgub_execution::cpog::CpogResult::Invalid { errors: errs } => {
+                println!(
+                    "  [FAIL] Block #{}: CPoG validation failed",
+                    block.header.height
+                );
+                for err in &errs {
+                    println!("         - {}", err);
+                }
+                errors += 1;
+            }
+        }
+
+        // Replay state.
+        for tx in &block.body.transitions {
+            if let OperationPayload::Write { key, value } = &tx.payload {
+                state.apply_delta(&StateDelta {
+                    writes: vec![StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+        }
+        state.set_height(block.header.height);
+    }
+
+    println!();
+    if errors == 0 {
+        println!("  Verification PASSED: all {} blocks valid.", blocks.len());
+        println!("  Final state root: {}", hex::encode(state.state_root()));
+        println!("  Final height:     {}", state.state.height);
+    } else {
+        println!("  Verification FAILED: {} block(s) invalid.", errors);
+        std::process::exit(1);
+    }
+}
+
 fn cmd_demo() {
     println!("=== SCCGUB Demo ===\n");
 
@@ -442,16 +539,20 @@ fn create_test_transition(
         value: value.clone(),
     };
 
-    let tx_data = serde_json::to_vec(&(&agent.agent_id, &key, &value, index)).unwrap_or_default();
-    let tx_id = blake3_hash(&tx_data);
-    let signature = sign(agent_key, &tx_data);
+    let nonce = index as u128;
+    let target = key.clone();
+
+    // Sign canonical bytes: (agent_id, target, nonce) — must match validate.rs::canonical_tx_bytes.
+    let canonical = serde_json::to_vec(&(&agent.agent_id, &target, &nonce)).unwrap_or_default();
+    let tx_id = blake3_hash(&canonical);
+    let signature = sign(agent_key, &canonical);
 
     SymbolicTransition {
         tx_id,
         actor: agent.clone(),
         intent: TransitionIntent {
             kind: TransitionKind::StateWrite,
-            target: key,
+            target,
             declared_purpose: format!("Write entry #{}", index),
         },
         preconditions: vec![],
@@ -459,7 +560,7 @@ fn create_test_transition(
         payload,
         causal_chain: vec![],
         wh_binding_intent: intent,
-        nonce: index as u128,
+        nonce,
         signature,
     }
 }

@@ -10,3 +10,4 @@ sccgub-crypto = { path = "../sccgub-crypto" }
 sccgub-state = { path = "../sccgub-state" }
 thiserror = { workspace = true }
 hex = { workspace = true }
+serde_json = { workspace = true }
