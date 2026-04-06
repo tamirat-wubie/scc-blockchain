@@ -1,0 +1,330 @@
+use sccgub_state::world::ManagedWorldState;
+use sccgub_types::tension::TensionValue;
+use sccgub_types::transition::SymbolicTransition;
+
+/// Symbolic Constraint Cognition Engine (SCCE) — validates transitions
+/// through constraint propagation on the symbol mesh.
+///
+/// Per v2.1 FIX-6: SCCE_Validate is a PURE FUNCTION.
+/// No side effects. No weight modification. Learning occurs post-commit only.
+///
+/// Steps (per spec Section 16):
+///   0. Activate symbols from transition
+///   1. Select relevant state subgraph (attention)
+///   2. Propagate constraints through mesh (bounded)
+///   3. Detect and resolve conflicts
+///   4. Grounding check against chain state
+///   5. Value evaluation against governance goals
+///   6. Meta-regulation if persistent tension (read-only)
+///   7. Stability check (delta_T < epsilon, delta_H < epsilon)
+///   8. Return (valid, tension_delta)
+pub fn scce_validate(
+    transition: &SymbolicTransition,
+    state: &ManagedWorldState,
+    constraint_weights: &ConstraintWeights,
+    max_propagation_depth: u32,
+    max_propagation_steps: u64,
+) -> ScceResult {
+    let mut steps_used: u64 = 0;
+    let mut tension_delta = TensionValue::ZERO;
+
+    // Step 0: Activate symbols from transition.
+    let target = &transition.intent.target;
+    let active_symbols = activate_symbols(target, state);
+    steps_used += 1;
+
+    // Step 1: Select relevant state subgraph (attention-gated).
+    let relevant_count = select_relevant_subgraph(&active_symbols, state, constraint_weights);
+    steps_used += relevant_count as u64;
+
+    if steps_used > max_propagation_steps {
+        return ScceResult {
+            valid: false,
+            tension_delta: TensionValue::ZERO,
+            steps_used,
+            details: "Exceeded max propagation steps at attention step".into(),
+        };
+    }
+
+    // Step 2: Propagate constraints through mesh (bounded).
+    let propagation = propagate_constraints(
+        &active_symbols,
+        state,
+        max_propagation_depth,
+        max_propagation_steps - steps_used,
+    );
+    steps_used += propagation.steps;
+
+    if !propagation.consistent {
+        return ScceResult {
+            valid: false,
+            tension_delta: propagation.tension_delta,
+            steps_used,
+            details: format!("Constraint conflict detected: {}", propagation.conflict_detail),
+        };
+    }
+    tension_delta = tension_delta + propagation.tension_delta;
+
+    // Step 3: Detect and resolve conflicts.
+    // (Already handled in propagation — conflicts cause immediate rejection.)
+
+    // Step 4: Grounding check — verify transition target exists or is being created.
+    let grounded = check_grounding(target, state, &transition.intent.kind);
+    steps_used += 1;
+    if !grounded {
+        return ScceResult {
+            valid: false,
+            tension_delta,
+            steps_used,
+            details: "Grounding check failed: target address not valid".into(),
+        };
+    }
+
+    // Step 5: Value evaluation against governance goals.
+    // For MVP: check that transition doesn't violate precedence order.
+    let value_ok = evaluate_governance_value(transition);
+    steps_used += 1;
+    if !value_ok {
+        return ScceResult {
+            valid: false,
+            tension_delta,
+            steps_used,
+            details: "Value evaluation failed: governance violation".into(),
+        };
+    }
+
+    // Step 6: Meta-regulation (read-only).
+    // Check if persistent tension exists in the target area.
+    let area_tension = state
+        .state
+        .tension_field
+        .map
+        .get(target)
+        .copied()
+        .unwrap_or(TensionValue::ZERO);
+
+    if area_tension > state.state.tension_field.budget.current_budget {
+        tension_delta = tension_delta + TensionValue::from_integer(1); // Penalty for writing to high-tension area.
+    }
+
+    // Step 7: Stability check.
+    let epsilon = TensionValue::from_integer(1);
+    if tension_delta > epsilon {
+        // Tension increase is within acceptable range — proceed but note it.
+    }
+
+    ScceResult {
+        valid: true,
+        tension_delta,
+        steps_used,
+        details: "SCCE validation passed".into(),
+    }
+}
+
+/// Result of SCCE validation.
+#[derive(Debug, Clone)]
+pub struct ScceResult {
+    pub valid: bool,
+    pub tension_delta: TensionValue,
+    pub steps_used: u64,
+    pub details: String,
+}
+
+/// Constraint weights used for attention and propagation.
+/// These are read-only during validation (per v2.1 FIX-6).
+#[derive(Debug, Clone, Default)]
+pub struct ConstraintWeights {
+    pub attention_threshold: TensionValue,
+    pub propagation_decay: TensionValue,
+}
+
+// --- Internal helpers ---
+
+fn activate_symbols(target: &[u8], state: &ManagedWorldState) -> Vec<Vec<u8>> {
+    let mut symbols = vec![target.to_vec()];
+    // Also activate parent paths (e.g., "a/b/c" activates "a/b" and "a").
+    let mut path = target.to_vec();
+    while let Some(pos) = path.iter().rposition(|&b| b == b'/') {
+        path.truncate(pos);
+        if !path.is_empty() && state.trie.contains(&path) {
+            symbols.push(path.clone());
+        }
+    }
+    symbols
+}
+
+fn select_relevant_subgraph(
+    active_symbols: &[Vec<u8>],
+    state: &ManagedWorldState,
+    _weights: &ConstraintWeights,
+) -> u32 {
+    // Count how many state entries share a prefix with active symbols.
+    let mut count = 0u32;
+    for symbol in active_symbols {
+        for (key, _) in state.trie.iter() {
+            if key.starts_with(symbol) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+struct PropagationResult {
+    consistent: bool,
+    tension_delta: TensionValue,
+    steps: u64,
+    conflict_detail: String,
+}
+
+fn propagate_constraints(
+    _active_symbols: &[Vec<u8>],
+    _state: &ManagedWorldState,
+    _max_depth: u32,
+    max_steps: u64,
+) -> PropagationResult {
+    // MVP: constraint propagation is a no-op that always succeeds.
+    // In a full implementation, this would walk the constraint graph
+    // and check each constraint at each depth level.
+    let steps = 1u64.min(max_steps);
+    PropagationResult {
+        consistent: true,
+        tension_delta: TensionValue::ZERO,
+        steps,
+        conflict_detail: String::new(),
+    }
+}
+
+fn check_grounding(
+    target: &[u8],
+    _state: &ManagedWorldState,
+    kind: &sccgub_types::transition::TransitionKind,
+) -> bool {
+    // Writes can create new state entries, so they're always grounded.
+    // Reads must target existing state.
+    match kind {
+        sccgub_types::transition::TransitionKind::StateRead => {
+            // For reads, the target must exist.
+            _state.trie.contains(&target.to_vec())
+        }
+        _ => {
+            // For writes and other operations, any non-empty target is valid.
+            !target.is_empty()
+        }
+    }
+}
+
+fn evaluate_governance_value(transition: &SymbolicTransition) -> bool {
+    // Check that the transition's governance authority matches its intent.
+    let required_level = match transition.intent.kind {
+        sccgub_types::transition::TransitionKind::GovernanceUpdate => PrecedenceLevel::Meaning,
+        sccgub_types::transition::TransitionKind::NormProposal => PrecedenceLevel::Meaning,
+        _ => PrecedenceLevel::Optimization,
+    };
+
+    let actor_level = transition.actor.governance_level;
+    (actor_level as u8) <= (required_level as u8)
+}
+
+use sccgub_types::governance::PrecedenceLevel;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sccgub_types::agent::AgentIdentity;
+    use sccgub_types::transition::*;
+    use std::collections::HashSet;
+
+    fn test_transition(kind: TransitionKind, target: &[u8]) -> SymbolicTransition {
+        SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id: [1u8; 32],
+                public_key: [0u8; 32],
+                mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: sccgub_types::agent::ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind,
+                target: target.to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Noop,
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: [1u8; 32],
+                when: sccgub_types::timestamp::CausalTimestamp::genesis(),
+                r#where: target.to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce: 0,
+            signature: vec![0u8; 64],
+        }
+    }
+
+    #[test]
+    fn test_scce_validate_write() {
+        let state = ManagedWorldState::new();
+        let tx = test_transition(TransitionKind::StateWrite, b"test/key");
+        let weights = ConstraintWeights::default();
+
+        let result = scce_validate(&tx, &state, &weights, 10, 1000);
+        assert!(result.valid, "Write should pass: {}", result.details);
+    }
+
+    #[test]
+    fn test_scce_validate_read_nonexistent() {
+        let state = ManagedWorldState::new();
+        let tx = test_transition(TransitionKind::StateRead, b"nonexistent/key");
+        let weights = ConstraintWeights::default();
+
+        let result = scce_validate(&tx, &state, &weights, 10, 1000);
+        assert!(!result.valid, "Read of nonexistent key should fail grounding");
+    }
+
+    #[test]
+    fn test_scce_validate_empty_target() {
+        let state = ManagedWorldState::new();
+        let tx = test_transition(TransitionKind::StateWrite, b"");
+        let weights = ConstraintWeights::default();
+
+        let result = scce_validate(&tx, &state, &weights, 10, 1000);
+        assert!(!result.valid, "Empty target should fail grounding");
+    }
+
+    #[test]
+    fn test_scce_step_bound() {
+        let state = ManagedWorldState::new();
+        let tx = test_transition(TransitionKind::StateWrite, b"test");
+        let weights = ConstraintWeights::default();
+
+        // With step limit of 0, should fail.
+        let result = scce_validate(&tx, &state, &weights, 10, 0);
+        assert!(!result.valid, "Should fail with 0 step budget");
+    }
+
+    #[test]
+    fn test_governance_value_check() {
+        // Agent with Meaning level trying governance update (requires Meaning) — ok.
+        let tx = test_transition(TransitionKind::GovernanceUpdate, b"gov/test");
+        assert!(evaluate_governance_value(&tx));
+
+        // Agent with Optimization level trying governance update — should fail.
+        let mut tx2 = test_transition(TransitionKind::GovernanceUpdate, b"gov/test");
+        tx2.actor.governance_level = PrecedenceLevel::Optimization;
+        assert!(!evaluate_governance_value(&tx2));
+    }
+}

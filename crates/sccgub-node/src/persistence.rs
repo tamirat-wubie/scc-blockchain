@@ -96,7 +96,6 @@ mod tests {
     use sccgub_types::tension::TensionValue;
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::ZERO_HASH;
-    use std::collections::HashMap;
 
     fn test_block(height: u64) -> Block {
         Block {
@@ -122,7 +121,7 @@ mod tests {
                 transitions: vec![],
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
-                constraint_satisfaction_map: HashMap::new(),
+                constraint_satisfaction: vec![],
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -133,7 +132,7 @@ mod tests {
                 governance_snapshot_hash: ZERO_HASH,
                 tension_before: TensionValue::ZERO,
                 tension_after: TensionValue::ZERO,
-                constraint_map: HashMap::new(),
+                constraint_results: vec![],
                 recursion_depth: 0,
                 validator_signature: vec![],
                 causal_hash: ZERO_HASH,

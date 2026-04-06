@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::tension::TensionValue;
 use crate::transition::WHBindingResolved;
@@ -14,7 +13,7 @@ pub struct CausalProof {
     pub governance_snapshot_hash: Hash,
     pub tension_before: TensionValue,
     pub tension_after: TensionValue,
-    pub constraint_map: HashMap<ConstraintId, bool>,
+    pub constraint_results: Vec<(ConstraintId, bool)>,
     pub recursion_depth: u32,
     pub validator_signature: Vec<u8>,
     /// Hash(parent_proof ++ transitions ++ governance).

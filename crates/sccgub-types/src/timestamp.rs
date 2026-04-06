@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 use crate::{Hash, NodeId, ZERO_HASH};
 
@@ -50,11 +49,10 @@ impl CausalTimestamp {
 
 /// Bounded vector clock per v2.1 FIX-1.
 /// Only tracks nodes active within recent epochs; prunes inactive entries.
+/// Uses Vec<(NodeId, Entry)> for JSON-safe serialization (byte-array keys can't be JSON map keys).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundedVectorClock {
-    /// Sorted entries: NodeId → (counter, last_active_epoch).
-    pub entries: BTreeMap<NodeId, VectorClockEntry>,
-    /// Maximum number of tracked nodes.
+    pub entries: Vec<(NodeId, VectorClockEntry)>,
     pub max_size: u32,
 }
 
@@ -67,19 +65,24 @@ pub struct VectorClockEntry {
 impl BoundedVectorClock {
     pub fn new(max_size: u32) -> Self {
         Self {
-            entries: BTreeMap::new(),
+            entries: Vec::new(),
             max_size,
         }
     }
 
     /// Increment counter for a node, marking it active.
     pub fn increment(&mut self, node_id: NodeId) {
-        let entry = self.entries.entry(node_id).or_insert(VectorClockEntry {
-            counter: 0,
-            last_active_epoch: 0,
-        });
-        entry.counter += 1;
-        // Prune if over capacity: remove least recently active.
+        if let Some(entry) = self.entries.iter_mut().find(|(id, _)| *id == node_id) {
+            entry.1.counter += 1;
+        } else {
+            self.entries.push((
+                node_id,
+                VectorClockEntry {
+                    counter: 1,
+                    last_active_epoch: 0,
+                },
+            ));
+        }
         if self.entries.len() as u32 > self.max_size {
             self.prune();
         }
@@ -88,13 +91,14 @@ impl BoundedVectorClock {
     /// Remove least recently active entries to stay within max_size.
     fn prune(&mut self) {
         while self.entries.len() as u32 > self.max_size {
-            // Find the entry with the lowest last_active_epoch.
-            if let Some((&oldest_id, _)) = self
+            if let Some(oldest_idx) = self
                 .entries
                 .iter()
-                .min_by_key(|(_, e)| e.last_active_epoch)
+                .enumerate()
+                .min_by_key(|(_, (_, e))| e.last_active_epoch)
+                .map(|(i, _)| i)
             {
-                self.entries.remove(&oldest_id);
+                self.entries.remove(oldest_idx);
             } else {
                 break;
             }
@@ -103,13 +107,14 @@ impl BoundedVectorClock {
 
     /// Merge with another vector clock (component-wise max).
     pub fn merge(&mut self, other: &BoundedVectorClock) {
-        for (&node_id, other_entry) in &other.entries {
-            let entry = self.entries.entry(node_id).or_insert(VectorClockEntry {
-                counter: 0,
-                last_active_epoch: 0,
-            });
-            entry.counter = entry.counter.max(other_entry.counter);
-            entry.last_active_epoch = entry.last_active_epoch.max(other_entry.last_active_epoch);
+        for (node_id, other_entry) in &other.entries {
+            if let Some(entry) = self.entries.iter_mut().find(|(id, _)| id == node_id) {
+                entry.1.counter = entry.1.counter.max(other_entry.counter);
+                entry.1.last_active_epoch =
+                    entry.1.last_active_epoch.max(other_entry.last_active_epoch);
+            } else {
+                self.entries.push((*node_id, other_entry.clone()));
+            }
         }
         while self.entries.len() as u32 > self.max_size {
             self.prune();
@@ -147,5 +152,13 @@ mod tests {
         vc.increment([2u8; 32]);
         vc.increment([3u8; 32]);
         assert!(vc.entries.len() <= 2);
+    }
+
+    #[test]
+    fn test_json_roundtrip() {
+        let ts = CausalTimestamp::genesis().successor([1u8; 32], [2u8; 32]);
+        let json = serde_json::to_string(&ts).unwrap();
+        let ts2: CausalTimestamp = serde_json::from_str(&json).unwrap();
+        assert_eq!(ts, ts2);
     }
 }

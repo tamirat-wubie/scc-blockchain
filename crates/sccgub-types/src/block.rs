@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::causal::CausalGraphDelta;
 use crate::governance::GovernanceSnapshot;
@@ -66,7 +65,7 @@ pub struct BlockBody {
     pub transitions: Vec<SymbolicTransition>,
     pub transition_count: u32,
     pub total_tension_delta: TensionValue,
-    pub constraint_satisfaction_map: HashMap<ConstraintId, bool>,
+    pub constraint_satisfaction: Vec<(ConstraintId, bool)>,
 }
 
 impl Block {

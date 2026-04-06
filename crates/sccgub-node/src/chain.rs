@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use sccgub_crypto::hash::{blake3_hash, blake3_hash_concat};
 use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
@@ -52,6 +50,47 @@ impl Chain {
 
         chain.state.set_height(0);
         chain
+    }
+
+    /// Reconstruct a chain from loaded blocks (replay state).
+    pub fn from_blocks(blocks: Vec<Block>) -> Self {
+        let validator_key = generate_keypair();
+        let chain_id = blocks
+            .first()
+            .map(|b| b.header.chain_id)
+            .unwrap_or(blake3_hash(b"sccgub-genesis-chain"));
+
+        let mut state = ManagedWorldState::new();
+        state.state.governance_state = GovernanceState {
+            finality_mode: FinalityMode::Deterministic,
+            ..GovernanceState::default()
+        };
+
+        // Replay all block transitions to reconstruct state.
+        for block in &blocks {
+            for tx in &block.body.transitions {
+                if let sccgub_types::transition::OperationPayload::Write { key, value } =
+                    &tx.payload
+                {
+                    state.apply_delta(&sccgub_types::transition::StateDelta {
+                        writes: vec![sccgub_types::transition::StateWrite {
+                            address: key.clone(),
+                            value: value.clone(),
+                        }],
+                        deletes: vec![],
+                    });
+                }
+            }
+            state.set_height(block.header.height);
+        }
+
+        Chain {
+            blocks,
+            state,
+            mempool: Mempool::new(10_000),
+            chain_id,
+            validator_key,
+        }
     }
 
     /// Submit a transition to the mempool.
@@ -169,7 +208,7 @@ fn build_genesis_block(
         governance_snapshot_hash: header.governance_hash,
         tension_before: TensionValue::ZERO,
         tension_after: TensionValue::ZERO,
-        constraint_map: HashMap::new(),
+        constraint_results: vec![],
         recursion_depth: 0,
         validator_signature: sign(validator_key, &header_data),
         causal_hash: blake3_hash(b"genesis-proof"),
@@ -181,7 +220,7 @@ fn build_genesis_block(
             transitions: vec![],
             transition_count: 0,
             total_tension_delta: TensionValue::ZERO,
-            constraint_satisfaction_map: HashMap::new(),
+            constraint_satisfaction: vec![],
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -261,7 +300,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         governance_snapshot_hash: header.governance_hash,
         tension_before,
         tension_after: tension_before,
-        constraint_map: HashMap::new(),
+        constraint_results: vec![],
         recursion_depth: 0,
         validator_signature: sign(validator_key, &header_data),
         causal_hash: blake3_hash_concat(&[&parent_id, &transition_root]),
@@ -273,7 +312,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             transitions: transitions.clone(),
             transition_count: transitions.len() as u32,
             total_tension_delta: TensionValue::ZERO,
-            constraint_satisfaction_map: HashMap::new(),
+            constraint_satisfaction: vec![],
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
