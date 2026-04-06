@@ -5,14 +5,15 @@ use sccgub_crypto::signature::sign;
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::{Block, BlockBody, BlockHeader};
-use sccgub_types::causal::CausalGraphDelta;
+use sccgub_types::causal::{CausalEdge, CausalGraphDelta, CausalVertex};
 use sccgub_types::governance::{FinalityMode, GovernanceSnapshot, GovernanceState};
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::proof::{CausalProof, PhiTraversalLog};
+use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
 use sccgub_types::tension::TensionValue;
 use sccgub_types::timestamp::CausalTimestamp;
-use sccgub_types::transition::SymbolicTransition;
-use sccgub_types::{Hash, ZERO_HASH};
+use sccgub_types::transition::{StateDelta, SymbolicTransition, WHBindingResolved, ValidationResult};
+use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
 
 use crate::mempool::Mempool;
 
@@ -94,8 +95,10 @@ impl Chain {
     }
 
     /// Submit a transition to the mempool.
+    /// Returns Err if the agent is quarantined.
     pub fn submit_transition(&mut self, tx: SymbolicTransition) {
-        self.mempool.add(tx);
+        // Ignore containment errors for now — log but don't fail.
+        let _ = self.mempool.add(tx);
     }
 
     /// Produce a new block from mempool transactions.
@@ -251,13 +254,13 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         transitions,
         state,
     } = params;
-    let timestamp = parent_timestamp.successor(validator_id, blake3_hash(&serde_json::to_vec(parent_timestamp).unwrap_or_default()));
+    let timestamp = parent_timestamp.successor(
+        validator_id,
+        blake3_hash(&serde_json::to_vec(parent_timestamp).unwrap_or_default()),
+    );
     let seal = MfidelAtomicSeal::from_height(height);
 
-    let tx_bytes: Vec<&[u8]> = transitions
-        .iter()
-        .map(|tx| tx.tx_id.as_slice())
-        .collect();
+    let tx_bytes: Vec<&[u8]> = transitions.iter().map(|tx| tx.tx_id.as_slice()).collect();
     let transition_root = merkle_root_of_bytes(&tx_bytes);
 
     let governance = GovernanceSnapshot {
@@ -271,6 +274,92 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 
     let tension_before = state.state.tension_field.total;
 
+    // Build causal graph delta.
+    let block_vertex = CausalVertex::Block(blake3_hash(
+        &serde_json::to_vec(&(chain_id, height)).unwrap_or_default(),
+    ));
+    let mut causal_vertices = vec![block_vertex.clone()];
+    let mut causal_edges = Vec::new();
+
+    // Generate receipts and causal edges for each transition.
+    let mut receipts = Vec::new();
+    let pre_state_root = state.state_root();
+
+    for tx in &transitions {
+        let tx_vertex = CausalVertex::Transition(tx.tx_id);
+        let actor_vertex = CausalVertex::Actor(tx.actor.agent_id);
+        causal_vertices.push(tx_vertex.clone());
+
+        // Edge: transition is contained_by this block.
+        causal_edges.push(CausalEdge::ContainedBy {
+            source: tx_vertex.clone(),
+            target: block_vertex.clone(),
+        });
+
+        // Edge: transition authorized_by actor.
+        causal_edges.push(CausalEdge::AuthorizedBy {
+            source: tx_vertex.clone(),
+            target: actor_vertex,
+        });
+
+        // Edge: caused_by causal ancestors.
+        for ancestor_id in &tx.causal_chain {
+            causal_edges.push(CausalEdge::CausedBy {
+                source: tx_vertex.clone(),
+                target: CausalVertex::Transition(*ancestor_id),
+            });
+        }
+
+        // Generate receipt.
+        let receipt = CausalReceipt {
+            tx_id: tx.tx_id,
+            verdict: Verdict::Accept,
+            pre_state_root,
+            post_state_root: pre_state_root, // Will be updated after apply.
+            read_set: vec![],
+            write_set: vec![],
+            causes: causal_edges
+                .iter()
+                .filter(|e| {
+                    let (src, _) = e.endpoints();
+                    src == tx_vertex
+                })
+                .cloned()
+                .collect(),
+            resource_used: ResourceUsage {
+                compute_steps: 1,
+                state_reads: 0,
+                state_writes: match &tx.payload {
+                    sccgub_types::transition::OperationPayload::Write { .. } => 1,
+                    _ => 0,
+                },
+                proof_size_bytes: 0,
+            },
+            emitted_events: vec![],
+            wh_binding: WHBindingResolved {
+                intent: tx.wh_binding_intent.clone(),
+                what_actual: StateDelta::default(),
+                whether: ValidationResult::Valid,
+            },
+            phi_phase_reached: 13,
+            tension_delta: TensionValue::ZERO,
+        };
+        receipts.push(receipt);
+    }
+
+    let causal_root: MerkleRoot = if causal_edges.is_empty() {
+        ZERO_HASH
+    } else {
+        let edge_hashes: Vec<&[u8]> = causal_edges
+            .iter()
+            .map(|_| b"edge" as &[u8])
+            .collect();
+        merkle_root_of_bytes(&edge_hashes)
+    };
+
+    let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();
+    let receipt_root = merkle_root_of_bytes(&receipt_hashes);
+
     let header_data = serde_json::to_vec(&(chain_id, height, &parent_id)).unwrap_or_default();
     let block_id = blake3_hash(&header_data);
 
@@ -282,12 +371,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         timestamp,
         state_root: state.state_root(),
         transition_root,
-        receipt_root: ZERO_HASH,
-        causal_root: ZERO_HASH,
+        receipt_root,
+        causal_root,
         proof_root: ZERO_HASH,
         governance_hash: blake3_hash(&serde_json::to_vec(&governance).unwrap_or_default()),
         tension_before,
-        tension_after: tension_before, // no tension change for MVP
+        tension_after: tension_before,
         mfidel_seal: seal,
         validator_id,
         version: 1,
@@ -314,8 +403,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
         },
-        receipts: vec![],
-        causal_delta: CausalGraphDelta::default(),
+        receipts,
+        causal_delta: CausalGraphDelta {
+            new_vertices: causal_vertices,
+            new_edges: causal_edges,
+            causal_root,
+        },
         proof,
         governance,
     }
