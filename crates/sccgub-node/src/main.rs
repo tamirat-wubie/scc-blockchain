@@ -55,6 +55,11 @@ enum Commands {
     ShowState,
     /// Verify the entire chain by replaying and re-validating all blocks.
     Verify,
+    /// Search for a transaction by its ID (hex prefix).
+    SearchTx {
+        /// Transaction ID prefix (hex).
+        prefix: String,
+    },
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -71,6 +76,7 @@ fn main() {
         Commands::Status => cmd_status(&cli.data_dir),
         Commands::ShowState => cmd_show_state(&cli.data_dir),
         Commands::Verify => cmd_verify(&cli.data_dir),
+        Commands::SearchTx { prefix } => cmd_search_tx(&cli.data_dir, &prefix),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -431,6 +437,58 @@ fn cmd_verify(data_dir: &std::path::Path) {
     } else {
         println!("  Verification FAILED: {} block(s) invalid.", errors);
         std::process::exit(1);
+    }
+}
+
+fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Failed to load chain: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let prefix_lower = prefix.to_lowercase();
+    let mut found = false;
+
+    for block in &blocks {
+        for (i, tx) in block.body.transitions.iter().enumerate() {
+            let tx_hex = hex::encode(tx.tx_id);
+            if tx_hex.starts_with(&prefix_lower) {
+                found = true;
+                println!("Transaction found in Block #{}:", block.header.height);
+                println!("  Tx ID:     {}", tx_hex);
+                println!("  Index:     {}", i);
+                println!("  Kind:      {:?}", tx.intent.kind);
+                println!("  Target:    {}", String::from_utf8_lossy(&tx.intent.target));
+                println!("  Purpose:   {}", tx.intent.declared_purpose);
+                println!("  Actor:     {}", hex::encode(tx.actor.agent_id));
+                println!("  Nonce:     {}", tx.nonce);
+                println!(
+                    "  Mfidel:    f[{}][{}]",
+                    block.header.mfidel_seal.row, block.header.mfidel_seal.column
+                );
+                // Show receipt if available.
+                if let Some(receipt) = block.receipts.get(i) {
+                    println!("  Verdict:   {:?}", receipt.verdict);
+                    println!("  Phi phase: {}/13", receipt.phi_phase_reached);
+                }
+                println!();
+            }
+        }
+    }
+
+    if !found {
+        println!("No transaction found with prefix '{}'", prefix);
     }
 }
 
