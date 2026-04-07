@@ -97,13 +97,38 @@ pub struct HealthResponse {
     pub causal_edges: u64,
 }
 
-/// Transaction submission request.
+/// Individual transaction detail response.
+#[derive(Debug, Serialize)]
+pub struct TxDetailResponse {
+    pub tx_id: String,
+    pub block_height: u64,
+    pub block_id: String,
+    pub kind: String,
+    pub target: String,
+    pub purpose: String,
+    pub actor: String,
+    pub nonce: u128,
+}
+
+/// Transaction submission request (hex-encoded canonical bytes).
 #[derive(Debug, serde::Deserialize)]
 pub struct SubmitTransactionRequest {
-    pub actor_public_key: String,
-    pub target: String,
-    pub payload_type: String,
-    pub payload_data: String,
-    pub nonce: u128,
-    pub signature: String,
+    /// Hex-encoded bincode-serialized SymbolicTransition.
+    pub tx_hex: String,
+}
+
+/// Transaction submission response.
+#[derive(Debug, Serialize)]
+pub struct TxSubmitResponse {
+    pub tx_id: String,
+    pub status: String,
+}
+
+/// Paginated state response.
+#[derive(Debug, Serialize)]
+pub struct PaginatedStateResponse {
+    pub entries: Vec<StateEntry>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
 }

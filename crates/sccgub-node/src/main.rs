@@ -1298,11 +1298,14 @@ async fn cmd_serve(data_dir: &std::path::Path, port: u16) {
 
     let addr = format!("0.0.0.0:{}", port);
     println!("SCCGUB API server starting on http://{}", addr);
-    println!("Endpoints:");
-    println!("  GET /api/status");
-    println!("  GET /api/health");
-    println!("  GET /api/block/:height");
-    println!("  GET /api/state");
+    println!("Endpoints (v1):");
+    println!("  GET  /api/v1/status          — chain summary");
+    println!("  GET  /api/v1/health          — system health + finality");
+    println!("  GET  /api/v1/block/:height   — block detail with transactions");
+    println!("  GET  /api/v1/state           — paginated world state (?offset=&limit=)");
+    println!("  GET  /api/v1/tx/:tx_id       — transaction detail by ID");
+    println!("  POST /api/v1/tx/submit       — submit signed transaction (hex)");
+    println!("Legacy routes (/api/*) also available.");
     println!();
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

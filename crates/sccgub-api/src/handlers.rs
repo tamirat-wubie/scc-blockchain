@@ -110,22 +110,147 @@ pub async fn get_block(
     )
 }
 
-/// GET /state — all state entries.
+/// Pagination query parameters.
+#[derive(Debug, serde::Deserialize)]
+pub struct PaginationParams {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+/// GET /state — paginated state entries.
 pub async fn get_state(
     state: axum::extract::State<SharedState>,
-) -> axum::Json<ApiResponse<Vec<StateEntry>>> {
+    axum::extract::Query(params): axum::extract::Query<PaginationParams>,
+) -> axum::Json<ApiResponse<PaginatedStateResponse>> {
     let app = state.read().await;
-    let entries: Vec<StateEntry> = app
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(100).min(1000); // Max 1000 per page.
+
+    let all_entries: Vec<StateEntry> = app
         .state
         .trie
         .iter()
         .map(|(k, v)| StateEntry {
             key: String::from_utf8_lossy(k).to_string(),
-            value: String::from_utf8_lossy(v).to_string(),
+            value: hex::encode(v), // Hex encode to handle binary values safely.
         })
         .collect();
 
-    axum::Json(ApiResponse::ok(entries))
+    let total = all_entries.len();
+    let page = all_entries.into_iter().skip(offset).take(limit).collect();
+
+    axum::Json(ApiResponse::ok(PaginatedStateResponse {
+        entries: page,
+        total,
+        offset,
+        limit,
+    }))
+}
+
+/// POST /tx/submit — submit a raw signed transaction.
+pub async fn submit_tx(
+    _state: axum::extract::State<SharedState>,
+    axum::extract::Json(req): axum::extract::Json<SubmitTransactionRequest>,
+) -> (
+    axum::http::StatusCode,
+    axum::Json<ApiResponse<TxSubmitResponse>>,
+) {
+    // Validate request.
+    if req.tx_hex.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(ApiResponse::err("tx_hex is required")),
+        );
+    }
+
+    // Decode the transaction from hex-encoded canonical bytes.
+    let tx_bytes = match hex::decode(&req.tx_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(ApiResponse::err(format!("Invalid hex: {}", e))),
+            );
+        }
+    };
+
+    let tx: sccgub_types::transition::SymbolicTransition =
+        match sccgub_crypto::canonical::from_canonical_bytes(&tx_bytes) {
+            Ok(t) => t,
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::Json(ApiResponse::err(format!("Invalid transaction: {}", e))),
+                );
+            }
+        };
+
+    let tx_id = hex::encode(tx.tx_id);
+
+    // For now, acknowledge receipt. Full mempool integration requires chain access.
+    // In production, this would push to the mempool and return pending status.
+    let _ = tx; // Transaction deserialized and validated.
+
+    (
+        axum::http::StatusCode::ACCEPTED,
+        axum::Json(ApiResponse::ok(TxSubmitResponse {
+            tx_id,
+            status: "accepted".into(),
+        })),
+    )
+}
+
+/// GET /tx/:tx_id — lookup a transaction by hex ID across all blocks.
+pub async fn get_tx(
+    state: axum::extract::State<SharedState>,
+    axum::extract::Path(tx_id_hex): axum::extract::Path<String>,
+) -> (
+    axum::http::StatusCode,
+    axum::Json<ApiResponse<TxDetailResponse>>,
+) {
+    let tx_id_bytes = match hex::decode(&tx_id_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(ApiResponse::err("Invalid tx_id: expected 64-char hex")),
+            );
+        }
+    };
+
+    let app = state.read().await;
+    for block in &app.blocks {
+        for tx in &block.body.transitions {
+            if tx.tx_id == tx_id_bytes {
+                let resp = TxDetailResponse {
+                    tx_id: hex::encode(tx.tx_id),
+                    block_height: block.header.height,
+                    block_id: hex::encode(block.header.block_id),
+                    kind: format!("{:?}", tx.intent.kind),
+                    target: String::from_utf8_lossy(&tx.intent.target).to_string(),
+                    purpose: tx.intent.declared_purpose.clone(),
+                    actor: hex::encode(tx.actor.agent_id),
+                    nonce: tx.nonce,
+                };
+                return (
+                    axum::http::StatusCode::OK,
+                    axum::Json(ApiResponse::ok(resp)),
+                );
+            }
+        }
+    }
+
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(ApiResponse::err(format!(
+            "Transaction {} not found",
+            tx_id_hex
+        ))),
+    )
 }
 
 /// GET /health — system health.

@@ -1,19 +1,19 @@
 //! Integration tests: full chain lifecycle.
 //! Genesis -> submit transitions -> produce block -> validate -> verify state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use sccgub_crypto::hash::blake3_hash;
 use sccgub_crypto::keys::generate_keypair;
-use sccgub_crypto::merkle::{compute_merkle_root, merkle_root_of_bytes};
+use sccgub_crypto::merkle::merkle_root_of_bytes;
 use sccgub_crypto::signature::{sign, verify};
-use sccgub_execution::cpog::{validate_cpog, CpogResult};
+use sccgub_execution::cpog::validate_cpog;
 use sccgub_execution::phi::{phi_traversal_block, phi_traversal_tx};
 use sccgub_execution::wh_check::check_wh_binding_intent;
 use sccgub_governance::norms::NormRegistry;
 use sccgub_governance::precedence::{check_governance_change, GovernanceChangeType};
 use sccgub_governance::responsibility;
-use sccgub_governance::validator::{round_robin_proposer, select_validator};
+use sccgub_governance::validator::select_validator;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::agent::{AgentIdentity, ResponsibilityState, ValidatorAuthority};
 use sccgub_types::block::{Block, BlockBody, BlockHeader};
@@ -1134,7 +1134,7 @@ fn test_end_to_end_all_subsystems() {
 
     // ===== 16. DOMAIN PACKS =====
     let mut domain_registry = sccgub_types::domain::DomainPackRegistry::default();
-    let mut finance_pack = sccgub_types::domain::DomainPack {
+    let finance_pack = sccgub_types::domain::DomainPack {
         id: [0xFFu8; 32],
         name: "finance".into(),
         version: "1.0.0".into(),
@@ -1202,8 +1202,7 @@ fn test_end_to_end_all_subsystems() {
 
 #[test]
 fn test_duplicate_mempool_submission_rejected() {
-    use sccgub_governance::containment::ContainmentState;
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::HashSet;
 
     let (agent, agent_key) = create_test_agent();
     let tx = create_write_tx(&agent, &agent_key, b"dedup/test", b"data", 1);

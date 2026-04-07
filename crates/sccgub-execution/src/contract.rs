@@ -251,7 +251,7 @@ mod tests {
 
     fn test_tx(
         agent: sccgub_types::agent::AgentIdentity,
-        contract: &SymbolicCausalContract,
+        _contract: &SymbolicCausalContract,
     ) -> SymbolicTransition {
         SymbolicTransition {
             tx_id: [0u8; 32],
