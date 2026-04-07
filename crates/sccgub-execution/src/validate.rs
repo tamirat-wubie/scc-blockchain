@@ -34,7 +34,7 @@ pub fn validate_transition(
     // 4. Verify agent_id = Hash(public_key ++ mfidel_seal) per spec.
     let expected_agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
         &tx.actor.public_key,
-        &serde_json::to_vec(&tx.actor.mfidel_seal).expect("mfidel seal serialization"),
+        &sccgub_crypto::canonical::canonical_bytes(&tx.actor.mfidel_seal),
     ]);
     if tx.actor.agent_id != expected_agent_id {
         errors.push("agent_id does not match Hash(public_key ++ mfidel_seal)".into());
@@ -148,7 +148,7 @@ mod tests {
         let seal = MfidelAtomicSeal::from_height(1);
         let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
             &pk,
-            &serde_json::to_vec(&seal).unwrap(),
+            &sccgub_crypto::canonical::canonical_bytes(&seal),
         ]);
         let agent = AgentIdentity {
             agent_id,

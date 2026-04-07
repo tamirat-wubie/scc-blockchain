@@ -94,10 +94,9 @@ impl MultiAssetLedger {
         from: &AgentId,
         amount: TensionValue,
     ) -> Result<(), String> {
-        if let Some(info) = self.asset_info.get(asset_id) {
-            if info.frozen {
-                return Err("Asset is frozen — cannot burn".into());
-            }
+        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        if info.frozen {
+            return Err("Asset is frozen — cannot burn".into());
         }
         let key = (*from, *asset_id);
         let balance = self.balances.get(&key).copied().unwrap_or(TensionValue::ZERO);

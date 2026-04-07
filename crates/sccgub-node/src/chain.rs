@@ -1,3 +1,4 @@
+use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::hash::{blake3_hash, blake3_hash_concat};
 use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
@@ -49,7 +50,7 @@ impl Chain {
         // Agent ID = Hash(pubkey ++ seal) — canonical derivation matching validate.rs.
         let validator_id = blake3_hash_concat(&[
             &pk,
-            &serde_json::to_vec(&seal).expect("serialization cannot fail"),
+            &canonical_bytes(&seal),
         ]);
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
@@ -399,7 +400,7 @@ fn build_genesis_block(
         receipt_root: ZERO_HASH,
         causal_root: ZERO_HASH,
         proof_root: ZERO_HASH,
-        governance_hash: blake3_hash(&serde_json::to_vec(&governance).expect("serialization cannot fail")),
+        governance_hash: canonical_hash(&governance),
         tension_before: TensionValue::ZERO,
         tension_after: TensionValue::ZERO,
         mfidel_seal: seal,
@@ -463,7 +464,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
     let timestamp = parent_timestamp.successor(
         validator_id,
-        blake3_hash(&serde_json::to_vec(parent_timestamp).expect("serialization cannot fail")),
+        canonical_hash(parent_timestamp),
         wall_hint,
     );
     let seal = MfidelAtomicSeal::from_height(height);
@@ -561,7 +562,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         // Serialize each edge to get unique hashes (not dummy bytes).
         let edge_bytes: Vec<Vec<u8>> = causal_edges
             .iter()
-            .map(|e| serde_json::to_vec(e).expect("serialization cannot fail"))
+            .map(canonical_bytes)
             .collect();
         let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
         merkle_root_of_bytes(&edge_refs)
@@ -570,7 +571,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();
     let receipt_root = merkle_root_of_bytes(&receipt_hashes);
 
-    let gov_hash = blake3_hash(&serde_json::to_vec(&governance).expect("serialization cannot fail"));
+    let gov_hash = canonical_hash(&governance);
 
     // Build header with ZERO_HASH for block_id, then hash the full header to get block_id.
     let mut header = BlockHeader {
@@ -593,7 +594,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         version: 1,
     };
     // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
-    let header_bytes = serde_json::to_vec(&header).expect("serialization cannot fail");
+    let header_bytes = canonical_bytes(&header);
     header.block_id = blake3_hash(&header_bytes);
 
     let proof = CausalProof {

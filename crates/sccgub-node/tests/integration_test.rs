@@ -34,7 +34,7 @@ fn create_test_agent() -> (AgentIdentity, ed25519_dalek::SigningKey) {
     let seal = MfidelAtomicSeal::from_height(1);
     let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
         &pk,
-        &serde_json::to_vec(&seal).unwrap(),
+        &sccgub_crypto::canonical::canonical_bytes(&seal),
     ]);
     let agent = AgentIdentity {
         agent_id,
@@ -151,7 +151,7 @@ fn build_test_block(
         receipt_root: ZERO_HASH,
         causal_root: ZERO_HASH,
         proof_root: ZERO_HASH,
-        governance_hash: blake3_hash(&serde_json::to_vec(&governance).unwrap()),
+        governance_hash: sccgub_crypto::canonical::canonical_hash(&governance),
         tension_before,
         tension_after: tension_before,
         mfidel_seal: seal,
@@ -160,7 +160,7 @@ fn build_test_block(
         version: 1,
     };
     // Compute block_id from full header (same as chain.rs).
-    let header_bytes = serde_json::to_vec(&header).unwrap();
+    let header_bytes = sccgub_crypto::canonical::canonical_bytes(&header);
     header.block_id = blake3_hash(&header_bytes);
 
     let proof = CausalProof {
