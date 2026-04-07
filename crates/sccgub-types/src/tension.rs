@@ -202,7 +202,11 @@ mod tests {
     fn test_display_negative_fractional() {
         let v = TensionValue(-(TensionValue::SCALE / 2)); // -0.5
         let s = format!("{}", v);
-        assert!(s.starts_with('-'), "Negative fractional should show minus: {}", s);
+        assert!(
+            s.starts_with('-'),
+            "Negative fractional should show minus: {}",
+            s
+        );
     }
 
     #[test]

@@ -76,9 +76,7 @@ pub struct WHBindingIntent {
 impl WHBindingIntent {
     /// Check completeness — all fields must be non-empty.
     pub fn is_complete(&self) -> bool {
-        self.who != [0u8; 32]
-            && !self.r#where.is_empty()
-            && !self.what_declared.is_empty()
+        self.who != [0u8; 32] && !self.r#where.is_empty() && !self.what_declared.is_empty()
     }
 }
 
@@ -165,7 +163,11 @@ pub enum OperationPayload {
     /// Contract deployment.
     DeployContract { code: Vec<u8> },
     /// Contract invocation.
-    InvokeContract { contract_id: Hash, method: String, args: Vec<u8> },
+    InvokeContract {
+        contract_id: Hash,
+        method: String,
+        args: Vec<u8>,
+    },
     /// No-op (for testing).
     Noop,
 }

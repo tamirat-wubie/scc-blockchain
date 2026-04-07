@@ -123,11 +123,9 @@ impl ContainmentState {
                     ContainmentLevel::ReducedThroughput { .. } => {
                         ContainmentLevel::IncreasedProofRequirements
                     }
-                    ContainmentLevel::IncreasedProofRequirements => {
-                        ContainmentLevel::Quarantine {
-                            blocks_remaining: 100,
-                        }
-                    }
+                    ContainmentLevel::IncreasedProofRequirements => ContainmentLevel::Quarantine {
+                        blocks_remaining: 100,
+                    },
                     ContainmentLevel::Quarantine { .. } => {
                         // Reset quarantine timer — still hostile.
                         ContainmentLevel::Quarantine {

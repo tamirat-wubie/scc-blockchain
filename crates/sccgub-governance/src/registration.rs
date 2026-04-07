@@ -80,10 +80,7 @@ impl AgentRegistry {
 
     /// Revoke an agent.
     pub fn revoke(&mut self, agent_id: &AgentId) -> Result<(), String> {
-        let agent = self
-            .agents
-            .get_mut(agent_id)
-            .ok_or("Agent not found")?;
+        let agent = self.agents.get_mut(agent_id).ok_or("Agent not found")?;
         agent.active = false;
         agent.revoked = true;
         Ok(())
@@ -91,7 +88,10 @@ impl AgentRegistry {
 
     /// Count of active agents.
     pub fn active_count(&self) -> usize {
-        self.agents.values().filter(|a| a.active && !a.revoked).count()
+        self.agents
+            .values()
+            .filter(|a| a.active && !a.revoked)
+            .count()
     }
 }
 
@@ -106,7 +106,12 @@ mod tests {
         let pk = *key.verifying_key().as_bytes();
 
         let id = registry
-            .register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 0)
+            .register(
+                pk,
+                MfidelAtomicSeal::from_height(1),
+                PrecedenceLevel::Meaning,
+                0,
+            )
             .unwrap();
 
         assert!(registry.is_active(&id));
@@ -120,10 +125,20 @@ mod tests {
         let pk = *key.verifying_key().as_bytes();
 
         registry
-            .register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 0)
+            .register(
+                pk,
+                MfidelAtomicSeal::from_height(1),
+                PrecedenceLevel::Meaning,
+                0,
+            )
             .unwrap();
 
-        let result = registry.register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 1);
+        let result = registry.register(
+            pk,
+            MfidelAtomicSeal::from_height(1),
+            PrecedenceLevel::Meaning,
+            1,
+        );
         assert!(result.is_err());
     }
 
@@ -134,7 +149,12 @@ mod tests {
         let pk = *key.verifying_key().as_bytes();
 
         let id = registry
-            .register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 0)
+            .register(
+                pk,
+                MfidelAtomicSeal::from_height(1),
+                PrecedenceLevel::Meaning,
+                0,
+            )
             .unwrap();
 
         registry.revoke(&id).unwrap();

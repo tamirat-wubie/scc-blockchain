@@ -60,7 +60,10 @@ pub fn scce_validate(
             valid: false,
             tension_delta: propagation.tension_delta,
             steps_used,
-            details: format!("Constraint conflict detected: {}", propagation.conflict_detail),
+            details: format!(
+                "Constraint conflict detected: {}",
+                propagation.conflict_detail
+            ),
         };
     }
     tension_delta = tension_delta + propagation.tension_delta;
@@ -304,7 +307,10 @@ mod tests {
         let weights = ConstraintWeights::default();
 
         let result = scce_validate(&tx, &state, &weights, 10, 1000);
-        assert!(!result.valid, "Read of nonexistent key should fail grounding");
+        assert!(
+            !result.valid,
+            "Read of nonexistent key should fail grounding"
+        );
     }
 
     #[test]

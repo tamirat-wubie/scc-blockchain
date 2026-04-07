@@ -5,7 +5,8 @@ use crate::hash::blake3_hash;
 
 /// Compute a canonical hash of any serializable value using bincode.
 pub fn canonical_hash<T: serde::Serialize>(value: &T) -> [u8; 32] {
-    let bytes = bincode::serialize(value).expect("bincode serialization cannot fail for Serialize types");
+    let bytes =
+        bincode::serialize(value).expect("bincode serialization cannot fail for Serialize types");
     blake3_hash(&bytes)
 }
 

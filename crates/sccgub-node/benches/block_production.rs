@@ -116,7 +116,9 @@ fn main() {
 
     // Benchmark: Merkle root computation.
     for &count in &counts {
-        let leaves: Vec<[u8; 32]> = (0..count).map(|i| blake3_hash(&(i as u64).to_le_bytes())).collect();
+        let leaves: Vec<[u8; 32]> = (0..count)
+            .map(|i| blake3_hash(&(i as u64).to_le_bytes()))
+            .collect();
         let start = Instant::now();
         let _root = sccgub_crypto::merkle::compute_merkle_root(&leaves);
         let elapsed = start.elapsed();

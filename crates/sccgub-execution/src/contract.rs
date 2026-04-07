@@ -158,7 +158,11 @@ fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResu
 
 /// Verify that a contract's ID matches the hash of its content.
 pub fn verify_contract_id(contract: &SymbolicCausalContract) -> bool {
-    let content = sccgub_crypto::canonical::canonical_bytes(&(&contract.name, &contract.laws, &contract.deployer));
+    let content = sccgub_crypto::canonical::canonical_bytes(&(
+        &contract.name,
+        &contract.laws,
+        &contract.deployer,
+    ));
     let expected = sccgub_crypto::hash::blake3_hash(&content);
     contract.contract_id == expected
 }
@@ -208,7 +212,10 @@ mod tests {
         }
     }
 
-    fn test_tx(agent: sccgub_types::agent::AgentIdentity, contract: &SymbolicCausalContract) -> SymbolicTransition {
+    fn test_tx(
+        agent: sccgub_types::agent::AgentIdentity,
+        contract: &SymbolicCausalContract,
+    ) -> SymbolicTransition {
         SymbolicTransition {
             tx_id: [0u8; 32],
             actor: agent,
@@ -261,7 +268,10 @@ mod tests {
         let tx = test_tx(agent, &contract);
         let state = ManagedWorldState::new();
         let result = execute_contract(&contract, &tx, &state, 1000);
-        assert!(!result.verdict.is_accepted(), "Should reject unauthorized actor");
+        assert!(
+            !result.verdict.is_accepted(),
+            "Should reject unauthorized actor"
+        );
     }
 
     #[test]
@@ -272,7 +282,10 @@ mod tests {
         tx.preconditions = vec![]; // Remove preconditions.
         let state = ManagedWorldState::new();
         let result = execute_contract(&contract, &tx, &state, 1000);
-        assert!(!result.verdict.is_accepted(), "Should reject missing precondition");
+        assert!(
+            !result.verdict.is_accepted(),
+            "Should reject missing precondition"
+        );
     }
 
     #[test]

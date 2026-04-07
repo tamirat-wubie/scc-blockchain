@@ -113,7 +113,11 @@ pub fn validate_cpog(
         // Speculative replay using shared apply function (single source of truth).
         let mut speculative = state.clone();
         let mut spec_balances = balances_from_trie(&speculative);
-        apply_block_transitions(&mut speculative, &mut spec_balances, &block.body.transitions);
+        apply_block_transitions(
+            &mut speculative,
+            &mut spec_balances,
+            &block.body.transitions,
+        );
         for tx in &block.body.transitions {
             let _ = speculative.check_nonce(&tx.actor.agent_id, tx.nonce);
         }

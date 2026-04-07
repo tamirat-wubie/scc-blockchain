@@ -39,10 +39,7 @@ pub struct PartitionDetector {
 #[derive(Debug, Clone)]
 pub enum PartitionStatus {
     /// All validators are within acceptable divergence.
-    Healthy {
-        min_height: u64,
-        max_height: u64,
-    },
+    Healthy { min_height: u64, max_height: u64 },
     /// Partition detected: validators are split into groups.
     Partitioned {
         groups: Vec<ValidatorGroup>,
@@ -196,7 +193,10 @@ mod tests {
         }
 
         match detector.detect(&config) {
-            PartitionStatus::Healthy { min_height, max_height } => {
+            PartitionStatus::Healthy {
+                min_height,
+                max_height,
+            } => {
                 assert_eq!(min_height, 100);
                 assert_eq!(max_height, 100);
             }
@@ -222,7 +222,10 @@ mod tests {
         detector.report_height([5u8; 32], 122);
 
         match detector.detect(&config) {
-            PartitionStatus::Partitioned { groups, canonical_group_index } => {
+            PartitionStatus::Partitioned {
+                groups,
+                canonical_group_index,
+            } => {
                 assert_eq!(groups.len(), 2);
                 // Group with more validators is canonical.
                 assert_eq!(groups[canonical_group_index].validators.len(), 3);

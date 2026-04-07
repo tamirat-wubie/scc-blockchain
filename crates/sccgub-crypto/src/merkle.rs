@@ -114,11 +114,7 @@ pub fn generate_proof(leaves: &[[u8; 32]], index: usize) -> Option<MerkleProof> 
 }
 
 /// Verify a Merkle inclusion proof.
-pub fn verify_proof(
-    root: &[u8; 32],
-    leaf: &[u8; 32],
-    proof: &MerkleProof,
-) -> bool {
+pub fn verify_proof(root: &[u8; 32], leaf: &[u8; 32], proof: &MerkleProof) -> bool {
     let mut current = hash_leaf(leaf);
 
     for (sibling, is_right) in &proof.siblings {

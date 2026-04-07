@@ -17,7 +17,10 @@ impl BalanceLedger {
 
     /// Get an agent's balance (0 if not found).
     pub fn balance_of(&self, agent: &AgentId) -> TensionValue {
-        self.balances.get(agent).copied().unwrap_or(TensionValue::ZERO)
+        self.balances
+            .get(agent)
+            .copied()
+            .unwrap_or(TensionValue::ZERO)
     }
 
     /// Credit an agent's balance (e.g., reward, mint).
@@ -100,7 +103,9 @@ mod tests {
         let agent = [1u8; 32];
         ledger.credit(&agent, TensionValue::from_integer(50));
 
-        assert!(ledger.debit(&agent, TensionValue::from_integer(100)).is_err());
+        assert!(ledger
+            .debit(&agent, TensionValue::from_integer(100))
+            .is_err());
         // Balance unchanged on failure.
         assert_eq!(ledger.balance_of(&agent), TensionValue::from_integer(50));
     }
@@ -151,9 +156,7 @@ mod tests {
         let bob = [2u8; 32];
         ledger.credit(&alice, TensionValue::from_integer(100));
 
-        assert!(ledger
-            .transfer(&alice, &bob, TensionValue::ZERO)
-            .is_err());
+        assert!(ledger.transfer(&alice, &bob, TensionValue::ZERO).is_err());
     }
 
     #[test]
@@ -165,10 +168,18 @@ mod tests {
         ledger.credit(&agents[0], TensionValue::from_integer(1000));
 
         // Transfer around.
-        ledger.transfer(&agents[0], &agents[1], TensionValue::from_integer(200)).unwrap();
-        ledger.transfer(&agents[0], &agents[2], TensionValue::from_integer(300)).unwrap();
-        ledger.transfer(&agents[1], &agents[3], TensionValue::from_integer(100)).unwrap();
-        ledger.transfer(&agents[2], &agents[4], TensionValue::from_integer(50)).unwrap();
+        ledger
+            .transfer(&agents[0], &agents[1], TensionValue::from_integer(200))
+            .unwrap();
+        ledger
+            .transfer(&agents[0], &agents[2], TensionValue::from_integer(300))
+            .unwrap();
+        ledger
+            .transfer(&agents[1], &agents[3], TensionValue::from_integer(100))
+            .unwrap();
+        ledger
+            .transfer(&agents[2], &agents[4], TensionValue::from_integer(50))
+            .unwrap();
 
         // Total supply must be conserved.
         assert_eq!(ledger.total_supply(), TensionValue::from_integer(1000));

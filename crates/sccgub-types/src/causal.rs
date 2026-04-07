@@ -39,7 +39,11 @@ impl CausalGraph {
         }
 
         #[derive(Clone, Copy, PartialEq)]
-        enum Color { White, Gray, Black }
+        enum Color {
+            White,
+            Gray,
+            Black,
+        }
 
         let mut color: HashMap<CausalVertex, Color> = all_vertices
             .iter()
@@ -97,17 +101,50 @@ pub enum CausalVertex {
 /// Typed causal edge — 12 edge types per spec.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CausalEdge {
-    CausedBy { source: CausalVertex, target: CausalVertex },
-    DependsOn { source: CausalVertex, target: CausalVertex },
-    AuthorizedBy { source: CausalVertex, target: CausalVertex },
-    Proves { source: CausalVertex, target: CausalVertex },
-    Violates { source: CausalVertex, target: CausalVertex },
-    Compensates { source: CausalVertex, target: CausalVertex },
-    Amends { source: CausalVertex, target: CausalVertex },
-    DerivedFrom { source: CausalVertex, target: CausalVertex },
-    ObservedBy { source: CausalVertex, target: CausalVertex },
-    GovernedBy { source: CausalVertex, target: CausalVertex },
-    ContainedBy { source: CausalVertex, target: CausalVertex },
+    CausedBy {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    DependsOn {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    AuthorizedBy {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    Proves {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    Violates {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    Compensates {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    Amends {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    DerivedFrom {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    ObservedBy {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    GovernedBy {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
+    ContainedBy {
+        source: CausalVertex,
+        target: CausalVertex,
+    },
     TensionPropagates {
         source: CausalVertex,
         target: CausalVertex,

@@ -46,12 +46,7 @@ impl SimpleTransaction {
     }
 
     /// Create an asset transfer transaction.
-    pub fn transfer(
-        actor_id: Hash,
-        public_key: [u8; 32],
-        to: Hash,
-        amount: i64,
-    ) -> Self {
+    pub fn transfer(actor_id: Hash, public_key: [u8; 32], to: Hash, amount: i64) -> Self {
         let amount_raw = crate::tension::TensionValue::from_integer(amount).raw();
         Self {
             actor_id,

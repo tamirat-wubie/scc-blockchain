@@ -72,7 +72,10 @@ impl MultiAssetLedger {
         to: &AgentId,
         amount: TensionValue,
     ) -> Result<(), String> {
-        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        let info = self
+            .asset_info
+            .get(asset_id)
+            .ok_or("Asset not registered")?;
         if info.frozen {
             return Err("Asset is frozen — cannot mint".into());
         }
@@ -82,7 +85,10 @@ impl MultiAssetLedger {
         let key = (*to, *asset_id);
         let balance = self.balances.entry(key).or_insert(TensionValue::ZERO);
         *balance = *balance + amount;
-        let supply = self.total_supply.entry(*asset_id).or_insert(TensionValue::ZERO);
+        let supply = self
+            .total_supply
+            .entry(*asset_id)
+            .or_insert(TensionValue::ZERO);
         *supply = *supply + amount;
         Ok(())
     }
@@ -94,17 +100,27 @@ impl MultiAssetLedger {
         from: &AgentId,
         amount: TensionValue,
     ) -> Result<(), String> {
-        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        let info = self
+            .asset_info
+            .get(asset_id)
+            .ok_or("Asset not registered")?;
         if info.frozen {
             return Err("Asset is frozen — cannot burn".into());
         }
         let key = (*from, *asset_id);
-        let balance = self.balances.get(&key).copied().unwrap_or(TensionValue::ZERO);
+        let balance = self
+            .balances
+            .get(&key)
+            .copied()
+            .unwrap_or(TensionValue::ZERO);
         if balance.raw() < amount.raw() {
             return Err("Insufficient balance for burn".into());
         }
         self.balances.insert(key, balance - amount);
-        let supply = self.total_supply.entry(*asset_id).or_insert(TensionValue::ZERO);
+        let supply = self
+            .total_supply
+            .entry(*asset_id)
+            .or_insert(TensionValue::ZERO);
         *supply = *supply - amount;
         Ok(())
     }
@@ -123,7 +139,10 @@ impl MultiAssetLedger {
         if from == to {
             return Err("Cannot transfer to self".into());
         }
-        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        let info = self
+            .asset_info
+            .get(asset_id)
+            .ok_or("Asset not registered")?;
         {
             if info.frozen {
                 return Err("Asset is frozen".into());
@@ -131,14 +150,22 @@ impl MultiAssetLedger {
         }
 
         let from_key = (*from, *asset_id);
-        let from_balance = self.balances.get(&from_key).copied().unwrap_or(TensionValue::ZERO);
+        let from_balance = self
+            .balances
+            .get(&from_key)
+            .copied()
+            .unwrap_or(TensionValue::ZERO);
         if from_balance.raw() < amount.raw() {
             return Err("Insufficient balance".into());
         }
         self.balances.insert(from_key, from_balance - amount);
 
         let to_key = (*to, *asset_id);
-        let to_balance = self.balances.get(&to_key).copied().unwrap_or(TensionValue::ZERO);
+        let to_balance = self
+            .balances
+            .get(&to_key)
+            .copied()
+            .unwrap_or(TensionValue::ZERO);
         self.balances.insert(to_key, to_balance + amount);
         Ok(())
     }
@@ -194,7 +221,9 @@ mod tests {
             .unwrap();
 
         let alice = [10u8; 32];
-        ledger.mint(&native_asset(), &alice, TensionValue::from_integer(1000)).unwrap();
+        ledger
+            .mint(&native_asset(), &alice, TensionValue::from_integer(1000))
+            .unwrap();
         assert_eq!(
             ledger.balance_of(&alice, &native_asset()),
             TensionValue::from_integer(1000)
@@ -226,12 +255,21 @@ mod tests {
         let alice = [10u8; 32];
         let bob = [11u8; 32];
 
-        ledger.mint(&native_asset(), &alice, TensionValue::from_integer(1000)).unwrap();
-        ledger.mint(&stablecoin(), &alice, TensionValue::from_integer(500)).unwrap();
+        ledger
+            .mint(&native_asset(), &alice, TensionValue::from_integer(1000))
+            .unwrap();
+        ledger
+            .mint(&stablecoin(), &alice, TensionValue::from_integer(500))
+            .unwrap();
 
         // Transfer native token.
         ledger
-            .transfer(&native_asset(), &alice, &bob, TensionValue::from_integer(300))
+            .transfer(
+                &native_asset(),
+                &alice,
+                &bob,
+                TensionValue::from_integer(300),
+            )
             .unwrap();
 
         assert_eq!(
@@ -271,8 +309,12 @@ mod tests {
             .unwrap();
 
         let alice = [10u8; 32];
-        ledger.mint(&native_asset(), &alice, TensionValue::from_integer(1000)).unwrap();
-        ledger.burn(&native_asset(), &alice, TensionValue::from_integer(400)).unwrap();
+        ledger
+            .mint(&native_asset(), &alice, TensionValue::from_integer(1000))
+            .unwrap();
+        ledger
+            .burn(&native_asset(), &alice, TensionValue::from_integer(400))
+            .unwrap();
 
         assert_eq!(
             ledger.balance_of(&alice, &native_asset()),
@@ -300,11 +342,18 @@ mod tests {
 
         let alice = [10u8; 32];
         let bob = [11u8; 32];
-        ledger.mint(&native_asset(), &alice, TensionValue::from_integer(1000)).unwrap();
+        ledger
+            .mint(&native_asset(), &alice, TensionValue::from_integer(1000))
+            .unwrap();
 
         ledger.freeze_asset(&native_asset()).unwrap();
         assert!(ledger
-            .transfer(&native_asset(), &alice, &bob, TensionValue::from_integer(100))
+            .transfer(
+                &native_asset(),
+                &alice,
+                &bob,
+                TensionValue::from_integer(100)
+            )
             .is_err());
     }
 }

@@ -112,8 +112,7 @@ impl SlashingEngine {
             .copied()
             .ok_or("Validator not found")?;
 
-        let penalty_raw =
-            stake.raw() * self.config.double_sign_penalty_pct as i128 / 100;
+        let penalty_raw = stake.raw() * self.config.double_sign_penalty_pct as i128 / 100;
         let penalty = TensionValue(penalty_raw);
 
         // Deduct penalty.
@@ -151,8 +150,7 @@ impl SlashingEngine {
             .copied()
             .ok_or("Validator not found")?;
 
-        let penalty_raw =
-            stake.raw() * self.config.divergence_penalty_pct as i128 / 100;
+        let penalty_raw = stake.raw() * self.config.divergence_penalty_pct as i128 / 100;
         let penalty = TensionValue(penalty_raw);
 
         let new_stake = stake - penalty;
@@ -178,8 +176,7 @@ impl SlashingEngine {
         *counter = counter.saturating_add(1);
 
         let stake = self.stakes.get(&validator).copied()?;
-        let penalty_raw =
-            stake.raw() * self.config.absence_penalty_pct_per_epoch as i128 / 100;
+        let penalty_raw = stake.raw() * self.config.absence_penalty_pct_per_epoch as i128 / 100;
         let penalty = TensionValue(penalty_raw);
 
         let new_stake = stake - penalty;
@@ -239,10 +236,7 @@ mod tests {
         let event = engine.slash_double_sign(proof, 1).unwrap();
         // 32% of 1000 = 320.
         assert_eq!(event.penalty, TensionValue::from_integer(320));
-        assert_eq!(
-            engine.stakes[&validator],
-            TensionValue::from_integer(680)
-        );
+        assert_eq!(engine.stakes[&validator], TensionValue::from_integer(680));
     }
 
     #[test]

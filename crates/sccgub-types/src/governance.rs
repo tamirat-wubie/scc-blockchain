@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::{AgentId, ConstraintId, Hash, NormId, RuleId};
 use crate::tension::TensionValue;
+use crate::{AgentId, ConstraintId, Hash, NormId, RuleId};
 
 /// Governance precedence levels — lower number = absolute priority.
 /// GENESIS > SAFETY > MEANING > EMOTION > OPTIMIZATION

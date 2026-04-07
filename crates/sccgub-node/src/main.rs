@@ -132,16 +132,25 @@ fn cmd_init(data_dir: &std::path::Path) {
 
     // Check if chain already exists.
     if store.load_block(0).is_ok() {
-        eprintln!("Chain already initialized at {:?}. Delete the directory to reinitialize.", data_dir);
+        eprintln!(
+            "Chain already initialized at {:?}. Delete the directory to reinitialize.",
+            data_dir
+        );
         std::process::exit(1);
     }
 
     let chain = Chain::init();
     let genesis = chain.latest_block().unwrap();
 
-    store.save_block(genesis).expect("Failed to save genesis block");
-    store.save_metadata(&chain.chain_id).expect("Failed to save metadata");
-    store.save_validator_key(&chain.validator_key).expect("Failed to save validator key");
+    store
+        .save_block(genesis)
+        .expect("Failed to save genesis block");
+    store
+        .save_metadata(&chain.chain_id)
+        .expect("Failed to save metadata");
+    store
+        .save_validator_key(&chain.validator_key)
+        .expect("Failed to save validator key");
 
     println!("Chain initialized at {:?}", data_dir);
     println!("  Chain ID:      {}", hex::encode(chain.chain_id));
@@ -150,7 +159,10 @@ fn cmd_init(data_dir: &std::path::Path) {
         "  Mfidel seal:   f[{}][{}] (vowel origin)",
         genesis.header.mfidel_seal.row, genesis.header.mfidel_seal.column
     );
-    println!("  State root:    {}", hex::encode(genesis.header.state_root));
+    println!(
+        "  State root:    {}",
+        hex::encode(genesis.header.state_root)
+    );
 }
 
 fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
@@ -230,7 +242,9 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
     // Save state snapshot every 10 blocks for fast reload.
     if produced_height % 10 == 0 && produced_height > 0 {
         let snapshot = chain.create_snapshot();
-        store.save_snapshot(&snapshot).expect("Failed to save snapshot");
+        store
+            .save_snapshot(&snapshot)
+            .expect("Failed to save snapshot");
         println!("  Snapshot saved at height {}.", produced_height);
     }
 }
@@ -255,20 +269,43 @@ fn cmd_show_block(data_dir: &std::path::Path, height: u64) {
                 block.header.mfidel_seal.row, block.header.mfidel_seal.column
             );
             println!("  State root:     {}", hex::encode(block.header.state_root));
-            println!("  Transition root:{}", hex::encode(block.header.transition_root));
-            println!("  Tension:        {} -> {}", block.header.tension_before, block.header.tension_after);
-            println!("  Validator:      {}", hex::encode(block.header.validator_id));
+            println!(
+                "  Transition root:{}",
+                hex::encode(block.header.transition_root)
+            );
+            println!(
+                "  Tension:        {} -> {}",
+                block.header.tension_before, block.header.tension_after
+            );
+            println!(
+                "  Validator:      {}",
+                hex::encode(block.header.validator_id)
+            );
             println!("  Version:        {}", block.header.version);
-            println!("  Lamport clock:  {}", block.header.timestamp.lamport_counter);
+            println!(
+                "  Lamport clock:  {}",
+                block.header.timestamp.lamport_counter
+            );
             println!("  Causal depth:   {}", block.header.timestamp.causal_depth);
             println!("  Transitions:    {}", block.body.transition_count);
             for (i, tx) in block.body.transitions.iter().enumerate() {
-                println!("    [{}] {} (kind: {:?})", i, hex::encode(tx.tx_id), tx.intent.kind);
-                println!("        target: {}", String::from_utf8_lossy(&tx.intent.target));
+                println!(
+                    "    [{}] {} (kind: {:?})",
+                    i,
+                    hex::encode(tx.tx_id),
+                    tx.intent.kind
+                );
+                println!(
+                    "        target: {}",
+                    String::from_utf8_lossy(&tx.intent.target)
+                );
                 println!("        purpose: {}", tx.intent.declared_purpose);
             }
             println!("  Receipts:       {}", block.receipts.len());
-            println!("  Governance:     emergency={}, norms={}", block.governance.emergency_mode, block.governance.active_norm_count);
+            println!(
+                "  Governance:     emergency={}, norms={}",
+                block.governance.emergency_mode, block.governance.active_norm_count
+            );
             println!("  Proof depth:    {}", block.proof.recursion_depth);
         }
         Err(e) => {
@@ -310,7 +347,10 @@ fn cmd_status(data_dir: &std::path::Path) {
     println!("  Total blocks:   {}", blocks.len());
     println!("  Total txs:      {}", total_txs);
     println!("  Latest block:   {}", hex::encode(latest.header.block_id));
-    println!("  State root:     {}", hex::encode(latest.header.state_root));
+    println!(
+        "  State root:     {}",
+        hex::encode(latest.header.state_root)
+    );
     println!("  Tension:        {}", latest.header.tension_after);
     println!(
         "  Mfidel seal:    f[{}][{}] (cycle {})",
@@ -373,7 +413,10 @@ fn cmd_show_state(data_dir: &std::path::Path) {
         }
     }
 
-    println!("=== World State (height {}) ===", blocks.last().unwrap().header.height);
+    println!(
+        "=== World State (height {}) ===",
+        blocks.last().unwrap().header.height
+    );
     println!("  State root: {}", hex::encode(state.state_root()));
     println!("  Entries:    {}", state.trie.len());
     println!();
@@ -413,7 +456,8 @@ fn cmd_verify(data_dir: &std::path::Path) {
 
     // Write genesis balance into trie (mirrors chain.rs init).
     if let Some(genesis) = blocks.first() {
-        let balance_key = format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+        let balance_key =
+            format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
         state.apply_delta(&sccgub_types::transition::StateDelta {
             writes: vec![sccgub_types::transition::StateWrite {
                 address: balance_key,
@@ -437,7 +481,10 @@ fn cmd_verify(data_dir: &std::path::Path) {
 
         // Check structural validity.
         if !block.is_structurally_valid() {
-            println!("  [FAIL] Block #{}: structural validation failed", block.header.height);
+            println!(
+                "  [FAIL] Block #{}: structural validation failed",
+                block.header.height
+            );
             errors += 1;
             continue;
         }
@@ -479,7 +526,10 @@ fn cmd_verify(data_dir: &std::path::Path) {
                         id.copy_from_slice(&agent_bytes);
                         let mut raw = [0u8; 16];
                         raw.copy_from_slice(value);
-                        replay_balances.credit(&id, sccgub_types::tension::TensionValue(i128::from_le_bytes(raw)));
+                        replay_balances.credit(
+                            &id,
+                            sccgub_types::tension::TensionValue(i128::from_le_bytes(raw)),
+                        );
                     }
                 }
             }
@@ -497,7 +547,11 @@ fn cmd_verify(data_dir: &std::path::Path) {
                     });
                 }
                 OperationPayload::AssetTransfer { from, to, amount } => {
-                    let _ = replay_balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount));
+                    let _ = replay_balances.transfer(
+                        from,
+                        to,
+                        sccgub_types::tension::TensionValue(*amount),
+                    );
                 }
                 _ => {}
             }
@@ -614,23 +668,31 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
 
     // Check if chain already exists.
     if store.load_block(0).is_ok() {
-        eprintln!("Chain already exists at {:?}. Delete it first to import.", data_dir);
+        eprintln!(
+            "Chain already exists at {:?}. Delete it first to import.",
+            data_dir
+        );
         std::process::exit(1);
     }
 
     let json = std::fs::read_to_string(input).expect("Failed to read import file");
     let snapshot: serde_json::Value = serde_json::from_str(&json).expect("Invalid JSON");
 
-    let format = snapshot.get("format").and_then(|v| v.as_str()).unwrap_or("");
+    let format = snapshot
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if format != "sccgub-chain-export" {
-        eprintln!("Invalid export format: expected 'sccgub-chain-export', got '{}'", format);
+        eprintln!(
+            "Invalid export format: expected 'sccgub-chain-export', got '{}'",
+            format
+        );
         std::process::exit(1);
     }
 
-    let blocks: Vec<sccgub_types::block::Block> = serde_json::from_value(
-        snapshot.get("blocks").cloned().unwrap_or_default(),
-    )
-    .expect("Failed to parse blocks from export");
+    let blocks: Vec<sccgub_types::block::Block> =
+        serde_json::from_value(snapshot.get("blocks").cloned().unwrap_or_default())
+            .expect("Failed to parse blocks from export");
 
     // Verify and save each block.
     let mut state = sccgub_state::world::ManagedWorldState::new();
@@ -641,7 +703,10 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
 
     for (i, block) in blocks.iter().enumerate() {
         if !block.is_structurally_valid() {
-            eprintln!("Block #{} failed structural validation", block.header.height);
+            eprintln!(
+                "Block #{} failed structural validation",
+                block.header.height
+            );
             std::process::exit(1);
         }
 
@@ -653,7 +718,10 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
 
         let result = sccgub_execution::cpog::validate_cpog(block, &state, &parent_id);
         if !result.is_valid() {
-            eprintln!("Block #{} failed CPoG validation: {:?}", block.header.height, result);
+            eprintln!(
+                "Block #{} failed CPoG validation: {:?}",
+                block.header.height, result
+            );
             std::process::exit(1);
         }
 
@@ -671,7 +739,10 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
                 });
             }
             if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                eprintln!("Import failed: block #{} nonce error: {}", block.header.height, e);
+                eprintln!(
+                    "Import failed: block #{} nonce error: {}",
+                    block.header.height, e
+                );
                 std::process::exit(1);
             }
         }
@@ -679,7 +750,9 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
     }
 
     if let Some(chain_id) = blocks.first().map(|b| b.header.chain_id) {
-        store.save_metadata(&chain_id).expect("Failed to save metadata");
+        store
+            .save_metadata(&chain_id)
+            .expect("Failed to save metadata");
     }
 
     println!(
@@ -719,7 +792,10 @@ fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
                 println!("  Tx ID:     {}", tx_hex);
                 println!("  Index:     {}", i);
                 println!("  Kind:      {:?}", tx.intent.kind);
-                println!("  Target:    {}", String::from_utf8_lossy(&tx.intent.target));
+                println!(
+                    "  Target:    {}",
+                    String::from_utf8_lossy(&tx.intent.target)
+                );
                 println!("  Purpose:   {}", tx.intent.declared_purpose);
                 println!("  Actor:     {}", hex::encode(tx.actor.agent_id));
                 println!("  Nonce:     {}", tx.nonce);
@@ -824,7 +900,11 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
         intent: TransitionIntent {
             kind: TransitionKind::AssetTransfer,
             target: b"ledger/transfer".to_vec(),
-            declared_purpose: format!("Transfer {} tokens to {}", amount, &hex::encode(recipient_id)[..16]),
+            declared_purpose: format!(
+                "Transfer {} tokens to {}",
+                amount,
+                &hex::encode(recipient_id)[..16]
+            ),
         },
         preconditions: vec![],
         postconditions: vec![],
@@ -897,11 +977,8 @@ fn cmd_balance(data_dir: &std::path::Path, agent_prefix: &str) {
 
     for block in &blocks {
         for tx in &block.body.transitions {
-            if let sccgub_types::transition::OperationPayload::AssetTransfer {
-                from,
-                to,
-                amount,
-            } = &tx.payload
+            if let sccgub_types::transition::OperationPayload::AssetTransfer { from, to, amount } =
+                &tx.payload
             {
                 let _ = balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount));
             }
@@ -914,9 +991,7 @@ fn cmd_balance(data_dir: &std::path::Path, agent_prefix: &str) {
     let mut found = false;
     for (agent_id, balance) in &balances.balances {
         let hex_id = hex::encode(agent_id);
-        if (prefix_lower.is_empty() || hex_id.starts_with(&prefix_lower))
-            && balance.raw() > 0
-        {
+        if (prefix_lower.is_empty() || hex_id.starts_with(&prefix_lower)) && balance.raw() > 0 {
             found = true;
             println!("Agent: {}", hex_id);
             println!("  Balance: {}", balance);
@@ -1001,7 +1076,14 @@ fn cmd_stats(data_dir: &std::path::Path) {
     println!("  Transactions");
     println!("    Total:             {}", total_txs);
     println!("    Receipts:          {}", total_receipts);
-    println!("    Avg per block:     {:.1}", if blocks.len() > 1 { total_txs as f64 / (blocks.len() - 1) as f64 } else { 0.0 });
+    println!(
+        "    Avg per block:     {:.1}",
+        if blocks.len() > 1 {
+            total_txs as f64 / (blocks.len() - 1) as f64
+        } else {
+            0.0
+        }
+    );
     println!();
     println!("  Causal Graph");
     println!("    Vertices:          {}", total_causal_vertices);
@@ -1013,9 +1095,18 @@ fn cmd_stats(data_dir: &std::path::Path) {
     println!("    Unique agents:     {}", agents.len());
     println!();
     println!("  Governance");
-    println!("    Finality:          {:?}", latest.governance.finality_mode);
-    println!("    Emergency:         {}", latest.governance.emergency_mode);
-    println!("    Active norms:      {}", latest.governance.active_norm_count);
+    println!(
+        "    Finality:          {:?}",
+        latest.governance.finality_mode
+    );
+    println!(
+        "    Emergency:         {}",
+        latest.governance.emergency_mode
+    );
+    println!(
+        "    Active norms:      {}",
+        latest.governance.active_norm_count
+    );
     println!();
     println!("  Tension");
     println!("    Current:           {}", latest.header.tension_after);
@@ -1082,13 +1173,32 @@ fn cmd_health(data_dir: &std::path::Path) {
     println!("    Finalized height:   {}", finality.finalized_height);
     println!("    Tip height:         {}", latest.header.height);
     println!("    Finality gap:       {}", finality.finality_gap());
-    println!("    Confirmation depth: {}", finality_config.confirmation_depth);
-    println!("    Expected latency:   {} ms", finality_config.expected_finality_ms());
-    println!("    SLA met:            {}", if finality_config.meets_sla() { "YES" } else { "NO" });
+    println!(
+        "    Confirmation depth: {}",
+        finality_config.confirmation_depth
+    );
+    println!(
+        "    Expected latency:   {} ms",
+        finality_config.expected_finality_ms()
+    );
+    println!(
+        "    SLA met:            {}",
+        if finality_config.meets_sla() {
+            "YES"
+        } else {
+            "NO"
+        }
+    );
     println!();
     println!("  Mfidel");
-    println!("    Current seal:       f[{}][{}]", latest.header.mfidel_seal.row, latest.header.mfidel_seal.column);
-    println!("    Cycle:              {}", sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height));
+    println!(
+        "    Current seal:       f[{}][{}]",
+        latest.header.mfidel_seal.row, latest.header.mfidel_seal.column
+    );
+    println!(
+        "    Cycle:              {}",
+        sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height)
+    );
     println!("    Fidels completed:   {}", latest.header.height % 272);
 }
 
@@ -1139,16 +1249,14 @@ async fn cmd_serve(data_dir: &std::path::Path, port: u16) {
 
     let chain_id = blocks[0].header.chain_id;
 
-    let app_state = sccgub_api::handlers::SharedState::from(
-        std::sync::Arc::new(tokio::sync::RwLock::new(
-            sccgub_api::handlers::AppState {
-                blocks,
-                state,
-                chain_id,
-                finalized_height: finality.finalized_height,
-            },
-        )),
-    );
+    let app_state = sccgub_api::handlers::SharedState::from(std::sync::Arc::new(
+        tokio::sync::RwLock::new(sccgub_api::handlers::AppState {
+            blocks,
+            state,
+            chain_id,
+            finalized_height: finality.finalized_height,
+        }),
+    ));
 
     let app = sccgub_api::router::build_router(app_state);
 
@@ -1213,7 +1321,12 @@ fn cmd_demo() {
     println!();
 
     println!("=== Chain Summary ===");
-    println!("  Height: {}, Blocks: {}, Mempool: {}", chain.height(), chain.blocks.len(), chain.mempool.len());
+    println!(
+        "  Height: {}, Blocks: {}, Mempool: {}",
+        chain.height(),
+        chain.blocks.len(),
+        chain.mempool.len()
+    );
     for block in &chain.blocks {
         println!(
             "  #{}: {} (txs:{}, seal:f[{}][{}])",
@@ -1270,7 +1383,10 @@ fn print_block_summary(block: &sccgub_types::block::Block) {
         block.header.mfidel_seal.row, block.header.mfidel_seal.column
     );
     println!("  State root: {}", hex::encode(block.header.state_root));
-    println!("  Tension:    {} -> {}", block.header.tension_before, block.header.tension_after);
+    println!(
+        "  Tension:    {} -> {}",
+        block.header.tension_before, block.header.tension_after
+    );
 }
 
 fn create_test_transition(

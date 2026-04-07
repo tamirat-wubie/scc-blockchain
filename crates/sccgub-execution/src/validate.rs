@@ -101,18 +101,18 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
         }
     };
 
-    let pre_hash = sccgub_crypto::hash::blake3_hash(
-        &sccgub_crypto::canonical::canonical_bytes(&tx.preconditions),
-    );
-    let post_hash = sccgub_crypto::hash::blake3_hash(
-        &sccgub_crypto::canonical::canonical_bytes(&tx.postconditions),
-    );
-    let wh_hash = sccgub_crypto::hash::blake3_hash(
-        &sccgub_crypto::canonical::canonical_bytes(&tx.wh_binding_intent),
-    );
-    let causal_hash = sccgub_crypto::hash::blake3_hash(
-        &sccgub_crypto::canonical::canonical_bytes(&tx.causal_chain),
-    );
+    let pre_hash = sccgub_crypto::hash::blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
+        &tx.preconditions,
+    ));
+    let post_hash = sccgub_crypto::hash::blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
+        &tx.postconditions,
+    ));
+    let wh_hash = sccgub_crypto::hash::blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
+        &tx.wh_binding_intent,
+    ));
+    let causal_hash = sccgub_crypto::hash::blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
+        &tx.causal_chain,
+    ));
 
     sccgub_crypto::canonical::canonical_bytes(&(
         &tx.actor.agent_id,

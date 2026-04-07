@@ -29,12 +29,12 @@ pub struct GovernanceLimits {
 impl Default for GovernanceLimits {
     fn default() -> Self {
         Self {
-            max_actions_per_agent_pct: 33,      // No agent > 33% of governance actions.
-            safety_change_min_signers: 3,        // SAFETY changes need 3+ signers.
-            genesis_change_min_signers: 5,       // GENESIS changes need 5+ signers.
-            max_consecutive_proposals: 3,        // Max 3 blocks in a row from same validator.
-            max_authority_term_epochs: 100,       // Term limit: 100 epochs.
-            authority_cooldown_epochs: 10,        // 10-epoch cooldown after term expires.
+            max_actions_per_agent_pct: 33,  // No agent > 33% of governance actions.
+            safety_change_min_signers: 3,   // SAFETY changes need 3+ signers.
+            genesis_change_min_signers: 5,  // GENESIS changes need 5+ signers.
+            max_consecutive_proposals: 3,   // Max 3 blocks in a row from same validator.
+            max_authority_term_epochs: 100, // Term limit: 100 epochs.
+            authority_cooldown_epochs: 10,  // 10-epoch cooldown after term expires.
         }
     }
 }
@@ -58,11 +58,7 @@ pub struct GovernancePowerTracker {
 
 impl GovernancePowerTracker {
     /// Check if an agent is allowed to perform a governance action.
-    pub fn check_action(
-        &self,
-        agent: &AgentId,
-        limits: &GovernanceLimits,
-    ) -> Result<(), String> {
+    pub fn check_action(&self, agent: &AgentId, limits: &GovernanceLimits) -> Result<(), String> {
         // Check percentage cap.
         if self.total_actions_epoch > 0 {
             let agent_actions = self.actions_this_epoch.get(agent).copied().unwrap_or(0);
@@ -93,7 +89,11 @@ impl GovernancePowerTracker {
     ) -> Result<(), String> {
         if let Some(last) = &self.last_proposer {
             if last == validator {
-                let consecutive = self.consecutive_proposals.get(validator).copied().unwrap_or(0);
+                let consecutive = self
+                    .consecutive_proposals
+                    .get(validator)
+                    .copied()
+                    .unwrap_or(0);
                 if consecutive >= limits.max_consecutive_proposals {
                     return Err(format!(
                         "Validator {} has proposed {} consecutive blocks (max {})",

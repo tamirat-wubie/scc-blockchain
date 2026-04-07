@@ -213,7 +213,11 @@ fn test_full_chain_lifecycle() {
 
     // 3. Validate genesis via CPoG.
     let cpog_result = validate_cpog(&genesis, &state, &ZERO_HASH);
-    assert!(cpog_result.is_valid(), "Genesis CPoG failed: {:?}", cpog_result);
+    assert!(
+        cpog_result.is_valid(),
+        "Genesis CPoG failed: {:?}",
+        cpog_result
+    );
 
     // 4. Submit transitions.
     let tx1 = create_write_tx(&agent, &agent_key, b"account/alice/balance", b"1000", 1);
@@ -223,7 +227,11 @@ fn test_full_chain_lifecycle() {
     // 5. Validate each transition individually.
     for tx in [&tx1, &tx2, &tx3] {
         let phi_log = phi_traversal_tx(tx, &state);
-        assert!(phi_log.all_phases_passed, "Per-tx Phi failed for {:?}", tx.tx_id);
+        assert!(
+            phi_log.all_phases_passed,
+            "Per-tx Phi failed for {:?}",
+            tx.tx_id
+        );
     }
 
     // 6. Build block #1 with the transitions.
@@ -241,12 +249,20 @@ fn test_full_chain_lifecycle() {
 
     // 7. Run full 13-phase Phi traversal on the block.
     let phi_log = phi_traversal_block(&block1, &state);
-    assert!(phi_log.all_phases_passed, "Block Phi traversal failed: {:?}", phi_log);
+    assert!(
+        phi_log.all_phases_passed,
+        "Block Phi traversal failed: {:?}",
+        phi_log
+    );
     assert_eq!(phi_log.phases_completed.len(), 13);
 
     // 8. Validate via CPoG.
     let cpog_result = validate_cpog(&block1, &state, &genesis.header.block_id);
-    assert!(cpog_result.is_valid(), "Block #1 CPoG failed: {:?}", cpog_result);
+    assert!(
+        cpog_result.is_valid(),
+        "Block #1 CPoG failed: {:?}",
+        cpog_result
+    );
 
     // 9. Apply state changes.
     let mut state = state;
@@ -286,7 +302,14 @@ fn test_invalid_block_wrong_parent() {
     let state = ManagedWorldState::new();
     let validator_key = generate_keypair();
 
-    let genesis = build_test_block(0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state);
+    let genesis = build_test_block(
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
+    );
 
     // Build block with WRONG parent ID.
     let wrong_parent = [0xFFu8; 32];
@@ -308,7 +331,14 @@ fn test_invalid_block_wrong_mfidel_seal() {
     let state = ManagedWorldState::new();
     let validator_key = generate_keypair();
 
-    let genesis = build_test_block(0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state);
+    let genesis = build_test_block(
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
+    );
 
     let mut bad_block = build_test_block(
         1,
@@ -322,7 +352,10 @@ fn test_invalid_block_wrong_mfidel_seal() {
     bad_block.header.mfidel_seal = MfidelAtomicSeal { row: 34, column: 8 };
 
     let result = validate_cpog(&bad_block, &state, &genesis.header.block_id);
-    assert!(!result.is_valid(), "Should reject block with wrong Mfidel seal");
+    assert!(
+        !result.is_valid(),
+        "Should reject block with wrong Mfidel seal"
+    );
 }
 
 #[test]
@@ -377,7 +410,14 @@ fn test_tension_budget_enforcement() {
     let state = ManagedWorldState::new();
     let validator_key = generate_keypair();
 
-    let genesis = build_test_block(0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state);
+    let genesis = build_test_block(
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
+    );
 
     // Build block that claims tension increase beyond budget.
     let mut bad_block = build_test_block(
@@ -391,7 +431,10 @@ fn test_tension_budget_enforcement() {
     bad_block.header.tension_after = TensionValue::from_integer(99999); // way over budget
 
     let result = validate_cpog(&bad_block, &state, &genesis.header.block_id);
-    assert!(!result.is_valid(), "Should reject block exceeding tension budget");
+    assert!(
+        !result.is_valid(),
+        "Should reject block exceeding tension budget"
+    );
 }
 
 #[test]
@@ -463,22 +506,39 @@ fn test_validator_selection_deterministic() {
 
     let v1 = select_validator(&validators).unwrap();
     let v2 = select_validator(&validators).unwrap();
-    assert_eq!(v1.node_id, v2.node_id, "Validator selection must be deterministic");
+    assert_eq!(
+        v1.node_id, v2.node_id,
+        "Validator selection must be deterministic"
+    );
 }
 
 #[test]
 fn test_governance_precedence_enforcement() {
     // GENESIS can do anything.
-    assert!(check_governance_change(PrecedenceLevel::Genesis, GovernanceChangeType::GovernanceUpgrade).is_ok());
+    assert!(check_governance_change(
+        PrecedenceLevel::Genesis,
+        GovernanceChangeType::GovernanceUpgrade
+    )
+    .is_ok());
 
     // OPTIMIZATION cannot change governance.
-    assert!(check_governance_change(PrecedenceLevel::Optimization, GovernanceChangeType::GovernanceUpgrade).is_err());
+    assert!(check_governance_change(
+        PrecedenceLevel::Optimization,
+        GovernanceChangeType::GovernanceUpgrade
+    )
+    .is_err());
 
     // MEANING can add norms.
-    assert!(check_governance_change(PrecedenceLevel::Meaning, GovernanceChangeType::NormAddition).is_ok());
+    assert!(
+        check_governance_change(PrecedenceLevel::Meaning, GovernanceChangeType::NormAddition)
+            .is_ok()
+    );
 
     // EMOTION cannot add norms (MEANING required).
-    assert!(check_governance_change(PrecedenceLevel::Emotion, GovernanceChangeType::NormAddition).is_err());
+    assert!(
+        check_governance_change(PrecedenceLevel::Emotion, GovernanceChangeType::NormAddition)
+            .is_err()
+    );
 }
 
 #[test]
@@ -495,7 +555,10 @@ fn test_responsibility_decay_and_bound() {
     assert!(responsibility::check_responsibility_bound(&[&state], max));
 
     let strict = TensionValue::from_integer(50);
-    assert!(!responsibility::check_responsibility_bound(&[&state], strict));
+    assert!(!responsibility::check_responsibility_bound(
+        &[&state],
+        strict
+    ));
 }
 
 #[test]
@@ -556,7 +619,14 @@ fn test_multi_block_chain() {
     let validator_key = generate_keypair();
 
     // Genesis.
-    let genesis = build_test_block(0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state);
+    let genesis = build_test_block(
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
+    );
     let result = validate_cpog(&genesis, &state, &ZERO_HASH);
     assert!(result.is_valid());
 
@@ -677,11 +747,19 @@ fn test_norm_replicator_convergence() {
 
 #[test]
 fn test_merkle_proof_for_transaction_inclusion() {
-    use sccgub_crypto::merkle::{generate_proof, verify_proof, compute_merkle_root};
+    use sccgub_crypto::merkle::{compute_merkle_root, generate_proof, verify_proof};
 
     let (agent, agent_key) = create_test_agent();
     let txs: Vec<_> = (1..=5)
-        .map(|i| create_write_tx(&agent, &agent_key, format!("proof/key/{}", i).as_bytes(), b"data", i))
+        .map(|i| {
+            create_write_tx(
+                &agent,
+                &agent_key,
+                format!("proof/key/{}", i).as_bytes(),
+                b"data",
+                i,
+            )
+        })
         .collect();
 
     let leaf_hashes: Vec<[u8; 32]> = txs.iter().map(|tx| tx.tx_id).collect();
@@ -726,8 +804,12 @@ fn test_governance_proposal_lifecycle() {
         .unwrap();
 
     // Vote during valid period.
-    proposals.vote(&id, [10u8; 32], PrecedenceLevel::Meaning, true, 12).unwrap();
-    proposals.vote(&id, [11u8; 32], PrecedenceLevel::Meaning, true, 13).unwrap();
+    proposals
+        .vote(&id, [10u8; 32], PrecedenceLevel::Meaning, true, 12)
+        .unwrap();
+    proposals
+        .vote(&id, [11u8; 32], PrecedenceLevel::Meaning, true, 13)
+        .unwrap();
 
     // Finalize after voting period.
     let accepted = proposals.finalize(16);
@@ -755,7 +837,14 @@ fn test_agent_registration_and_lookup() {
     assert!(registry.is_active(&id));
 
     // Duplicate should fail.
-    assert!(registry.register(pk, MfidelAtomicSeal::from_height(1), PrecedenceLevel::Meaning, 1).is_err());
+    assert!(registry
+        .register(
+            pk,
+            MfidelAtomicSeal::from_height(1),
+            PrecedenceLevel::Meaning,
+            1
+        )
+        .is_err());
 
     // Revoke.
     registry.revoke(&id).unwrap();
@@ -784,7 +873,10 @@ fn test_balance_transfer() {
 
     assert_eq!(ledger.balance_of(&alice), TensionValue::from_integer(7000));
     assert_eq!(ledger.balance_of(&bob), TensionValue::from_integer(2000));
-    assert_eq!(ledger.balance_of(&charlie), TensionValue::from_integer(1000));
+    assert_eq!(
+        ledger.balance_of(&charlie),
+        TensionValue::from_integer(1000)
+    );
 
     // Total supply conserved.
     assert_eq!(ledger.total_supply(), TensionValue::from_integer(10_000));
@@ -795,9 +887,7 @@ fn test_balance_transfer() {
         .is_err());
 
     // Zero transfer rejected.
-    assert!(ledger
-        .transfer(&alice, &bob, TensionValue::ZERO)
-        .is_err());
+    assert!(ledger.transfer(&alice, &bob, TensionValue::ZERO).is_err());
 
     // Self-transfer rejected.
     assert!(ledger
@@ -861,7 +951,12 @@ fn test_end_to_end_all_subsystems() {
 
     // Genesis block.
     let genesis = build_test_block(
-        0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state,
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
     );
     assert!(genesis.is_structurally_valid());
     let cpog = validate_cpog(&genesis, &state, &ZERO_HASH);
@@ -878,9 +973,12 @@ fn test_end_to_end_all_subsystems() {
     let tx3 = create_write_tx(&agent_alice, &key_alice, b"alice/counter", b"42", 3);
 
     let block1 = build_test_block(
-        1, genesis.header.block_id, &genesis.header.timestamp,
+        1,
+        genesis.header.block_id,
+        &genesis.header.timestamp,
         vec![tx1.clone(), tx2.clone(), tx3.clone()],
-        &validator_key, &state,
+        &validator_key,
+        &state,
     );
     assert!(block1.is_structurally_valid());
 
@@ -897,7 +995,10 @@ fn test_end_to_end_all_subsystems() {
     for tx in &block1.body.transitions {
         if let OperationPayload::Write { key, value } = &tx.payload {
             state.apply_delta(&StateDelta {
-                writes: vec![StateWrite { address: key.clone(), value: value.clone() }],
+                writes: vec![StateWrite {
+                    address: key.clone(),
+                    value: value.clone(),
+                }],
                 deletes: vec![],
             });
         }
@@ -906,7 +1007,10 @@ fn test_end_to_end_all_subsystems() {
     state.set_height(1);
 
     // Verify state was applied.
-    assert_eq!(state.get(&b"alice/data".to_vec()), Some(&b"hello world".to_vec()));
+    assert_eq!(
+        state.get(&b"alice/data".to_vec()),
+        Some(&b"hello world".to_vec())
+    );
     assert_eq!(state.get(&b"alice/counter".to_vec()), Some(&b"42".to_vec()));
     assert_ne!(state.state_root(), ZERO_HASH);
 
@@ -930,10 +1034,13 @@ fn test_end_to_end_all_subsystems() {
                 initial_fitness: TensionValue::from_integer(8),
                 enforcement_cost: TensionValue::from_integer(2),
             },
-            1, 5,
+            1,
+            5,
         )
         .unwrap();
-    proposals.vote(&prop_id, alice_id, PrecedenceLevel::Meaning, true, 3).unwrap();
+    proposals
+        .vote(&prop_id, alice_id, PrecedenceLevel::Meaning, true, 3)
+        .unwrap();
     let accepted = proposals.finalize(7);
     assert_eq!(accepted.len(), 1);
     let norm = proposals.activate(&prop_id).unwrap().unwrap();
@@ -972,7 +1079,10 @@ fn test_end_to_end_all_subsystems() {
     for _ in 0..5 {
         containment.evaluate();
     }
-    assert!(!containment.is_allowed(&bad_node), "Bad node should be contained");
+    assert!(
+        !containment.is_allowed(&bad_node),
+        "Bad node should be contained"
+    );
 
     // Good node stays free.
     let good_node = [0xAAu8; 32];
@@ -992,7 +1102,9 @@ fn test_end_to_end_all_subsystems() {
     let root = sccgub_crypto::merkle::compute_merkle_root(&leaves);
     for (i, tx) in block1.body.transitions.iter().enumerate() {
         let proof = sccgub_crypto::merkle::generate_proof(&leaves, i).unwrap();
-        assert!(sccgub_crypto::merkle::verify_proof(&root, &tx.tx_id, &proof));
+        assert!(sccgub_crypto::merkle::verify_proof(
+            &root, &tx.tx_id, &proof
+        ));
     }
 
     // ===== 14. ECONOMIC FEES =====
@@ -1003,9 +1115,21 @@ fn test_end_to_end_all_subsystems() {
 
     // ===== 15. BALANCE TRANSFERS =====
     let (agent_bob, _) = create_test_agent();
-    balances.transfer(&alice_id, &agent_bob.agent_id, TensionValue::from_integer(25_000)).unwrap();
-    assert_eq!(balances.balance_of(&alice_id), TensionValue::from_integer(75_000));
-    assert_eq!(balances.balance_of(&agent_bob.agent_id), TensionValue::from_integer(25_000));
+    balances
+        .transfer(
+            &alice_id,
+            &agent_bob.agent_id,
+            TensionValue::from_integer(25_000),
+        )
+        .unwrap();
+    assert_eq!(
+        balances.balance_of(&alice_id),
+        TensionValue::from_integer(75_000)
+    );
+    assert_eq!(
+        balances.balance_of(&agent_bob.agent_id),
+        TensionValue::from_integer(25_000)
+    );
     assert_eq!(balances.total_supply(), TensionValue::from_integer(100_000));
 
     // ===== 16. DOMAIN PACKS =====
@@ -1030,14 +1154,20 @@ fn test_end_to_end_all_subsystems() {
         installed_at: None,
         active: false,
     };
-    domain_registry.install(finance_pack, PrecedenceLevel::Meaning, 1).unwrap();
+    domain_registry
+        .install(finance_pack, PrecedenceLevel::Meaning, 1)
+        .unwrap();
     assert_eq!(domain_registry.active_packs().len(), 1);
 
     // ===== 17. MULTI-BLOCK CHAIN =====
     let tx4 = create_write_tx(&agent_alice, &key_alice, b"alice/block2", b"data2", 4);
     let block2 = build_test_block(
-        2, block1.header.block_id, &block1.header.timestamp,
-        vec![tx4.clone()], &validator_key, &state,
+        2,
+        block1.header.block_id,
+        &block1.header.timestamp,
+        vec![tx4.clone()],
+        &validator_key,
+        &state,
     );
     let cpog2 = validate_cpog(&block2, &state, &block1.header.block_id);
     assert!(cpog2.is_valid(), "Block #2 CPoG: {:?}", cpog2);
@@ -1046,7 +1176,10 @@ fn test_end_to_end_all_subsystems() {
     for tx in &block2.body.transitions {
         if let OperationPayload::Write { key, value } = &tx.payload {
             state.apply_delta(&StateDelta {
-                writes: vec![StateWrite { address: key.clone(), value: value.clone() }],
+                writes: vec![StateWrite {
+                    address: key.clone(),
+                    value: value.clone(),
+                }],
                 deletes: vec![],
             });
         }
@@ -1085,7 +1218,7 @@ fn test_duplicate_mempool_submission_rejected() {
 
 #[test]
 fn test_domain_pack_dependent_deactivation_rejected() {
-    use sccgub_types::domain::{DomainPack, DomainPackRegistry, DomainType, DomainField};
+    use sccgub_types::domain::{DomainField, DomainPack, DomainPackRegistry, DomainType};
 
     let mut registry = DomainPackRegistry::default();
 
@@ -1100,7 +1233,11 @@ fn test_domain_pack_dependent_deactivation_rejected() {
         types: vec![DomainType {
             name: "base.Record".into(),
             schema: "base record".into(),
-            fields: vec![DomainField { name: "id".into(), field_type: "u64".into(), required: true }],
+            fields: vec![DomainField {
+                name: "id".into(),
+                field_type: "u64".into(),
+                required: true,
+            }],
         }],
         laws: vec![],
         dependencies: vec![],
@@ -1130,7 +1267,10 @@ fn test_domain_pack_dependent_deactivation_rejected() {
 
     // Deactivating base should fail because derived depends on it.
     let result = registry.deactivate(&base_id);
-    assert!(result.is_err(), "Should reject deactivation of depended-upon pack");
+    assert!(
+        result.is_err(),
+        "Should reject deactivation of depended-upon pack"
+    );
 }
 
 #[test]
@@ -1156,7 +1296,9 @@ fn test_duplicate_voter_rejected() {
         .unwrap();
 
     // First vote succeeds.
-    proposals.vote(&id, voter, PrecedenceLevel::Meaning, true, 1).unwrap();
+    proposals
+        .vote(&id, voter, PrecedenceLevel::Meaning, true, 1)
+        .unwrap();
 
     // Second vote by same agent should fail.
     let result = proposals.vote(&id, voter, PrecedenceLevel::Meaning, false, 2);

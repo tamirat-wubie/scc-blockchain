@@ -29,9 +29,9 @@ pub struct FinalityConfig {
 impl Default for FinalityConfig {
     fn default() -> Self {
         Self {
-            confirmation_depth: 2,        // 2 confirmations.
-            max_finality_ms: 6_000,       // 6 seconds max.
-            target_block_time_ms: 2_000,  // 2-second blocks.
+            confirmation_depth: 2,       // 2 confirmations.
+            max_finality_ms: 6_000,      // 6 seconds max.
+            target_block_time_ms: 2_000, // 2-second blocks.
         }
     }
 }

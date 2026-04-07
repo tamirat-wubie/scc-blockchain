@@ -80,8 +80,7 @@ impl NormRegistry {
             let raw = if mean_fitness.raw() != 0 {
                 // (numerator * SCALE) / mean — use split multiply to avoid overflow.
                 let a = numerator.raw() / mean_fitness.raw();
-                let b = (numerator.raw() % mean_fitness.raw())
-                    .saturating_mul(TensionValue::SCALE)
+                let b = (numerator.raw() % mean_fitness.raw()).saturating_mul(TensionValue::SCALE)
                     / mean_fitness.raw();
                 a.saturating_mul(TensionValue::SCALE).saturating_add(b)
             } else {
@@ -98,7 +97,9 @@ impl NormRegistry {
         if total > 0 {
             for id in &active_norms {
                 let norm = self.norms.get_mut(id).unwrap();
-                let raw = norm.population_share.raw()
+                let raw = norm
+                    .population_share
+                    .raw()
                     .saturating_mul(TensionValue::SCALE)
                     / total;
                 norm.population_share = TensionValue(raw);

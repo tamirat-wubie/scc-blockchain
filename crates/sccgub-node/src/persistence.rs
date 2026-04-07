@@ -19,11 +19,7 @@ impl ChainStore {
         // Clean up stale .tmp files from interrupted atomic writes.
         if let Ok(entries) = fs::read_dir(base_dir.join("blocks")) {
             for entry in entries.flatten() {
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(".tmp")
-                {
+                if entry.file_name().to_string_lossy().ends_with(".tmp") {
                     let _ = fs::remove_file(entry.path());
                 }
             }
@@ -37,9 +33,11 @@ impl ChainStore {
     pub fn save_block(&self, block: &Block) -> std::io::Result<()> {
         let filename = format!("block_{:010}.json", block.header.height);
         let path = self.base_dir.join("blocks").join(&filename);
-        let tmp_path = self.base_dir.join("blocks").join(format!("{}.tmp", filename));
-        let json = serde_json::to_string_pretty(block)
-            .map_err(std::io::Error::other)?;
+        let tmp_path = self
+            .base_dir
+            .join("blocks")
+            .join(format!("{}.tmp", filename));
+        let json = serde_json::to_string_pretty(block).map_err(std::io::Error::other)?;
         // Write to temp file first, then rename for atomicity.
         fs::write(&tmp_path, &json)?;
         fs::rename(&tmp_path, &path)?;
@@ -51,8 +49,7 @@ impl ChainStore {
         let filename = format!("block_{:010}.json", height);
         let path = self.base_dir.join("blocks").join(filename);
         let json = fs::read_to_string(path)?;
-        let block: Block = serde_json::from_str(&json)
-            .map_err(std::io::Error::other)?;
+        let block: Block = serde_json::from_str(&json).map_err(std::io::Error::other)?;
         // Verify structural integrity on load.
         if !block.is_structurally_valid() {
             return Err(std::io::Error::other(format!(
@@ -80,8 +77,7 @@ impl ChainStore {
         let mut blocks = Vec::new();
         for entry in entries {
             let json = fs::read_to_string(entry.path())?;
-            let block: Block = serde_json::from_str(&json)
-                .map_err(std::io::Error::other)?;
+            let block: Block = serde_json::from_str(&json).map_err(std::io::Error::other)?;
             if !block.is_structurally_valid() {
                 return Err(std::io::Error::other(format!(
                     "Block #{} failed structural validation",
@@ -128,8 +124,7 @@ impl ChainStore {
             None => Ok(None),
             Some(entry) => {
                 let json = fs::read_to_string(entry.path())?;
-                let block: Block = serde_json::from_str(&json)
-                    .map_err(std::io::Error::other)?;
+                let block: Block = serde_json::from_str(&json).map_err(std::io::Error::other)?;
                 Ok(Some(block.header.height))
             }
         }
@@ -186,9 +181,11 @@ impl ChainStore {
     pub fn save_snapshot(&self, snapshot: &StateSnapshot) -> std::io::Result<()> {
         let filename = format!("snapshot_{:010}.json", snapshot.height);
         let path = self.base_dir.join("state").join(&filename);
-        let tmp_path = self.base_dir.join("state").join(format!("{}.tmp", filename));
-        let json = serde_json::to_string(snapshot)
-            .map_err(std::io::Error::other)?;
+        let tmp_path = self
+            .base_dir
+            .join("state")
+            .join(format!("{}.tmp", filename));
+        let json = serde_json::to_string(snapshot).map_err(std::io::Error::other)?;
         fs::write(&tmp_path, &json)?;
         fs::rename(&tmp_path, &path)
     }
@@ -212,8 +209,7 @@ impl ChainStore {
         entries.sort_by_key(|e| e.file_name());
         let latest = entries.last().unwrap();
         let json = fs::read_to_string(latest.path())?;
-        let snapshot: StateSnapshot = serde_json::from_str(&json)
-            .map_err(std::io::Error::other)?;
+        let snapshot: StateSnapshot = serde_json::from_str(&json).map_err(std::io::Error::other)?;
         Ok(Some(snapshot))
     }
 }

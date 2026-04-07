@@ -63,8 +63,7 @@ impl ChainMetrics {
         }
         // Running average.
         if self.blocks_produced > 0 {
-            self.avg_validation_ns = (self.avg_validation_ns
-                * (self.blocks_produced - 1)
+            self.avg_validation_ns = (self.avg_validation_ns * (self.blocks_produced - 1)
                 + validation_ns)
                 / self.blocks_produced;
         }
@@ -87,19 +86,52 @@ impl ChainMetrics {
         let mut s = String::new();
         s.push_str("=== Chain Health Report ===\n\n");
         s.push_str("  Production\n");
-        s.push_str(&format!("    Blocks produced:       {}\n", self.blocks_produced));
-        s.push_str(&format!("    Transactions:          {}\n", self.transactions_processed));
-        s.push_str(&format!("    CPoG failures:         {}\n", self.cpog_failures));
-        s.push_str(&format!("    Avg validation:        {} ns/tx\n", self.avg_validation_ns));
-        s.push_str(&format!("    Peak validation:       {} ns/tx\n", self.peak_validation_ns));
+        s.push_str(&format!(
+            "    Blocks produced:       {}\n",
+            self.blocks_produced
+        ));
+        s.push_str(&format!(
+            "    Transactions:          {}\n",
+            self.transactions_processed
+        ));
+        s.push_str(&format!(
+            "    CPoG failures:         {}\n",
+            self.cpog_failures
+        ));
+        s.push_str(&format!(
+            "    Avg validation:        {} ns/tx\n",
+            self.avg_validation_ns
+        ));
+        s.push_str(&format!(
+            "    Peak validation:       {} ns/tx\n",
+            self.peak_validation_ns
+        ));
         s.push_str("\n  State\n");
-        s.push_str(&format!("    State entries:         {}\n", self.state_entries));
-        s.push_str(&format!("    Causal edges:          {}\n", self.causal_edges));
+        s.push_str(&format!(
+            "    State entries:         {}\n",
+            self.state_entries
+        ));
+        s.push_str(&format!(
+            "    Causal edges:          {}\n",
+            self.causal_edges
+        ));
         s.push_str("\n  Security\n");
-        s.push_str(&format!("    Slashing events:       {}\n", self.slashing_events));
-        s.push_str(&format!("    Quarantines:           {}\n", self.quarantine_count));
-        s.push_str(&format!("    Emergency activations: {}\n", self.emergency_activations));
-        s.push_str(&format!("    Governance conc.:      {:.3}\n", self.governance_concentration));
+        s.push_str(&format!(
+            "    Slashing events:       {}\n",
+            self.slashing_events
+        ));
+        s.push_str(&format!(
+            "    Quarantines:           {}\n",
+            self.quarantine_count
+        ));
+        s.push_str(&format!(
+            "    Emergency activations: {}\n",
+            self.emergency_activations
+        ));
+        s.push_str(&format!(
+            "    Governance conc.:      {:.3}\n",
+            self.governance_concentration
+        ));
         s
     }
 }

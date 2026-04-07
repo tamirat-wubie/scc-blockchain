@@ -77,7 +77,13 @@ pub enum ConsensusResult {
 
 impl ConsensusRound {
     /// Create a new consensus round.
-    pub fn new(block_hash: Hash, height: u64, round: u32, validator_count: u32, max_rounds: u32) -> Self {
+    pub fn new(
+        block_hash: Hash,
+        height: u64,
+        round: u32,
+        validator_count: u32,
+        max_rounds: u32,
+    ) -> Self {
         let quorum = (2 * validator_count) / 3 + 1;
         Self {
             block_hash,
@@ -196,10 +202,7 @@ impl ConsensusRound {
         ConsensusResult::NextRound {
             reason: format!(
                 "Waiting: {}/{} prevotes, {}/{} precommits",
-                total_prevotes,
-                self.validator_count,
-                total_precommits,
-                self.validator_count,
+                total_prevotes, self.validator_count, total_precommits, self.validator_count,
             ),
         }
     }
@@ -279,18 +282,26 @@ mod tests {
 
         // All 3 validators prevote.
         for i in 1..=3 {
-            round.add_prevote(make_vote(i, block, 1, 0, VoteType::Prevote)).unwrap();
+            round
+                .add_prevote(make_vote(i, block, 1, 0, VoteType::Prevote))
+                .unwrap();
         }
         assert!(round.has_prevote_quorum());
 
         // All 3 validators precommit.
         for i in 1..=3 {
-            round.add_precommit(make_vote(i, block, 1, 0, VoteType::Precommit)).unwrap();
+            round
+                .add_precommit(make_vote(i, block, 1, 0, VoteType::Precommit))
+                .unwrap();
         }
         assert!(round.has_precommit_quorum());
 
         match round.evaluate() {
-            ConsensusResult::Finalized { prevote_count, precommit_count, .. } => {
+            ConsensusResult::Finalized {
+                prevote_count,
+                precommit_count,
+                ..
+            } => {
                 assert_eq!(prevote_count, 3);
                 assert_eq!(precommit_count, 3);
             }
@@ -305,10 +316,18 @@ mod tests {
         let mut round = ConsensusRound::new(block, 1, 0, 4, 10);
 
         // 2 prevote for block, 2 for other_block. Quorum=3, neither reaches it.
-        round.add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(3, other_block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(4, other_block, 1, 0, VoteType::Prevote)).unwrap();
+        round
+            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(3, other_block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(4, other_block, 1, 0, VoteType::Prevote))
+            .unwrap();
 
         assert!(!round.has_prevote_quorum());
     }
@@ -318,7 +337,9 @@ mod tests {
         let block = [1u8; 32];
         let mut round = ConsensusRound::new(block, 1, 0, 3, 10);
 
-        round.add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote)).unwrap();
+        round
+            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .unwrap();
         let result = round.add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote));
         assert!(result.is_err());
     }
@@ -342,19 +363,35 @@ mod tests {
         let mut round = ConsensusRound::new(block, 1, 0, 4, 10);
 
         // 3 honest validators prevote for block, 1 Byzantine votes for bad_block.
-        round.add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(3, block, 1, 0, VoteType::Prevote)).unwrap();
-        round.add_prevote(make_vote(4, bad_block, 1, 0, VoteType::Prevote)).unwrap();
+        round
+            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(3, block, 1, 0, VoteType::Prevote))
+            .unwrap();
+        round
+            .add_prevote(make_vote(4, bad_block, 1, 0, VoteType::Prevote))
+            .unwrap();
 
         // Quorum = 3, we have 3 prevotes for block. Passes!
         assert!(round.has_prevote_quorum());
 
         // 3 honest precommit.
-        round.add_precommit(make_vote(1, block, 1, 0, VoteType::Precommit)).unwrap();
-        round.add_precommit(make_vote(2, block, 1, 0, VoteType::Precommit)).unwrap();
-        round.add_precommit(make_vote(3, block, 1, 0, VoteType::Precommit)).unwrap();
-        round.add_precommit(make_vote(4, bad_block, 1, 0, VoteType::Precommit)).unwrap();
+        round
+            .add_precommit(make_vote(1, block, 1, 0, VoteType::Precommit))
+            .unwrap();
+        round
+            .add_precommit(make_vote(2, block, 1, 0, VoteType::Precommit))
+            .unwrap();
+        round
+            .add_precommit(make_vote(3, block, 1, 0, VoteType::Precommit))
+            .unwrap();
+        round
+            .add_precommit(make_vote(4, bad_block, 1, 0, VoteType::Precommit))
+            .unwrap();
 
         match round.evaluate() {
             ConsensusResult::Finalized { .. } => {} // Byzantine validator's vote didn't prevent finality.

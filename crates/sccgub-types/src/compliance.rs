@@ -198,7 +198,11 @@ mod tests {
 
         // Register.
         tracker
-            .register_data(hash, "s3://bucket/key".into(), DataClassification::Sensitive)
+            .register_data(
+                hash,
+                "s3://bucket/key".into(),
+                DataClassification::Sensitive,
+            )
             .unwrap();
 
         // Still exists.

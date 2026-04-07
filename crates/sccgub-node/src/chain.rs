@@ -15,7 +15,9 @@ use sccgub_types::proof::{CausalProof, PhiTraversalLog};
 use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
 use sccgub_types::tension::TensionValue;
 use sccgub_types::timestamp::CausalTimestamp;
-use sccgub_types::transition::{StateDelta, SymbolicTransition, WHBindingResolved, ValidationResult};
+use sccgub_types::transition::{
+    StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
+};
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
@@ -48,10 +50,7 @@ impl Chain {
         let pk = *validator_key.verifying_key().as_bytes();
         let seal = MfidelAtomicSeal::from_height(0);
         // Agent ID = Hash(pubkey ++ seal) — canonical derivation matching validate.rs.
-        let validator_id = blake3_hash_concat(&[
-            &pk,
-            &canonical_bytes(&seal),
-        ]);
+        let validator_id = blake3_hash_concat(&[&pk, &canonical_bytes(&seal)]);
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
         let mut state = ManagedWorldState::new();
@@ -71,7 +70,10 @@ impl Chain {
         state.apply_delta(&sccgub_types::transition::StateDelta {
             writes: vec![sccgub_types::transition::StateWrite {
                 address: balance_key,
-                value: TensionValue::from_integer(1_000_000).raw().to_le_bytes().to_vec(),
+                value: TensionValue::from_integer(1_000_000)
+                    .raw()
+                    .to_le_bytes()
+                    .to_vec(),
             }],
             deletes: vec![],
         });
@@ -116,12 +118,19 @@ impl Chain {
         // Replay genesis mint + write to trie.
         let mut balances = BalanceLedger::new();
         if let Some(genesis) = blocks.first() {
-            balances.credit(&genesis.header.validator_id, TensionValue::from_integer(1_000_000));
-            let balance_key = format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+            balances.credit(
+                &genesis.header.validator_id,
+                TensionValue::from_integer(1_000_000),
+            );
+            let balance_key =
+                format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
             state.apply_delta(&sccgub_types::transition::StateDelta {
                 writes: vec![sccgub_types::transition::StateWrite {
                     address: balance_key,
-                    value: TensionValue::from_integer(1_000_000).raw().to_le_bytes().to_vec(),
+                    value: TensionValue::from_integer(1_000_000)
+                        .raw()
+                        .to_le_bytes()
+                        .to_vec(),
                 }],
                 deletes: vec![],
             });
@@ -141,7 +150,9 @@ impl Chain {
                         });
                     }
                     sccgub_types::transition::OperationPayload::AssetTransfer {
-                        from, to, amount,
+                        from,
+                        to,
+                        amount,
                     } => {
                         let _ = balances.transfer(from, to, TensionValue(*amount));
                     }
@@ -213,16 +224,18 @@ impl Chain {
         let filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
         for tx in transitions {
-            if let sccgub_types::transition::OperationPayload::AssetTransfer {
-                from, to, amount,
-            } = &tx.payload
+            if let sccgub_types::transition::OperationPayload::AssetTransfer { from, to, amount } =
+                &tx.payload
             {
                 let mut test_bal = filter_balances.clone();
                 if test_bal.transfer(from, to, TensionValue(*amount)).is_err() {
                     continue;
                 }
             }
-            if filter_state.check_nonce(&tx.actor.agent_id, tx.nonce).is_err() {
+            if filter_state
+                .check_nonce(&tx.actor.agent_id, tx.nonce)
+                .is_err()
+            {
                 continue;
             }
             accepted_transitions.push(tx);
@@ -293,8 +306,7 @@ impl Chain {
                 self.mempool.containment.tick_block();
 
                 // Record proposal for anti-concentration tracking.
-                self.power_tracker
-                    .record_proposal(&validator_id_for_check);
+                self.power_tracker.record_proposal(&validator_id_for_check);
 
                 // Commit speculative state and balances.
                 self.state = speculative_state;
@@ -304,10 +316,9 @@ impl Chain {
                 // Update finality tracker.
                 self.finality.on_new_block(height);
                 let blocks_ref = &self.blocks;
-                let _new_finals = self.finality.check_finality(
-                    &self.finality_config,
-                    |h| blocks_ref.get(h as usize).map(|b| b.header.block_id),
-                );
+                let _new_finals = self.finality.check_finality(&self.finality_config, |h| {
+                    blocks_ref.get(h as usize).map(|b| b.header.block_id)
+                });
 
                 // Record validator presence (resets absence counter).
                 self.slashing.record_presence(&validator_id_for_check);
@@ -342,9 +353,24 @@ impl Chain {
         crate::persistence::StateSnapshot {
             height: self.state.state.height,
             state_root: self.state.state_root(),
-            trie_entries: self.state.trie.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            agent_nonces: self.state.agent_nonces.iter().map(|(k, v)| (*k, *v)).collect(),
-            balances: self.balances.balances.iter().map(|(k, v)| (*k, v.raw())).collect(),
+            trie_entries: self
+                .state
+                .trie
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            agent_nonces: self
+                .state
+                .agent_nonces
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect(),
+            balances: self
+                .balances
+                .balances
+                .iter()
+                .map(|(k, v)| (*k, v.raw()))
+                .collect(),
         }
     }
 
@@ -478,20 +504,17 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         balance_root,
     } = params;
     let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
-    let timestamp = parent_timestamp.successor(
-        validator_id,
-        canonical_hash(parent_timestamp),
-        wall_hint,
-    );
+    let timestamp =
+        parent_timestamp.successor(validator_id, canonical_hash(parent_timestamp), wall_hint);
     let seal = MfidelAtomicSeal::from_height(height);
 
     let tx_bytes: Vec<&[u8]> = transitions.iter().map(|tx| tx.tx_id.as_slice()).collect();
     let transition_root = merkle_root_of_bytes(&tx_bytes);
 
     let governance = GovernanceSnapshot {
-        state_hash: blake3_hash(
-            &sccgub_crypto::canonical::canonical_bytes(&state.state.governance_state),
-        ),
+        state_hash: blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
+            &state.state.governance_state,
+        )),
         active_norm_count: state.state.governance_state.active_norms.len() as u32,
         emergency_mode: state.state.governance_state.emergency_mode,
         finality_mode: state.state.governance_state.finality_mode,
@@ -576,10 +599,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         ZERO_HASH
     } else {
         // Serialize each edge to get unique hashes (not dummy bytes).
-        let edge_bytes: Vec<Vec<u8>> = causal_edges
-            .iter()
-            .map(canonical_bytes)
-            .collect();
+        let edge_bytes: Vec<Vec<u8>> = causal_edges.iter().map(canonical_bytes).collect();
         let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
         merkle_root_of_bytes(&edge_refs)
     };

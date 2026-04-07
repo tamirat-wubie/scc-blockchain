@@ -55,8 +55,7 @@ pub fn check_transition_wh(tx: &SymbolicTransition) -> Result<(), String> {
     if claimed < actual {
         return Err(format!(
             "WHBinding claims precedence {:?} but actor only has {:?}",
-            tx.wh_binding_intent.why.precedence_level,
-            tx.actor.governance_level
+            tx.wh_binding_intent.why.precedence_level, tx.actor.governance_level
         ));
     }
 

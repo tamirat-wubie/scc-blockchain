@@ -57,7 +57,9 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Distinction,
         passed: wh_result.is_ok(),
-        details: wh_result.err().unwrap_or_else(|| "WHBinding complete".into()),
+        details: wh_result
+            .err()
+            .unwrap_or_else(|| "WHBinding complete".into()),
     });
     if !log.phases_completed.last().unwrap().passed {
         return log;
@@ -102,9 +104,16 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Form,
         passed: addr_ok,
-        details: if addr_ok { "Form validated".into() } else { "Address exceeds max length".into() },
+        details: if addr_ok {
+            "Form validated".into()
+        } else {
+            "Address exceeds max length".into()
+        },
     });
-    if !addr_ok { log.finalize(); return log; }
+    if !addr_ok {
+        log.finalize();
+        return log;
+    }
 
     // Phase 6: Organization — check invariant preservation.
     log.phases_completed.push(PhiPhaseResult {
@@ -125,9 +134,16 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Execution,
         passed: sig_ok,
-        details: if sig_ok { "Signature present".into() } else { "Missing signature".into() },
+        details: if sig_ok {
+            "Signature present".into()
+        } else {
+            "Missing signature".into()
+        },
     });
-    if !sig_ok { log.finalize(); return log; }
+    if !sig_ok {
+        log.finalize();
+        return log;
+    }
 
     // Phase 9: Body — block-only (auto-pass at tx level).
     log.phases_completed.push(PhiPhaseResult {
@@ -224,17 +240,16 @@ fn phase_ontology(_block: &Block) -> PhiPhaseResult {
 
 fn phase_topology(block: &Block) -> PhiPhaseResult {
     // Block-only: verify causal graph connectivity, detect cycles (INV-17).
-    let is_acyclic = block.causal_delta.new_edges.is_empty()
-        || {
-            let mut graph = sccgub_types::causal::CausalGraph::default();
-            for v in &block.causal_delta.new_vertices {
-                graph.add_vertex(v.clone());
-            }
-            for e in &block.causal_delta.new_edges {
-                graph.add_edge(e.clone());
-            }
-            graph.is_acyclic()
-        };
+    let is_acyclic = block.causal_delta.new_edges.is_empty() || {
+        let mut graph = sccgub_types::causal::CausalGraph::default();
+        for v in &block.causal_delta.new_vertices {
+            graph.add_vertex(v.clone());
+        }
+        for e in &block.causal_delta.new_edges {
+            graph.add_edge(e.clone());
+        }
+        graph.is_acyclic()
+    };
 
     PhiPhaseResult {
         phase: PhiPhase::Topology,
@@ -337,7 +352,10 @@ fn phase_performance(block: &Block) -> PhiPhaseResult {
         phase: PhiPhase::Performance,
         passed: matches,
         details: if matches {
-            format!("Mfidel seal f[{}][{}] correct", expected.row, expected.column)
+            format!(
+                "Mfidel seal f[{}][{}] correct",
+                expected.row, expected.column
+            )
         } else {
             format!(
                 "Mfidel seal mismatch: expected f[{}][{}], got f[{}][{}]",

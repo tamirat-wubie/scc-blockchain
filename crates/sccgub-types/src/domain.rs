@@ -90,10 +90,7 @@ impl DomainPackRegistry {
         // Dependency check.
         for dep in &pack.dependencies {
             if !self.packs.iter().any(|p| p.id == *dep && p.active) {
-                return Err(format!(
-                    "Missing dependency: {}",
-                    hex::encode(dep)
-                ));
+                return Err(format!("Missing dependency: {}", hex::encode(dep)));
             }
         }
 
@@ -202,11 +199,7 @@ mod tests {
     #[test]
     fn test_authority_rejected() {
         let mut registry = DomainPackRegistry::default();
-        let result = registry.install(
-            test_pack("finance"),
-            PrecedenceLevel::Optimization,
-            10,
-        );
+        let result = registry.install(test_pack("finance"), PrecedenceLevel::Optimization, 10);
         assert!(result.is_err());
     }
 
@@ -238,7 +231,9 @@ mod tests {
         let mut registry = DomainPackRegistry::default();
         let pack = test_pack("finance");
         let id = pack.id;
-        registry.install(pack, PrecedenceLevel::Meaning, 10).unwrap();
+        registry
+            .install(pack, PrecedenceLevel::Meaning, 10)
+            .unwrap();
         assert_eq!(registry.active_packs().len(), 1);
 
         registry.deactivate(&id).unwrap();

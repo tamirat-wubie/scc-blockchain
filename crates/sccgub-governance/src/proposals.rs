@@ -88,9 +88,11 @@ impl ProposalRegistry {
             ));
         }
 
-        let id = sccgub_crypto::hash::blake3_hash(
-            &sccgub_crypto::canonical::canonical_bytes(&(&proposer, &kind, current_height)),
-        );
+        let id = sccgub_crypto::hash::blake3_hash(&sccgub_crypto::canonical::canonical_bytes(&(
+            &proposer,
+            &kind,
+            current_height,
+        )));
 
         self.proposals.push(GovernanceProposal {
             id,
@@ -241,9 +243,15 @@ mod tests {
         assert_eq!(registry.active_count(), 1);
 
         // Vote.
-        registry.vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 105).unwrap();
-        registry.vote(&id, [2u8; 32], PrecedenceLevel::Meaning, true, 106).unwrap();
-        registry.vote(&id, [3u8; 32], PrecedenceLevel::Meaning, false, 107).unwrap();
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 105)
+            .unwrap();
+        registry
+            .vote(&id, [2u8; 32], PrecedenceLevel::Meaning, true, 106)
+            .unwrap();
+        registry
+            .vote(&id, [3u8; 32], PrecedenceLevel::Meaning, false, 107)
+            .unwrap();
 
         // Finalize after voting period.
         let accepted = registry.finalize(111);
@@ -319,9 +327,15 @@ mod tests {
             .unwrap();
 
         // More against than for.
-        registry.vote(&id, [1u8; 32], PrecedenceLevel::Meaning, false, 102).unwrap();
-        registry.vote(&id, [2u8; 32], PrecedenceLevel::Meaning, false, 103).unwrap();
-        registry.vote(&id, [3u8; 32], PrecedenceLevel::Meaning, true, 104).unwrap();
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Meaning, false, 102)
+            .unwrap();
+        registry
+            .vote(&id, [2u8; 32], PrecedenceLevel::Meaning, false, 103)
+            .unwrap();
+        registry
+            .vote(&id, [3u8; 32], PrecedenceLevel::Meaning, true, 104)
+            .unwrap();
 
         let accepted = registry.finalize(106);
         assert!(accepted.is_empty());

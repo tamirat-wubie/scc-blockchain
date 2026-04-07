@@ -28,7 +28,11 @@ pub async fn get_status(
         }
     };
 
-    let total_txs: u64 = app.blocks.iter().map(|b| b.body.transition_count as u64).sum();
+    let total_txs: u64 = app
+        .blocks
+        .iter()
+        .map(|b| b.body.transition_count as u64)
+        .sum();
 
     let resp = ChainStatusResponse {
         chain_id: hex::encode(app.chain_id),
@@ -53,7 +57,10 @@ pub async fn get_status(
 pub async fn get_block(
     state: axum::extract::State<SharedState>,
     axum::extract::Path(height): axum::extract::Path<u64>,
-) -> (axum::http::StatusCode, axum::Json<ApiResponse<BlockResponse>>) {
+) -> (
+    axum::http::StatusCode,
+    axum::Json<ApiResponse<BlockResponse>>,
+) {
     let app = state.read().await;
     let block = match app.blocks.get(height as usize) {
         Some(b) => b,
@@ -97,7 +104,10 @@ pub async fn get_block(
         transactions,
     };
 
-    (axum::http::StatusCode::OK, axum::Json(ApiResponse::ok(resp)))
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(ApiResponse::ok(resp)),
+    )
 }
 
 /// GET /state — all state entries.
@@ -130,7 +140,11 @@ pub async fn get_health(
         }
     };
 
-    let total_txs: u64 = app.blocks.iter().map(|b| b.body.transition_count as u64).sum();
+    let total_txs: u64 = app
+        .blocks
+        .iter()
+        .map(|b| b.body.transition_count as u64)
+        .sum();
     let total_edges: u64 = app
         .blocks
         .iter()

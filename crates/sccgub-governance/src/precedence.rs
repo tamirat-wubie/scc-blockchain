@@ -48,18 +48,35 @@ mod tests {
 
     #[test]
     fn test_genesis_overrides_all() {
-        assert!(is_authorized(PrecedenceLevel::Genesis, PrecedenceLevel::Optimization));
-        assert!(is_authorized(PrecedenceLevel::Genesis, PrecedenceLevel::Safety));
+        assert!(is_authorized(
+            PrecedenceLevel::Genesis,
+            PrecedenceLevel::Optimization
+        ));
+        assert!(is_authorized(
+            PrecedenceLevel::Genesis,
+            PrecedenceLevel::Safety
+        ));
     }
 
     #[test]
     fn test_optimization_cannot_override_safety() {
-        assert!(!is_authorized(PrecedenceLevel::Optimization, PrecedenceLevel::Safety));
+        assert!(!is_authorized(
+            PrecedenceLevel::Optimization,
+            PrecedenceLevel::Safety
+        ));
     }
 
     #[test]
     fn test_norm_requires_meaning() {
-        assert!(check_governance_change(PrecedenceLevel::Meaning, GovernanceChangeType::NormAddition).is_ok());
-        assert!(check_governance_change(PrecedenceLevel::Optimization, GovernanceChangeType::NormAddition).is_err());
+        assert!(check_governance_change(
+            PrecedenceLevel::Meaning,
+            GovernanceChangeType::NormAddition
+        )
+        .is_ok());
+        assert!(check_governance_change(
+            PrecedenceLevel::Optimization,
+            GovernanceChangeType::NormAddition
+        )
+        .is_err());
     }
 }

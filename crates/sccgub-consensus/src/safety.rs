@@ -36,8 +36,11 @@ impl SafetyCertificate {
             ));
         }
         // Check for duplicate signers.
-        let unique_signers: std::collections::HashSet<Hash> =
-            self.precommit_signatures.iter().map(|(id, _)| *id).collect();
+        let unique_signers: std::collections::HashSet<Hash> = self
+            .precommit_signatures
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
         if unique_signers.len() != self.precommit_signatures.len() {
             return Err("Duplicate signer detected in safety certificate".into());
         }
@@ -50,10 +53,7 @@ impl SafetyCertificate {
 /// Given two safety certificates for different blocks at the same height,
 /// at least one certificate must contain a dishonest validator (equivocator).
 /// This function identifies the equivocators.
-pub fn prove_no_fork(
-    cert_a: &SafetyCertificate,
-    cert_b: &SafetyCertificate,
-) -> ForkProofResult {
+pub fn prove_no_fork(cert_a: &SafetyCertificate, cert_b: &SafetyCertificate) -> ForkProofResult {
     if cert_a.height != cert_b.height {
         return ForkProofResult::DifferentHeights;
     }
@@ -67,10 +67,16 @@ pub fn prove_no_fork(
     }
 
     // Find validators that signed both certificates (equivocators).
-    let signers_a: std::collections::HashSet<Hash> =
-        cert_a.precommit_signatures.iter().map(|(id, _)| *id).collect();
-    let signers_b: std::collections::HashSet<Hash> =
-        cert_b.precommit_signatures.iter().map(|(id, _)| *id).collect();
+    let signers_a: std::collections::HashSet<Hash> = cert_a
+        .precommit_signatures
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    let signers_b: std::collections::HashSet<Hash> = cert_b
+        .precommit_signatures
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
 
     let equivocators: Vec<Hash> = signers_a.intersection(&signers_b).copied().collect();
 
@@ -143,19 +149,11 @@ pub enum ForkProofResult {
 mod tests {
     use super::*;
 
-    fn make_cert(
-        height: u64,
-        block: Hash,
-        signers: &[u8],
-        n: u32,
-    ) -> SafetyCertificate {
+    fn make_cert(height: u64, block: Hash, signers: &[u8], n: u32) -> SafetyCertificate {
         SafetyCertificate {
             height,
             block_hash: block,
-            precommit_signatures: signers
-                .iter()
-                .map(|&s| ([s; 32], vec![0u8; 64]))
-                .collect(),
+            precommit_signatures: signers.iter().map(|&s| ([s; 32], vec![0u8; 64])).collect(),
             quorum: (2 * n) / 3 + 1,
             validator_count: n,
         }
@@ -199,14 +197,17 @@ mod tests {
     fn test_same_block_not_fork() {
         let cert_a = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
         let cert_b = make_cert(10, [1u8; 32], &[2, 3, 4], 4);
-        assert!(matches!(prove_no_fork(&cert_a, &cert_b), ForkProofResult::SameBlock));
+        assert!(matches!(
+            prove_no_fork(&cert_a, &cert_b),
+            ForkProofResult::SameBlock
+        ));
     }
 
     #[test]
     fn test_max_byzantine() {
-        assert_eq!(max_byzantine(3), 0);  // f=0 for n=3.
-        assert_eq!(max_byzantine(4), 1);  // f=1 for n=4.
-        assert_eq!(max_byzantine(7), 2);  // f=2 for n=7.
+        assert_eq!(max_byzantine(3), 0); // f=0 for n=3.
+        assert_eq!(max_byzantine(4), 1); // f=1 for n=4.
+        assert_eq!(max_byzantine(7), 2); // f=2 for n=7.
         assert_eq!(max_byzantine(21), 6); // f=6 for n=21.
         assert_eq!(max_byzantine(100), 33); // f=33 for n=100.
     }

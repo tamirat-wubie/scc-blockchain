@@ -33,15 +33,23 @@ pub fn apply_decay(state: &mut ResponsibilityState, current_height: u64) {
 
     // Prune near-zero entries to prevent unbounded growth.
     let threshold = TensionValue(1); // ~10^-18, effectively zero.
-    state.positive_contributions.retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
-    state.negative_contributions.retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
+    state
+        .positive_contributions
+        .retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
+    state
+        .negative_contributions
+        .retain(|e| e.r_value.raw().unsigned_abs() > threshold.raw().unsigned_abs());
 
     // Hard cap on contribution list size.
     if state.positive_contributions.len() > MAX_CONTRIBUTIONS {
-        state.positive_contributions.drain(0..state.positive_contributions.len() - MAX_CONTRIBUTIONS);
+        state
+            .positive_contributions
+            .drain(0..state.positive_contributions.len() - MAX_CONTRIBUTIONS);
     }
     if state.negative_contributions.len() > MAX_CONTRIBUTIONS {
-        state.negative_contributions.drain(0..state.negative_contributions.len() - MAX_CONTRIBUTIONS);
+        state
+            .negative_contributions
+            .drain(0..state.negative_contributions.len() - MAX_CONTRIBUTIONS);
     }
 
     // Recompute net responsibility.

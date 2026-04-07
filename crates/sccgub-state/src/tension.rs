@@ -12,12 +12,11 @@ pub fn is_within_budget(
 }
 
 /// Update tension for a specific symbol address.
-pub fn apply_tension_delta(
-    field: &mut TensionField,
-    address: &SymbolAddress,
-    delta: TensionValue,
-) {
-    let current = field.map.entry(address.clone()).or_insert(TensionValue::ZERO);
+pub fn apply_tension_delta(field: &mut TensionField, address: &SymbolAddress, delta: TensionValue) {
+    let current = field
+        .map
+        .entry(address.clone())
+        .or_insert(TensionValue::ZERO);
     *current = *current + delta;
     field.total = field.total + delta;
 }

@@ -17,15 +17,12 @@ pub fn select_validator(validators: &[ValidatorAuthority]) -> Option<&ValidatorA
     let w2 = TensionValue::from_integer(3); // reliability weight
     let w3 = TensionValue::from_integer(3); // governance level weight
 
-    eligible
-        .into_iter()
-        .max_by_key(|v| {
-            let gov_score = TensionValue::from_integer(5 - v.governance_level as i64);
-            let score = w1.mul_fp(v.norm_compliance)
-                + w2.mul_fp(v.causal_reliability)
-                + w3.mul_fp(gov_score);
-            score.raw()
-        })
+    eligible.into_iter().max_by_key(|v| {
+        let gov_score = TensionValue::from_integer(5 - v.governance_level as i64);
+        let score =
+            w1.mul_fp(v.norm_compliance) + w2.mul_fp(v.causal_reliability) + w3.mul_fp(gov_score);
+        score.raw()
+    })
 }
 
 /// Round-robin proposer selection for DETERMINISTIC finality mode.
@@ -72,10 +69,7 @@ mod tests {
 
     #[test]
     fn test_round_robin() {
-        let validators = vec![
-            test_validator(1, 5, 5),
-            test_validator(2, 5, 5),
-        ];
+        let validators = vec![test_validator(1, 5, 5), test_validator(2, 5, 5)];
         let v0 = round_robin_proposer(&validators, 0).unwrap();
         let v1 = round_robin_proposer(&validators, 1).unwrap();
         assert_ne!(v0.node_id, v1.node_id);

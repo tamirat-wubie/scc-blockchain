@@ -117,10 +117,7 @@ impl EmergencyDecision {
     }
 
     pub fn is_emergency(&self) -> bool {
-        matches!(
-            self,
-            Self::Activate { .. } | Self::MaintainEmergency { .. }
-        )
+        matches!(self, Self::Activate { .. } | Self::MaintainEmergency { .. })
     }
 }
 

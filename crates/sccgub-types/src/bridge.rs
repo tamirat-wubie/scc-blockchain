@@ -85,10 +85,7 @@ pub enum BridgeMessageType {
         proof: Vec<u8>,
     },
     /// Governance event notification.
-    GovernanceEvent {
-        event_type: String,
-        data: Vec<u8>,
-    },
+    GovernanceEvent { event_type: String, data: Vec<u8> },
 }
 
 /// Bridge registry managing active bridges.

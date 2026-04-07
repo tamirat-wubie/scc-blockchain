@@ -71,7 +71,9 @@ pub fn balances_from_trie(state: &ManagedWorldState) -> BalanceLedger {
                     id.copy_from_slice(&agent_bytes);
                     let mut raw = [0u8; 16];
                     raw.copy_from_slice(value);
-                    balances.balances.insert(id, TensionValue(i128::from_le_bytes(raw)));
+                    balances
+                        .balances
+                        .insert(id, TensionValue(i128::from_le_bytes(raw)));
                 }
             }
         }

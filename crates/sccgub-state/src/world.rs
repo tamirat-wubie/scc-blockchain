@@ -37,8 +37,7 @@ impl ManagedWorldState {
             {
                 continue; // Skip oversized entries.
             }
-            self.trie
-                .insert(write.address.clone(), write.value.clone());
+            self.trie.insert(write.address.clone(), write.value.clone());
             let symbol = self
                 .state
                 .symbol_store
@@ -63,7 +62,9 @@ impl ManagedWorldState {
         if nonce <= last {
             return Err(format!(
                 "Nonce replay: got {} but last seen was {} for agent {}",
-                nonce, last, hex::encode(agent_id)
+                nonce,
+                last,
+                hex::encode(agent_id)
             ));
         }
         self.agent_nonces.insert(*agent_id, nonce);

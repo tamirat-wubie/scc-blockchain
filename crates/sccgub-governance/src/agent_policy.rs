@@ -149,11 +149,7 @@ impl AgentPolicyRegistry {
     }
 
     /// Check if a causal chain depth exceeds the agent's policy limit.
-    pub fn check_chain_depth(
-        &self,
-        agent_id: &AgentId,
-        chain_depth: u32,
-    ) -> Result<(), String> {
+    pub fn check_chain_depth(&self, agent_id: &AgentId, chain_depth: u32) -> Result<(), String> {
         if let Some(policy) = self.get(agent_id) {
             if chain_depth > policy.max_chain_depth {
                 return Err(format!(
@@ -210,8 +206,12 @@ mod tests {
     #[test]
     fn test_transfer_limit() {
         let policy = test_policy();
-        assert!(policy.check_transfer_limit(TensionValue::from_integer(500)).is_ok());
-        assert!(policy.check_transfer_limit(TensionValue::from_integer(2000)).is_err());
+        assert!(policy
+            .check_transfer_limit(TensionValue::from_integer(500))
+            .is_ok());
+        assert!(policy
+            .check_transfer_limit(TensionValue::from_integer(2000))
+            .is_err());
     }
 
     #[test]

@@ -92,9 +92,7 @@ impl Block {
         }
         // Receipt count must match transition count (one receipt per transition).
         // Genesis blocks may have zero receipts with zero transitions.
-        if !self.receipts.is_empty()
-            && self.receipts.len() != self.body.transitions.len()
-        {
+        if !self.receipts.is_empty() && self.receipts.len() != self.body.transitions.len() {
             return false;
         }
         // Version check.
