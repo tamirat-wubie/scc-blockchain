@@ -411,6 +411,21 @@ fn cmd_verify(data_dir: &std::path::Path) {
         ..Default::default()
     };
 
+    // Write genesis balance into trie (mirrors chain.rs init).
+    if let Some(genesis) = blocks.first() {
+        let balance_key = format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+        state.apply_delta(&sccgub_types::transition::StateDelta {
+            writes: vec![sccgub_types::transition::StateWrite {
+                address: balance_key,
+                value: sccgub_types::tension::TensionValue::from_integer(1_000_000)
+                    .raw()
+                    .to_le_bytes()
+                    .to_vec(),
+            }],
+            deletes: vec![],
+        });
+    }
+
     let mut errors = 0u32;
 
     for (i, block) in blocks.iter().enumerate() {
@@ -453,22 +468,65 @@ fn cmd_verify(data_dir: &std::path::Path) {
             }
         }
 
-        // Replay state + nonces.
-        for tx in &block.body.transitions {
-            if let OperationPayload::Write { key, value } = &tx.payload {
-                state.apply_delta(&StateDelta {
-                    writes: vec![StateWrite {
-                        address: key.clone(),
-                        value: value.clone(),
-                    }],
-                    deletes: vec![],
-                });
+        // Replay state + nonces + balance trie writes.
+        let mut replay_balances = sccgub_state::balances::BalanceLedger::new();
+        // Reconstruct balances from trie.
+        for (key, value) in state.trie.iter() {
+            if key.starts_with(b"balance/") && value.len() == 16 {
+                if let Ok(agent_bytes) = hex::decode(&key[8..]) {
+                    if agent_bytes.len() == 32 {
+                        let mut id = [0u8; 32];
+                        id.copy_from_slice(&agent_bytes);
+                        let mut raw = [0u8; 16];
+                        raw.copy_from_slice(value);
+                        replay_balances.credit(&id, sccgub_types::tension::TensionValue(i128::from_le_bytes(raw)));
+                    }
+                }
             }
-            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
+
+        for tx in &block.body.transitions {
+            match &tx.payload {
+                OperationPayload::Write { key, value } => {
+                    state.apply_delta(&StateDelta {
+                        writes: vec![StateWrite {
+                            address: key.clone(),
+                            value: value.clone(),
+                        }],
+                        deletes: vec![],
+                    });
+                }
+                OperationPayload::AssetTransfer { from, to, amount } => {
+                    let _ = replay_balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount));
+                }
+                _ => {}
+            }
+            if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                println!(
+                    "  [FAIL] Block #{}: nonce error for tx {}: {}",
+                    block.header.height,
+                    hex::encode(tx.tx_id),
+                    e
+                );
+                errors += 1;
+            }
+        }
+
+        // Write updated balances into trie (mirrors chain.rs produce_block).
+        for (agent_id, balance) in &replay_balances.balances {
+            let key = format!("balance/{}", hex::encode(agent_id)).into_bytes();
+            state.apply_delta(&StateDelta {
+                writes: vec![StateWrite {
+                    address: key,
+                    value: balance.raw().to_le_bytes().to_vec(),
+                }],
+                deletes: vec![],
+            });
+        }
+
         state.set_height(block.header.height);
 
-        // Verify state root matches block header (skip genesis which has no transitions).
+        // Verify state root matches block header (skip genesis which has no transactions).
         if block.header.height > 0 {
             let computed_root = state.state_root();
             if block.header.state_root != computed_root {
@@ -612,7 +670,10 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
                     deletes: vec![],
                 });
             }
-            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+            if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                eprintln!("Import failed: block #{} nonce error: {}", block.header.height, e);
+                std::process::exit(1);
+            }
         }
         state.set_height(block.header.height);
     }

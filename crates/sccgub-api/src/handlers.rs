@@ -53,12 +53,15 @@ pub async fn get_status(
 pub async fn get_block(
     state: axum::extract::State<SharedState>,
     axum::extract::Path(height): axum::extract::Path<u64>,
-) -> axum::Json<ApiResponse<BlockResponse>> {
+) -> (axum::http::StatusCode, axum::Json<ApiResponse<BlockResponse>>) {
     let app = state.read().await;
     let block = match app.blocks.get(height as usize) {
         Some(b) => b,
         None => {
-            return axum::Json(ApiResponse::err(format!("Block {} not found", height)));
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(ApiResponse::err(format!("Block {} not found", height))),
+            );
         }
     };
 
@@ -94,7 +97,7 @@ pub async fn get_block(
         transactions,
     };
 
-    axum::Json(ApiResponse::ok(resp))
+    (axum::http::StatusCode::OK, axum::Json(ApiResponse::ok(resp)))
 }
 
 /// GET /state — all state entries.

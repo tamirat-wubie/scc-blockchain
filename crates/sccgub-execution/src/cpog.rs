@@ -1,9 +1,9 @@
 use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::merkle::merkle_root_of_bytes;
+use sccgub_state::apply::{apply_block_transitions, balances_from_trie};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
 use sccgub_types::mfidel::MfidelAtomicSeal;
-use sccgub_types::transition::{StateDelta, StateWrite};
 use sccgub_types::ZERO_HASH;
 
 use crate::phi::phi_traversal_block;
@@ -110,26 +110,14 @@ pub fn validate_cpog(
     // Clone the state, apply all transitions, and verify the resulting root
     // matches what the block header claims. This is the key integrity check.
     if block.header.height > 0 {
+        // Speculative replay using shared apply function (single source of truth).
         let mut speculative = state.clone();
+        let mut spec_balances = balances_from_trie(&speculative);
+        apply_block_transitions(&mut speculative, &mut spec_balances, &block.body.transitions);
         for tx in &block.body.transitions {
-            match &tx.payload {
-                sccgub_types::transition::OperationPayload::Write { key, value } => {
-                    speculative.apply_delta(&StateDelta {
-                        writes: vec![StateWrite {
-                            address: key.clone(),
-                            value: value.clone(),
-                        }],
-                        deletes: vec![],
-                    });
-                }
-                sccgub_types::transition::OperationPayload::AssetTransfer { .. } => {
-                    // Asset transfers modify the balance ledger (tracked separately).
-                }
-                _ => {}
-            }
-            // Replay nonces for symmetry with chain.rs produce_block.
             let _ = speculative.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
+
         let computed_state_root = speculative.state_root();
         if block.header.state_root != computed_state_root {
             errors.push(format!(

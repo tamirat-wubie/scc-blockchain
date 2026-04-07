@@ -16,7 +16,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/tmrtl/scc-blockchain"
+repository = "https://github.com/tamirat-wubie/scc-blockchain"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

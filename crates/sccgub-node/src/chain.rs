@@ -66,6 +66,16 @@ impl Chain {
         let mut balances = BalanceLedger::new();
         balances.credit(&validator_id, TensionValue::from_integer(1_000_000));
 
+        // Write genesis balances into state trie for unified commitment.
+        let balance_key = format!("balance/{}", hex::encode(validator_id)).into_bytes();
+        state.apply_delta(&sccgub_types::transition::StateDelta {
+            writes: vec![sccgub_types::transition::StateWrite {
+                address: balance_key,
+                value: TensionValue::from_integer(1_000_000).raw().to_le_bytes().to_vec(),
+            }],
+            deletes: vec![],
+        });
+
         // Initialize slashing engine with validator stake.
         let mut slashing = SlashingEngine::new(Default::default());
         slashing.set_stake(validator_id, TensionValue::from_integer(100_000));
@@ -103,10 +113,18 @@ impl Chain {
             ..GovernanceState::default()
         };
 
-        // Replay genesis mint.
+        // Replay genesis mint + write to trie.
         let mut balances = BalanceLedger::new();
         if let Some(genesis) = blocks.first() {
             balances.credit(&genesis.header.validator_id, TensionValue::from_integer(1_000_000));
+            let balance_key = format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+            state.apply_delta(&sccgub_types::transition::StateDelta {
+                writes: vec![sccgub_types::transition::StateWrite {
+                    address: balance_key,
+                    value: TensionValue::from_integer(1_000_000).raw().to_le_bytes().to_vec(),
+                }],
+                deletes: vec![],
+            });
         }
 
         // Replay all block transitions to reconstruct state + nonces + balances.
@@ -190,40 +208,39 @@ impl Chain {
         // Collect validated transitions from mempool.
         let transitions = self.mempool.drain_validated(&self.state);
 
-        // Speculatively apply state changes. Filter out failed transfers.
-        let mut speculative_state = self.state.clone();
-        let mut speculative_balances = self.balances.clone();
+        // Filter transitions: reject failed transfers and bad nonces.
+        let mut filter_state = self.state.clone();
+        let filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
         for tx in transitions {
-            let mut accepted = true;
-            match &tx.payload {
-                sccgub_types::transition::OperationPayload::Write { key, value } => {
-                    speculative_state.apply_delta(&sccgub_types::transition::StateDelta {
-                        writes: vec![sccgub_types::transition::StateWrite {
-                            address: key.clone(),
-                            value: value.clone(),
-                        }],
-                        deletes: vec![],
-                    });
+            if let sccgub_types::transition::OperationPayload::AssetTransfer {
+                from, to, amount,
+            } = &tx.payload
+            {
+                let mut test_bal = filter_balances.clone();
+                if test_bal.transfer(from, to, TensionValue(*amount)).is_err() {
+                    continue;
                 }
-                sccgub_types::transition::OperationPayload::AssetTransfer {
-                    from,
-                    to,
-                    amount,
-                } => {
-                    let amt = TensionValue(*amount);
-                    if speculative_balances.transfer(from, to, amt).is_err() {
-                        accepted = false; // Filter out failed transfers.
-                    }
-                }
-                _ => {}
             }
-            if accepted {
-                let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
-                accepted_transitions.push(tx);
+            if filter_state.check_nonce(&tx.actor.agent_id, tx.nonce).is_err() {
+                continue;
             }
+            accepted_transitions.push(tx);
         }
         let transitions = accepted_transitions;
+
+        // Apply accepted transitions using shared function (single source of truth).
+        // Use a FRESH clone so CPoG validator produces identical state.
+        let mut speculative_state = self.state.clone();
+        let mut speculative_balances = self.balances.clone();
+        sccgub_state::apply::apply_block_transitions(
+            &mut speculative_state,
+            &mut speculative_balances,
+            &transitions,
+        );
+        for tx in &transitions {
+            let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
+        }
         speculative_state.set_height(height);
 
         // Use same canonical derivation as validator_id_for_check (line 178).
