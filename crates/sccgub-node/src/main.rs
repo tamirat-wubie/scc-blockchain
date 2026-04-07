@@ -1,5 +1,6 @@
 mod chain;
 mod mempool;
+mod observability;
 mod persistence;
 
 use std::collections::HashSet;
@@ -82,6 +83,8 @@ enum Commands {
         /// Agent ID (hex, can be prefix).
         agent: String,
     },
+    /// Show chain health report (metrics, performance, security).
+    Health,
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
@@ -104,6 +107,7 @@ fn main() {
         Commands::Transfer { amount } => cmd_transfer(&cli.data_dir, amount),
         Commands::Stats => cmd_stats(&cli.data_dir),
         Commands::Balance { agent } => cmd_balance(&cli.data_dir, &agent),
+        Commands::Health => cmd_health(&cli.data_dir),
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -946,6 +950,77 @@ fn cmd_stats(data_dir: &std::path::Path) {
     println!();
     println!("  Tension");
     println!("    Current:           {}", latest.header.tension_after);
+}
+
+fn cmd_health(data_dir: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found.");
+            std::process::exit(1);
+        }
+    };
+
+    let mut metrics = observability::ChainMetrics::default();
+
+    let mut total_causal_edges = 0u64;
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+
+    for block in &blocks {
+        metrics.record_block(block.body.transition_count, 0);
+        total_causal_edges += block.causal_delta.new_edges.len() as u64;
+
+        for tx in &block.body.transitions {
+            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
+                state.apply_delta(&sccgub_types::transition::StateDelta {
+                    writes: vec![sccgub_types::transition::StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+        }
+    }
+
+    metrics.state_entries = state.trie.len() as u64;
+    metrics.causal_edges = total_causal_edges;
+
+    // Compute finality.
+    let finality_config = sccgub_consensus::finality::FinalityConfig::default();
+    let mut finality = sccgub_consensus::finality::FinalityTracker::default();
+    if let Some(last) = blocks.last() {
+        for h in 1..=last.header.height {
+            finality.on_new_block(h);
+        }
+        finality.check_finality(&finality_config, |h| {
+            blocks.get(h as usize).map(|b| b.header.block_id)
+        });
+    }
+
+    let latest = blocks.last().unwrap();
+
+    println!("{}", metrics.report());
+    println!("  Finality");
+    println!("    Finalized height:   {}", finality.finalized_height);
+    println!("    Tip height:         {}", latest.header.height);
+    println!("    Finality gap:       {}", finality.finality_gap());
+    println!("    Confirmation depth: {}", finality_config.confirmation_depth);
+    println!("    Expected latency:   {} ms", finality_config.expected_finality_ms());
+    println!("    SLA met:            {}", if finality_config.meets_sla() { "YES" } else { "NO" });
+    println!();
+    println!("  Mfidel");
+    println!("    Current seal:       f[{}][{}]", latest.header.mfidel_seal.row, latest.header.mfidel_seal.column);
+    println!("    Cycle:              {}", sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height));
+    println!("    Fidels completed:   {}", latest.header.height % 272);
 }
 
 fn cmd_demo() {
