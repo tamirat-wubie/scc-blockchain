@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use sccgub_types::governance::{Norm, PrecedenceLevel};
 use sccgub_types::tension::TensionValue;
@@ -19,6 +20,8 @@ pub struct GovernanceProposal {
     pub required_level: PrecedenceLevel,
     /// Block height at which voting closes.
     pub voting_deadline: u64,
+    /// Set of agents who have already voted (prevents duplicate voting).
+    pub voters: HashSet<AgentId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +87,7 @@ impl ProposalRegistry {
         }
 
         let id = sccgub_crypto::hash::blake3_hash(
-            &serde_json::to_vec(&(&proposer, &kind, current_height)).unwrap_or_default(),
+            &serde_json::to_vec(&(&proposer, &kind, current_height)).expect("serialization cannot fail"),
         );
 
         self.proposals.push(GovernanceProposal {
@@ -97,15 +100,17 @@ impl ProposalRegistry {
             votes_against: 0,
             required_level: required,
             voting_deadline: current_height + voting_period,
+            voters: HashSet::new(),
         });
 
         Ok(id)
     }
 
-    /// Cast a vote on a proposal.
+    /// Cast a vote on a proposal. Each agent can only vote once.
     pub fn vote(
         &mut self,
         proposal_id: &Hash,
+        voter: AgentId,
         voter_level: PrecedenceLevel,
         approve: bool,
         current_height: u64,
@@ -126,6 +131,10 @@ impl ProposalRegistry {
 
         if (voter_level as u8) > (proposal.required_level as u8) {
             return Err("Voter lacks required governance level".into());
+        }
+
+        if !proposal.voters.insert(voter) {
+            return Err("Agent has already voted on this proposal".into());
         }
 
         if approve {
@@ -235,9 +244,9 @@ mod tests {
         assert_eq!(registry.active_count(), 1);
 
         // Vote.
-        registry.vote(&id, PrecedenceLevel::Meaning, true, 105).unwrap();
-        registry.vote(&id, PrecedenceLevel::Meaning, true, 106).unwrap();
-        registry.vote(&id, PrecedenceLevel::Meaning, false, 107).unwrap();
+        registry.vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 105).unwrap();
+        registry.vote(&id, [2u8; 32], PrecedenceLevel::Meaning, true, 106).unwrap();
+        registry.vote(&id, [3u8; 32], PrecedenceLevel::Meaning, false, 107).unwrap();
 
         // Finalize after voting period.
         let accepted = registry.finalize(111);
@@ -290,7 +299,7 @@ mod tests {
             .unwrap();
 
         // Vote after deadline (height 106 > deadline 105).
-        let result = registry.vote(&id, PrecedenceLevel::Meaning, true, 106);
+        let result = registry.vote(&id, [2u8; 32], PrecedenceLevel::Meaning, true, 106);
         assert!(result.is_err());
     }
 
@@ -313,9 +322,9 @@ mod tests {
             .unwrap();
 
         // More against than for.
-        registry.vote(&id, PrecedenceLevel::Meaning, false, 102).unwrap();
-        registry.vote(&id, PrecedenceLevel::Meaning, false, 103).unwrap();
-        registry.vote(&id, PrecedenceLevel::Meaning, true, 104).unwrap();
+        registry.vote(&id, [1u8; 32], PrecedenceLevel::Meaning, false, 102).unwrap();
+        registry.vote(&id, [2u8; 32], PrecedenceLevel::Meaning, false, 103).unwrap();
+        registry.vote(&id, [3u8; 32], PrecedenceLevel::Meaning, true, 104).unwrap();
 
         let accepted = registry.finalize(106);
         assert!(accepted.is_empty());

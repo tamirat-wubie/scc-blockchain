@@ -86,7 +86,7 @@ pub fn validate_cpog(
 
     // 8. Governance hash.
     let computed_gov = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&block.governance).unwrap_or_default(),
+        &serde_json::to_vec(&block.governance).expect("serialization cannot fail"),
     );
     if block.header.governance_hash != computed_gov {
         errors.push("Governance hash mismatch".into());
@@ -98,7 +98,7 @@ pub fn validate_cpog(
             .causal_delta
             .new_edges
             .iter()
-            .map(|e| serde_json::to_vec(e).unwrap_or_default())
+            .map(|e| serde_json::to_vec(e).expect("serialization cannot fail"))
             .collect();
         let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
         let computed = merkle_root_of_bytes(&edge_refs);

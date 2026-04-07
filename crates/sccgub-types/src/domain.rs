@@ -121,7 +121,17 @@ impl DomainPackRegistry {
     }
 
     /// Deactivate a domain pack (requires SAFETY precedence).
+    /// Rejects if other active packs depend on it.
     pub fn deactivate(&mut self, pack_id: &Hash) -> Result<(), String> {
+        // Check for dependents.
+        for p in &self.packs {
+            if p.active && p.dependencies.contains(pack_id) {
+                return Err(format!(
+                    "Cannot deactivate: pack '{}' depends on it",
+                    p.name
+                ));
+            }
+        }
         let pack = self
             .packs
             .iter_mut()

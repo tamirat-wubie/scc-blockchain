@@ -17,12 +17,12 @@ pub fn phi_traversal_block(block: &Block, state: &ManagedWorldState) -> PhiTrave
         let passed = result.passed;
         log.phases_completed.push(result);
         if !passed {
-            log.all_phases_passed = false;
+            log.finalize();
             return log;
         }
     }
 
-    log.all_phases_passed = true;
+    log.finalize();
     log
 }
 

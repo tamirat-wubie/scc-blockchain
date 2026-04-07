@@ -215,9 +215,9 @@ fn test_full_chain_lifecycle() {
     assert!(cpog_result.is_valid(), "Genesis CPoG failed: {:?}", cpog_result);
 
     // 4. Submit transitions.
-    let tx1 = create_write_tx(&agent, &agent_key, b"account/alice/balance", b"1000", 0);
-    let tx2 = create_write_tx(&agent, &agent_key, b"account/bob/balance", b"500", 1);
-    let tx3 = create_write_tx(&agent, &agent_key, b"config/max_supply", b"1000000", 2);
+    let tx1 = create_write_tx(&agent, &agent_key, b"account/alice/balance", b"1000", 1);
+    let tx2 = create_write_tx(&agent, &agent_key, b"account/bob/balance", b"500", 2);
+    let tx3 = create_write_tx(&agent, &agent_key, b"config/max_supply", b"1000000", 3);
 
     // 5. Validate each transition individually.
     for tx in [&tx1, &tx2, &tx3] {
@@ -725,8 +725,8 @@ fn test_governance_proposal_lifecycle() {
         .unwrap();
 
     // Vote during valid period.
-    proposals.vote(&id, PrecedenceLevel::Meaning, true, 12).unwrap();
-    proposals.vote(&id, PrecedenceLevel::Meaning, true, 13).unwrap();
+    proposals.vote(&id, [10u8; 32], PrecedenceLevel::Meaning, true, 12).unwrap();
+    proposals.vote(&id, [11u8; 32], PrecedenceLevel::Meaning, true, 13).unwrap();
 
     // Finalize after voting period.
     let accepted = proposals.finalize(16);
@@ -932,7 +932,7 @@ fn test_end_to_end_all_subsystems() {
             1, 5,
         )
         .unwrap();
-    proposals.vote(&prop_id, PrecedenceLevel::Meaning, true, 3).unwrap();
+    proposals.vote(&prop_id, alice_id, PrecedenceLevel::Meaning, true, 3).unwrap();
     let accepted = proposals.finalize(7);
     assert_eq!(accepted.len(), 1);
     let norm = proposals.activate(&prop_id).unwrap().unwrap();

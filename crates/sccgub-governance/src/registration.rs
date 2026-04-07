@@ -32,7 +32,7 @@ impl AgentRegistry {
         // Compute canonical agent_id.
         let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
             &public_key,
-            &serde_json::to_vec(&mfidel_seal).unwrap_or_default(),
+            &serde_json::to_vec(&mfidel_seal).expect("serialization cannot fail"),
         ]);
 
         // Check for duplicate registration.

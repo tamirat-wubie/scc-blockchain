@@ -72,6 +72,7 @@ pub struct MerkleProof {
 }
 
 /// Generate a Merkle inclusion proof for a leaf at the given index.
+#[allow(clippy::manual_is_multiple_of)]
 pub fn generate_proof(leaves: &[[u8; 32]], index: usize) -> Option<MerkleProof> {
     if index >= leaves.len() || leaves.is_empty() {
         return None;
@@ -82,14 +83,14 @@ pub fn generate_proof(leaves: &[[u8; 32]], index: usize) -> Option<MerkleProof> 
     let mut siblings = Vec::new();
 
     while current_level.len() > 1 {
-        let sibling_index = if proof_index.is_multiple_of(2) {
+        let sibling_index = if proof_index % 2 == 0 {
             proof_index + 1
         } else {
             proof_index - 1
         };
 
         if sibling_index < current_level.len() {
-            siblings.push((current_level[sibling_index], proof_index.is_multiple_of(2)));
+            siblings.push((current_level[sibling_index], proof_index % 2 == 0));
         }
         // else: odd leaf, no sibling — promoted
 

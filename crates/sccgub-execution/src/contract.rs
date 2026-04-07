@@ -159,7 +159,7 @@ fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResu
 /// Verify that a contract's ID matches the hash of its content.
 pub fn verify_contract_id(contract: &SymbolicCausalContract) -> bool {
     let content = serde_json::to_vec(&(&contract.name, &contract.laws, &contract.deployer))
-        .unwrap_or_default();
+        .expect("serialization cannot fail");
     let expected = sccgub_crypto::hash::blake3_hash(&content);
     contract.contract_id == expected
 }

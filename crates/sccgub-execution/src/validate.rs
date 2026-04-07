@@ -103,16 +103,16 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
     };
 
     let pre_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.preconditions).unwrap_or_default(),
+        &serde_json::to_vec(&tx.preconditions).expect("serialization cannot fail"),
     );
     let post_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.postconditions).unwrap_or_default(),
+        &serde_json::to_vec(&tx.postconditions).expect("serialization cannot fail"),
     );
     let wh_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.wh_binding_intent).unwrap_or_default(),
+        &serde_json::to_vec(&tx.wh_binding_intent).expect("serialization cannot fail"),
     );
     let causal_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.causal_chain).unwrap_or_default(),
+        &serde_json::to_vec(&tx.causal_chain).expect("serialization cannot fail"),
     );
 
     serde_json::to_vec(&(

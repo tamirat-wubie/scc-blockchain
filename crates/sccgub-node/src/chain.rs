@@ -79,21 +79,32 @@ impl Chain {
             ..GovernanceState::default()
         };
 
-        // Replay all block transitions to reconstruct state + nonces.
+        // Replay genesis mint.
+        let mut balances = BalanceLedger::new();
+        if let Some(genesis) = blocks.first() {
+            balances.credit(&genesis.header.validator_id, TensionValue::from_integer(1_000_000));
+        }
+
+        // Replay all block transitions to reconstruct state + nonces + balances.
         for block in &blocks {
             for tx in &block.body.transitions {
-                if let sccgub_types::transition::OperationPayload::Write { key, value } =
-                    &tx.payload
-                {
-                    state.apply_delta(&sccgub_types::transition::StateDelta {
-                        writes: vec![sccgub_types::transition::StateWrite {
-                            address: key.clone(),
-                            value: value.clone(),
-                        }],
-                        deletes: vec![],
-                    });
+                match &tx.payload {
+                    sccgub_types::transition::OperationPayload::Write { key, value } => {
+                        state.apply_delta(&sccgub_types::transition::StateDelta {
+                            writes: vec![sccgub_types::transition::StateWrite {
+                                address: key.clone(),
+                                value: value.clone(),
+                            }],
+                            deletes: vec![],
+                        });
+                    }
+                    sccgub_types::transition::OperationPayload::AssetTransfer {
+                        from, to, amount,
+                    } => {
+                        let _ = balances.transfer(from, to, TensionValue(*amount));
+                    }
+                    _ => {}
                 }
-                // Replay nonces for replay protection.
                 let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
             }
             state.set_height(block.header.height);
@@ -106,7 +117,7 @@ impl Chain {
             chain_id,
             validator_key,
             economics: EconomicState::default(),
-            balances: BalanceLedger::new(),
+            balances,
         }
     }
 
@@ -232,7 +243,7 @@ fn build_genesis_block(
         finality_mode: FinalityMode::Deterministic,
     };
 
-    let header_data = serde_json::to_vec(&("genesis", &chain_id)).unwrap_or_default();
+    let header_data = serde_json::to_vec(&("genesis", &chain_id)).expect("serialization cannot fail");
     let block_id = blake3_hash(&header_data);
 
     let header = BlockHeader {
@@ -246,7 +257,7 @@ fn build_genesis_block(
         receipt_root: ZERO_HASH,
         causal_root: ZERO_HASH,
         proof_root: ZERO_HASH,
-        governance_hash: blake3_hash(&serde_json::to_vec(&governance).unwrap_or_default()),
+        governance_hash: blake3_hash(&serde_json::to_vec(&governance).expect("serialization cannot fail")),
         tension_before: TensionValue::ZERO,
         tension_after: TensionValue::ZERO,
         mfidel_seal: seal,
@@ -307,7 +318,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
     let timestamp = parent_timestamp.successor(
         validator_id,
-        blake3_hash(&serde_json::to_vec(parent_timestamp).unwrap_or_default()),
+        blake3_hash(&serde_json::to_vec(parent_timestamp).expect("serialization cannot fail")),
         wall_hint,
     );
     let seal = MfidelAtomicSeal::from_height(height);
@@ -317,7 +328,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 
     let governance = GovernanceSnapshot {
         state_hash: blake3_hash(
-            &serde_json::to_vec(&state.state.governance_state).unwrap_or_default(),
+            &serde_json::to_vec(&state.state.governance_state).expect("serialization cannot fail"),
         ),
         active_norm_count: state.state.governance_state.active_norms.len() as u32,
         emergency_mode: state.state.governance_state.emergency_mode,
@@ -328,7 +339,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 
     // Build causal graph delta.
     let block_vertex = CausalVertex::Block(blake3_hash(
-        &serde_json::to_vec(&(chain_id, height)).unwrap_or_default(),
+        &serde_json::to_vec(&(chain_id, height)).expect("serialization cannot fail"),
     ));
     let mut causal_vertices = vec![block_vertex.clone()];
     let mut causal_edges = Vec::new();
@@ -405,7 +416,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         // Serialize each edge to get unique hashes (not dummy bytes).
         let edge_bytes: Vec<Vec<u8>> = causal_edges
             .iter()
-            .map(|e| serde_json::to_vec(e).unwrap_or_default())
+            .map(|e| serde_json::to_vec(e).expect("serialization cannot fail"))
             .collect();
         let edge_refs: Vec<&[u8]> = edge_bytes.iter().map(|b| b.as_slice()).collect();
         merkle_root_of_bytes(&edge_refs)
@@ -414,7 +425,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();
     let receipt_root = merkle_root_of_bytes(&receipt_hashes);
 
-    let gov_hash = blake3_hash(&serde_json::to_vec(&governance).unwrap_or_default());
+    let gov_hash = blake3_hash(&serde_json::to_vec(&governance).expect("serialization cannot fail"));
 
     // Build header with ZERO_HASH for block_id, then hash the full header to get block_id.
     let mut header = BlockHeader {
@@ -436,7 +447,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         version: 1,
     };
     // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
-    let header_bytes = serde_json::to_vec(&header).unwrap_or_default();
+    let header_bytes = serde_json::to_vec(&header).expect("serialization cannot fail");
     header.block_id = blake3_hash(&header_bytes);
 
     let proof = CausalProof {
