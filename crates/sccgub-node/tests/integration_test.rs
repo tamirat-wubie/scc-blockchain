@@ -827,3 +827,241 @@ fn test_economic_fee_computation() {
     );
     assert_eq!(fee_neg, econ.base_fee);
 }
+
+/// Comprehensive end-to-end test exercising ALL major subsystems.
+#[test]
+fn test_end_to_end_all_subsystems() {
+    use sccgub_execution::cpog::validate_cpog;
+    use sccgub_execution::phi::phi_traversal_block;
+    use sccgub_governance::containment::ContainmentState;
+    use sccgub_governance::emergency::{evaluate_emergency, EmergencyPolicy};
+    use sccgub_governance::norms::NormRegistry;
+    use sccgub_governance::proposals::{ProposalKind, ProposalRegistry};
+    use sccgub_governance::registration::AgentRegistry;
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_types::economics::EconomicState;
+
+    // ===== 1. AGENT REGISTRATION =====
+    let mut agent_registry = AgentRegistry::default();
+    let (agent_alice, key_alice) = create_test_agent();
+    let alice_id = agent_registry
+        .register(
+            agent_alice.public_key,
+            agent_alice.mfidel_seal.clone(),
+            PrecedenceLevel::Meaning,
+            0,
+        )
+        .unwrap();
+    assert!(agent_registry.is_active(&alice_id));
+
+    // ===== 2. GENESIS + BLOCK PRODUCTION =====
+    let mut state = ManagedWorldState::new();
+    let validator_key = generate_keypair();
+
+    // Genesis block.
+    let genesis = build_test_block(
+        0, ZERO_HASH, &CausalTimestamp::genesis(), vec![], &validator_key, &state,
+    );
+    assert!(genesis.is_structurally_valid());
+    let cpog = validate_cpog(&genesis, &state, &ZERO_HASH);
+    assert!(cpog.is_valid(), "Genesis CPoG: {:?}", cpog);
+
+    // ===== 3. BALANCE LEDGER =====
+    let mut balances = BalanceLedger::new();
+    balances.credit(&alice_id, TensionValue::from_integer(100_000));
+    assert_eq!(balances.total_supply(), TensionValue::from_integer(100_000));
+
+    // ===== 4. TRANSACTIONS + BLOCK #1 =====
+    let tx1 = create_write_tx(&agent_alice, &key_alice, b"alice/data", b"hello world", 1);
+    let tx2 = create_write_tx(&agent_alice, &key_alice, b"alice/config", b"v1", 2);
+    let tx3 = create_write_tx(&agent_alice, &key_alice, b"alice/counter", b"42", 3);
+
+    let block1 = build_test_block(
+        1, genesis.header.block_id, &genesis.header.timestamp,
+        vec![tx1.clone(), tx2.clone(), tx3.clone()],
+        &validator_key, &state,
+    );
+    assert!(block1.is_structurally_valid());
+
+    // ===== 5. FULL PHI TRAVERSAL =====
+    let phi = phi_traversal_block(&block1, &state);
+    assert!(phi.is_all_passed(), "Phi failed: {:?}", phi);
+    assert_eq!(phi.phases_completed.len(), 13);
+
+    // ===== 6. CPoG VALIDATION (all 6 Merkle roots) =====
+    let cpog1 = validate_cpog(&block1, &state, &genesis.header.block_id);
+    assert!(cpog1.is_valid(), "Block #1 CPoG: {:?}", cpog1);
+
+    // ===== 7. STATE APPLICATION =====
+    for tx in &block1.body.transitions {
+        if let OperationPayload::Write { key, value } = &tx.payload {
+            state.apply_delta(&StateDelta {
+                writes: vec![StateWrite { address: key.clone(), value: value.clone() }],
+                deletes: vec![],
+            });
+        }
+        let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+    }
+    state.set_height(1);
+
+    // Verify state was applied.
+    assert_eq!(state.get(&b"alice/data".to_vec()), Some(&b"hello world".to_vec()));
+    assert_eq!(state.get(&b"alice/counter".to_vec()), Some(&b"42".to_vec()));
+    assert_ne!(state.state_root(), ZERO_HASH);
+
+    // State root matches block header.
+    assert_eq!(state.state_root(), block1.header.state_root);
+
+    // ===== 8. NONCE REPLAY REJECTED =====
+    let replay_tx = create_write_tx(&agent_alice, &key_alice, b"alice/replay", b"bad", 1);
+    let replay_result = sccgub_execution::validate::validate_transition(&replay_tx, &state);
+    assert!(replay_result.is_err(), "Nonce replay should be rejected");
+
+    // ===== 9. GOVERNANCE PROPOSALS =====
+    let mut proposals = ProposalRegistry::default();
+    let prop_id = proposals
+        .submit(
+            alice_id,
+            PrecedenceLevel::Meaning,
+            ProposalKind::AddNorm {
+                name: "fairness".into(),
+                description: "Ensure fair resource distribution".into(),
+                initial_fitness: TensionValue::from_integer(8),
+                enforcement_cost: TensionValue::from_integer(2),
+            },
+            1, 5,
+        )
+        .unwrap();
+    proposals.vote(&prop_id, PrecedenceLevel::Meaning, true, 3).unwrap();
+    let accepted = proposals.finalize(7);
+    assert_eq!(accepted.len(), 1);
+    let norm = proposals.activate(&prop_id).unwrap().unwrap();
+
+    // ===== 10. NORM REPLICATOR DYNAMICS =====
+    let mut norm_registry = NormRegistry::new();
+    norm_registry.register(norm);
+    // Add a competing norm.
+    norm_registry.register(sccgub_types::governance::Norm {
+        id: [99u8; 32],
+        name: "efficiency".into(),
+        description: "Optimize throughput".into(),
+        precedence: PrecedenceLevel::Optimization,
+        population_share: TensionValue(TensionValue::SCALE / 2),
+        fitness: TensionValue::from_integer(3),
+        enforcement_cost: TensionValue::from_integer(1),
+        active: true,
+        created_at_height: 0,
+    });
+    for _ in 0..10 {
+        norm_registry.evolve_epoch();
+    }
+    // Higher-fitness norm should dominate.
+    let fairness = norm_registry.get(&prop_id).unwrap();
+    let efficiency = norm_registry.get(&[99u8; 32]).unwrap();
+    assert!(fairness.population_share > efficiency.population_share);
+
+    // ===== 11. CONTAINMENT =====
+    let mut containment = ContainmentState::default();
+    let bad_node = [0xBBu8; 32];
+    // Record many invalid transitions to drive hostility above threshold.
+    for _ in 0..50 {
+        containment.record_invalid(bad_node, TensionValue::from_integer(100));
+    }
+    // Evaluate multiple times to escalate through containment levels.
+    for _ in 0..5 {
+        containment.evaluate();
+    }
+    assert!(!containment.is_allowed(&bad_node), "Bad node should be contained");
+
+    // Good node stays free.
+    let good_node = [0xAAu8; 32];
+    containment.record_valid(good_node, TensionValue::from_integer(100));
+    containment.evaluate();
+    assert!(containment.is_allowed(&good_node));
+
+    // ===== 12. EMERGENCY GOVERNANCE =====
+    let emergency_policy = EmergencyPolicy::default();
+    let low_tension_field = sccgub_types::tension::TensionField::default();
+    let gov_state = sccgub_types::governance::GovernanceState::default();
+    let decision = evaluate_emergency(&low_tension_field, &gov_state, &emergency_policy);
+    assert!(!decision.is_emergency(), "Low tension = no emergency");
+
+    // ===== 13. MERKLE PROOFS =====
+    let leaves: Vec<[u8; 32]> = block1.body.transitions.iter().map(|t| t.tx_id).collect();
+    let root = sccgub_crypto::merkle::compute_merkle_root(&leaves);
+    for (i, tx) in block1.body.transitions.iter().enumerate() {
+        let proof = sccgub_crypto::merkle::generate_proof(&leaves, i).unwrap();
+        assert!(sccgub_crypto::merkle::verify_proof(&root, &tx.tx_id, &proof));
+    }
+
+    // ===== 14. ECONOMIC FEES =====
+    let econ = EconomicState::default();
+    let budget = TensionValue::from_integer(100);
+    let fee = econ.effective_fee(TensionValue::from_integer(50), budget);
+    assert!(fee >= econ.base_fee, "Fee should be >= base_fee");
+
+    // ===== 15. BALANCE TRANSFERS =====
+    let (agent_bob, _) = create_test_agent();
+    balances.transfer(&alice_id, &agent_bob.agent_id, TensionValue::from_integer(25_000)).unwrap();
+    assert_eq!(balances.balance_of(&alice_id), TensionValue::from_integer(75_000));
+    assert_eq!(balances.balance_of(&agent_bob.agent_id), TensionValue::from_integer(25_000));
+    assert_eq!(balances.total_supply(), TensionValue::from_integer(100_000));
+
+    // ===== 16. DOMAIN PACKS =====
+    let mut domain_registry = sccgub_types::domain::DomainPackRegistry::default();
+    let mut finance_pack = sccgub_types::domain::DomainPack {
+        id: [0xFFu8; 32],
+        name: "finance".into(),
+        version: "1.0.0".into(),
+        description: "Financial instruments".into(),
+        required_level: PrecedenceLevel::Meaning,
+        types: vec![sccgub_types::domain::DomainType {
+            name: "finance.Account".into(),
+            schema: "account type".into(),
+            fields: vec![sccgub_types::domain::DomainField {
+                name: "balance".into(),
+                field_type: "TensionValue".into(),
+                required: true,
+            }],
+        }],
+        laws: vec![],
+        dependencies: vec![],
+        installed_at: None,
+        active: false,
+    };
+    domain_registry.install(finance_pack, PrecedenceLevel::Meaning, 1).unwrap();
+    assert_eq!(domain_registry.active_packs().len(), 1);
+
+    // ===== 17. MULTI-BLOCK CHAIN =====
+    let tx4 = create_write_tx(&agent_alice, &key_alice, b"alice/block2", b"data2", 4);
+    let block2 = build_test_block(
+        2, block1.header.block_id, &block1.header.timestamp,
+        vec![tx4.clone()], &validator_key, &state,
+    );
+    let cpog2 = validate_cpog(&block2, &state, &block1.header.block_id);
+    assert!(cpog2.is_valid(), "Block #2 CPoG: {:?}", cpog2);
+
+    // Apply block 2 state.
+    for tx in &block2.body.transitions {
+        if let OperationPayload::Write { key, value } = &tx.payload {
+            state.apply_delta(&StateDelta {
+                writes: vec![StateWrite { address: key.clone(), value: value.clone() }],
+                deletes: vec![],
+            });
+        }
+    }
+    state.set_height(2);
+    assert_eq!(state.state_root(), block2.header.state_root);
+
+    // ===== FINAL ASSERTIONS =====
+    // All Mfidel seals correct.
+    assert_eq!(genesis.header.mfidel_seal, MfidelAtomicSeal::from_height(0));
+    assert_eq!(block1.header.mfidel_seal, MfidelAtomicSeal::from_height(1));
+    assert_eq!(block2.header.mfidel_seal, MfidelAtomicSeal::from_height(2));
+
+    // Chain height progressed.
+    assert_eq!(state.state.height, 2);
+
+    // 4 state entries (3 from block 1 + 1 from block 2).
+    assert_eq!(state.trie.len(), 4);
+}
