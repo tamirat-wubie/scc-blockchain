@@ -31,9 +31,9 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 
 | Operation | Throughput |
 |-----------|-----------|
-| Transaction creation + Ed25519 signing | ~14,700 tx/s |
-| Full validation (13-phase Phi + SCCE + signature verify) | ~9,600 tx/s |
-| Merkle root computation (1000 leaves) | 577 microseconds |
+| Transaction creation + Ed25519 signing | ~15,000-17,000 tx/s |
+| Full validation (13-phase Phi + SCCE + signature verify) | ~9,000-11,000 tx/s |
+| Merkle root computation (1000 leaves) | ~670 microseconds |
 
 ## Crate Structure
 
@@ -90,7 +90,7 @@ sccgub info               # Spec, invariants, and architecture reference
 # Build
 cargo build
 
-# Run all 130 tests
+# Run all 143 tests
 cargo test
 
 # Initialize and produce blocks

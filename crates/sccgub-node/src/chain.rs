@@ -17,6 +17,8 @@ use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::{StateDelta, SymbolicTransition, WHBindingResolved, ValidationResult};
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
 
+use sccgub_governance::anti_concentration::{GovernanceLimits, GovernancePowerTracker};
+
 use crate::mempool::Mempool;
 
 /// The chain — manages blocks, state, and block production.
@@ -28,8 +30,9 @@ pub struct Chain {
     pub validator_key: ed25519_dalek::SigningKey,
     #[allow(dead_code)]
     pub economics: EconomicState,
-    #[allow(dead_code)]
     pub balances: BalanceLedger,
+    pub governance_limits: GovernanceLimits,
+    pub power_tracker: GovernancePowerTracker,
 }
 
 impl Chain {
@@ -65,6 +68,8 @@ impl Chain {
             validator_key,
             economics: EconomicState::default(),
             balances,
+            governance_limits: GovernanceLimits::default(),
+            power_tracker: GovernancePowerTracker::default(),
         };
 
         chain.state.set_height(0);
@@ -124,6 +129,8 @@ impl Chain {
             validator_key,
             economics: EconomicState::default(),
             balances,
+            governance_limits: GovernanceLimits::default(),
+            power_tracker: GovernancePowerTracker::default(),
         }
     }
 
@@ -136,10 +143,24 @@ impl Chain {
 
     /// Produce a new block from mempool transactions.
     /// Speculatively applies state to compute post-transition state root.
+    /// Enforces anti-concentration limits on consecutive proposals.
     pub fn produce_block(&mut self) -> Result<&Block, String> {
         let parent = self.blocks.last().ok_or("No blocks in chain")?;
         let parent_id = parent.header.block_id;
         let height = parent.header.height + 1;
+
+        // Anti-concentration: check consecutive proposal limit.
+        let validator_id_for_check = blake3_hash_concat(&[
+            self.validator_key.verifying_key().as_bytes(),
+            &serde_json::to_vec(&MfidelAtomicSeal::from_height(0))
+                .expect("serialization cannot fail"),
+        ]);
+        if let Err(e) = self
+            .power_tracker
+            .check_proposal(&validator_id_for_check, &self.governance_limits)
+        {
+            return Err(format!("Anti-concentration: {}", e));
+        }
 
         // Collect validated transitions from mempool.
         let transitions = self.mempool.drain_validated(&self.state);
@@ -227,6 +248,10 @@ impl Chain {
 
                 // Tick containment counters (quarantine decay).
                 self.mempool.containment.tick_block();
+
+                // Record proposal for anti-concentration tracking.
+                self.power_tracker
+                    .record_proposal(&validator_id_for_check);
 
                 // Commit speculative state and balances.
                 self.state = speculative_state;
