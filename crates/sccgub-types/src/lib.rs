@@ -5,6 +5,7 @@ pub mod builder;
 pub mod causal;
 pub mod compliance;
 pub mod contract;
+pub mod delegation;
 pub mod domain;
 pub mod economics;
 pub mod events;
