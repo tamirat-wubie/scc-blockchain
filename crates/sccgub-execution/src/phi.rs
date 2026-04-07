@@ -1,6 +1,8 @@
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
+use sccgub_types::causal::CausalVertex;
 use sccgub_types::proof::{PhiPhase, PhiPhaseResult, PhiTraversalLog};
+use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::SymbolicTransition;
 
 use crate::scce::{scce_validate, ConstraintWeights};
@@ -379,11 +381,48 @@ fn phase_body(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     }
 }
 
-fn phase_architecture(_block: &Block) -> PhiPhaseResult {
+fn phase_architecture(block: &Block) -> PhiPhaseResult {
+    // Architecture layer consistency: verify that all transitions in the block
+    // are correctly signed and that the block's validator_id is non-zero.
+    if block.header.validator_id == [0u8; 32] {
+        return PhiPhaseResult {
+            phase: PhiPhase::Architecture,
+            passed: false,
+            details: "Block validator_id is zero (unassigned)".into(),
+        };
+    }
+
+    // Verify block version is supported.
+    if block.header.version == 0 || block.header.version > 1 {
+        return PhiPhaseResult {
+            phase: PhiPhase::Architecture,
+            passed: false,
+            details: format!(
+                "Unsupported block version {}, expected 1",
+                block.header.version
+            ),
+        };
+    }
+
+    // Verify every transition has a non-empty signature.
+    for (i, tx) in block.body.transitions.iter().enumerate() {
+        if tx.signature.is_empty() {
+            return PhiPhaseResult {
+                phase: PhiPhase::Architecture,
+                passed: false,
+                details: format!("Transaction {} has empty signature", i),
+            };
+        }
+    }
+
     PhiPhaseResult {
         phase: PhiPhase::Architecture,
         passed: true,
-        details: "Architecture layers consistent".into(),
+        details: format!(
+            "Architecture verified: v{}, {} signed transitions",
+            block.header.version,
+            block.body.transitions.len()
+        ),
     }
 }
 
@@ -411,18 +450,90 @@ fn phase_performance(block: &Block) -> PhiPhaseResult {
     }
 }
 
-fn phase_feedback(_block: &Block) -> PhiPhaseResult {
+fn phase_feedback(block: &Block) -> PhiPhaseResult {
+    // Feedback loop stability: tension must not swing wildly between blocks.
+    // If tension_after diverges from tension_before by more than 100% of budget,
+    // the feedback system is oscillating (unstable).
+    let delta = if block.header.tension_after >= block.header.tension_before {
+        block.header.tension_after - block.header.tension_before
+    } else {
+        block.header.tension_before - block.header.tension_after
+    };
+
+    // Stability bound: delta_T < 2 * budget (generous bound; prevents runaway).
+    let max_swing = TensionValue::from_integer(2_000_000); // 2M units max swing.
+    if delta > max_swing {
+        return PhiPhaseResult {
+            phase: PhiPhase::Feedback,
+            passed: false,
+            details: format!("Tension swing {} exceeds max {}", delta, max_swing),
+        };
+    }
+
+    // Verify no receipt has a rejected verdict in a block claiming all-accepted.
+    for (i, receipt) in block.receipts.iter().enumerate() {
+        if !receipt.verdict.is_accepted() {
+            return PhiPhaseResult {
+                phase: PhiPhase::Feedback,
+                passed: false,
+                details: format!(
+                    "Receipt {} has non-accepted verdict in committed block: {}",
+                    i, receipt.verdict
+                ),
+            };
+        }
+    }
+
     PhiPhaseResult {
         phase: PhiPhase::Feedback,
         passed: true,
-        details: "Feedback loop stable".into(),
+        details: format!(
+            "Feedback stable: tension delta {}, {} receipts all accepted",
+            delta,
+            block.receipts.len()
+        ),
     }
 }
 
-fn phase_evolution(_block: &Block) -> PhiPhaseResult {
+fn phase_evolution(block: &Block) -> PhiPhaseResult {
+    // Evolution: verify the block advances the chain — height must be strictly
+    // greater than 0 for non-genesis blocks, and the proof must reference
+    // the correct block height.
+    if block.header.height > 0 && block.proof.block_height != block.header.height {
+        return PhiPhaseResult {
+            phase: PhiPhase::Evolution,
+            passed: false,
+            details: format!(
+                "Proof height {} != header height {}",
+                block.proof.block_height, block.header.height
+            ),
+        };
+    }
+
+    // Verify causal graph delta is consistent: new edges must reference
+    // transitions that exist in this block.
+    for edge in &block.causal_delta.new_edges {
+        let (src, _) = edge.endpoints();
+        if let CausalVertex::Transition(tx_id) = src {
+            let tx_exists =
+                block.body.transitions.iter().any(|t| t.tx_id == tx_id) || block.header.height == 0; // Genesis has no txs.
+            if !tx_exists {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Evolution,
+                    passed: false,
+                    details: format!("Causal edge references unknown tx {}", hex::encode(tx_id)),
+                };
+            }
+        }
+    }
+
     PhiPhaseResult {
         phase: PhiPhase::Evolution,
         passed: true,
-        details: "Evolution recorded".into(),
+        details: format!(
+            "Evolution: height {}, {} causal edges consistent",
+            block.header.height,
+            block.causal_delta.new_edges.len()
+        ),
     }
 }

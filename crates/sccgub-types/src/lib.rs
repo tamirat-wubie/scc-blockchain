@@ -7,6 +7,7 @@ pub mod compliance;
 pub mod contract;
 pub mod domain;
 pub mod economics;
+pub mod events;
 pub mod governance;
 pub mod mfidel;
 pub mod proof;

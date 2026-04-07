@@ -4,7 +4,10 @@ use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
 use sccgub_crypto::signature::sign;
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
+use sccgub_execution::gas::{self, BlockGasMeter};
+use sccgub_execution::validate::validate_transition_metered;
 use sccgub_state::balances::BalanceLedger;
+use sccgub_state::treasury::Treasury;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::{Block, BlockBody, BlockHeader};
 use sccgub_types::causal::{CausalEdge, CausalGraphDelta, CausalVertex};
@@ -12,12 +15,10 @@ use sccgub_types::economics::EconomicState;
 use sccgub_types::governance::{FinalityMode, GovernanceSnapshot, GovernanceState};
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::proof::{CausalProof, PhiTraversalLog};
-use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
+use sccgub_types::receipt::CausalReceipt;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::timestamp::CausalTimestamp;
-use sccgub_types::transition::{
-    StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
-};
+use sccgub_types::transition::SymbolicTransition;
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
@@ -35,6 +36,7 @@ pub struct Chain {
     pub validator_key: ed25519_dalek::SigningKey,
     pub economics: EconomicState,
     pub balances: BalanceLedger,
+    pub treasury: Treasury,
     pub governance_limits: GovernanceLimits,
     pub power_tracker: GovernancePowerTracker,
     pub finality: FinalityTracker,
@@ -89,6 +91,7 @@ impl Chain {
             validator_key,
             economics: EconomicState::default(),
             balances,
+            treasury: Treasury::new(),
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
             finality: FinalityTracker::default(),
@@ -166,6 +169,7 @@ impl Chain {
             validator_key,
             economics: EconomicState::default(),
             balances,
+            treasury: Treasury::new(),
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
             finality,
@@ -203,11 +207,24 @@ impl Chain {
         // Collect validated transitions from mempool.
         let transitions = self.mempool.drain_validated(&self.state);
 
-        // Filter transitions: reject failed transfers and bad nonces.
+        // Gas-metered admission: validate each tx with gas accounting,
+        // enforce per-block gas limit, reject failed transfers and bad nonces.
+        let mut block_gas = BlockGasMeter::default_block();
         let mut filter_state = self.state.clone();
         let filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
+        let mut metered_receipts = Vec::new();
+
+        let prior_tension = self
+            .blocks
+            .last()
+            .map(|b| b.header.tension_after)
+            .unwrap_or(TensionValue::ZERO);
+        let budget = self.state.state.tension_field.budget.current_budget;
+        let gas_price = self.economics.effective_fee(prior_tension, budget);
+
         for tx in transitions {
+            // Pre-filter: check transfer solvency.
             if let sccgub_types::transition::OperationPayload::AssetTransfer { from, to, amount } =
                 &tx.payload
             {
@@ -216,18 +233,47 @@ impl Chain {
                     continue;
                 }
             }
+            // Pre-filter: nonce must be valid.
             if filter_state
                 .check_nonce(&tx.actor.agent_id, tx.nonce)
                 .is_err()
             {
                 continue;
             }
-            accepted_transitions.push(tx);
+
+            // Gas-metered validation — produces a typed receipt for every tx.
+            let (receipt, gas_used) =
+                validate_transition_metered(&tx, &filter_state, gas::costs::DEFAULT_TX_LIMIT);
+
+            // Only include if the block gas limit allows it.
+            if !block_gas.can_fit(gas_used) {
+                break; // Block is full.
+            }
+
+            if receipt.verdict.is_accepted() {
+                block_gas.record_tx(gas_used);
+
+                // Charge fee: gas_used * gas_price → treasury.
+                let fee = TensionValue((gas_used as i128).saturating_mul(gas_price.raw()));
+                self.treasury.collect_fee(fee);
+                self.economics.record_fee(fee);
+
+                accepted_transitions.push(tx);
+                metered_receipts.push(receipt);
+            }
+            // Rejected txs are silently dropped from the block
+            // (their receipts are not included — only accepted txs are committed).
         }
         let transitions = accepted_transitions;
 
+        // Distribute block reward to validator (from accumulated treasury fees).
+        let block_reward = TensionValue::from_integer(10); // 10 tokens per block.
+        let actual_reward = self.treasury.distribute_reward(block_reward);
+        if actual_reward.raw() > 0 {
+            self.balances.credit(&validator_id_for_check, actual_reward);
+        }
+
         // Apply accepted transitions using shared function (single source of truth).
-        // Use a FRESH clone so CPoG validator produces identical state.
         let mut speculative_state = self.state.clone();
         let mut speculative_balances = self.balances.clone();
         sccgub_state::apply::apply_block_transitions(
@@ -239,17 +285,6 @@ impl Chain {
             let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
         speculative_state.set_height(height);
-
-        // Compute and record economic fees for this block.
-        let prior_tension = self
-            .blocks
-            .last()
-            .map(|b| b.header.tension_after)
-            .unwrap_or(TensionValue::ZERO);
-        let budget = self.state.state.tension_field.budget.current_budget;
-        let fee_per_tx = self.economics.effective_fee(prior_tension, budget);
-        let total_fees = TensionValue(fee_per_tx.raw().saturating_mul(transitions.len() as i128));
-        self.economics.record_fee(total_fees);
 
         // Use same canonical derivation as validator_id_for_check (line 178).
         let validator_id = validator_id_for_check;
@@ -276,6 +311,7 @@ impl Chain {
             validator_id,
             validator_key: &self.validator_key,
             transitions,
+            receipts: metered_receipts,
             state: &speculative_state,
             balance_root,
         });
@@ -473,6 +509,7 @@ struct BlockBuildParams<'a> {
     validator_id: Hash,
     validator_key: &'a ed25519_dalek::SigningKey,
     transitions: Vec<SymbolicTransition>,
+    receipts: Vec<CausalReceipt>,
     state: &'a ManagedWorldState,
     balance_root: Hash,
 }
@@ -486,6 +523,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         validator_id,
         validator_key,
         transitions,
+        receipts,
         state,
         balance_root,
     } = params;
@@ -515,70 +553,26 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let mut causal_vertices = vec![block_vertex.clone()];
     let mut causal_edges = Vec::new();
 
-    // Generate receipts and causal edges for each transition.
-    let mut receipts = Vec::new();
-    let pre_state_root = state.state_root();
-
+    // Build causal edges for each transition.
     for tx in &transitions {
         let tx_vertex = CausalVertex::Transition(tx.tx_id);
         let actor_vertex = CausalVertex::Actor(tx.actor.agent_id);
         causal_vertices.push(tx_vertex.clone());
 
-        // Edge: transition is contained_by this block.
         causal_edges.push(CausalEdge::ContainedBy {
             source: tx_vertex.clone(),
             target: block_vertex.clone(),
         });
-
-        // Edge: transition authorized_by actor.
         causal_edges.push(CausalEdge::AuthorizedBy {
             source: tx_vertex.clone(),
             target: actor_vertex,
         });
-
-        // Edge: caused_by causal ancestors.
         for ancestor_id in &tx.causal_chain {
             causal_edges.push(CausalEdge::CausedBy {
                 source: tx_vertex.clone(),
                 target: CausalVertex::Transition(*ancestor_id),
             });
         }
-
-        // Generate receipt.
-        let receipt = CausalReceipt {
-            tx_id: tx.tx_id,
-            verdict: Verdict::Accept,
-            pre_state_root,
-            post_state_root: pre_state_root, // Will be updated after apply.
-            read_set: vec![],
-            write_set: vec![],
-            causes: causal_edges
-                .iter()
-                .filter(|e| {
-                    let (src, _) = e.endpoints();
-                    src == tx_vertex
-                })
-                .cloned()
-                .collect(),
-            resource_used: ResourceUsage {
-                compute_steps: 1,
-                state_reads: 0,
-                state_writes: match &tx.payload {
-                    sccgub_types::transition::OperationPayload::Write { .. } => 1,
-                    _ => 0,
-                },
-                proof_size_bytes: 0,
-            },
-            emitted_events: vec![],
-            wh_binding: WHBindingResolved {
-                intent: tx.wh_binding_intent.clone(),
-                what_actual: StateDelta::default(),
-                whether: ValidationResult::Valid,
-            },
-            phi_phase_reached: 13,
-            tension_delta: TensionValue::ZERO,
-        };
-        receipts.push(receipt);
     }
 
     let causal_root: MerkleRoot = if causal_edges.is_empty() {
