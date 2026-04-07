@@ -34,7 +34,7 @@ pub enum LawSyncResult {
         divergent_validators: Vec<Hash>,
     },
     /// No supermajority — cannot proceed with block production.
-    NoConcensus {
+    NoConsensus {
         proposals: HashMap<Hash, u32>, // law_hash -> vote count
     },
 }
@@ -86,7 +86,7 @@ impl LawSyncRound {
             }
         }
 
-        LawSyncResult::NoConcensus { proposals: votes }
+        LawSyncResult::NoConsensus { proposals: votes }
     }
 
     /// Check if all validators have submitted.
@@ -134,11 +134,11 @@ mod tests {
         round.submit([13u8; 32], [4u8; 32]).unwrap();
 
         match round.evaluate() {
-            LawSyncResult::NoConcensus { proposals } => {
+            LawSyncResult::NoConsensus { proposals } => {
                 assert_eq!(proposals.len(), 4);
                 assert!(proposals.values().all(|&v| v == 1));
             }
-            other => panic!("Expected NoConcensus, got {:?}", other),
+            other => panic!("Expected NoConsensus, got {:?}", other),
         }
     }
 

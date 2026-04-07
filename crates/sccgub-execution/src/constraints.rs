@@ -89,8 +89,14 @@ pub fn evaluate(
             let actual = state
                 .trie
                 .get(&balance_key)
-                .and_then(|v| String::from_utf8(v.clone()).ok())
-                .and_then(|s| s.parse::<i128>().ok())
+                .and_then(|v| {
+                    if v.len() == 16 {
+                        let bytes: [u8; 16] = v.as_slice().try_into().ok()?;
+                        Some(i128::from_le_bytes(bytes))
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(0);
             let satisfied = actual >= *min_balance;
             ConstraintResult {

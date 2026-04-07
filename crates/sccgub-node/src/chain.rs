@@ -136,28 +136,14 @@ impl Chain {
             });
         }
 
-        // Replay all block transitions to reconstruct state + nonces + balances.
+        // Replay all block transitions using shared apply function (single source of truth).
         for block in &blocks {
+            sccgub_state::apply::apply_block_transitions(
+                &mut state,
+                &mut balances,
+                &block.body.transitions,
+            );
             for tx in &block.body.transitions {
-                match &tx.payload {
-                    sccgub_types::transition::OperationPayload::Write { key, value } => {
-                        state.apply_delta(&sccgub_types::transition::StateDelta {
-                            writes: vec![sccgub_types::transition::StateWrite {
-                                address: key.clone(),
-                                value: value.clone(),
-                            }],
-                            deletes: vec![],
-                        });
-                    }
-                    sccgub_types::transition::OperationPayload::AssetTransfer {
-                        from,
-                        to,
-                        amount,
-                    } => {
-                        let _ = balances.transfer(from, to, TensionValue(*amount));
-                    }
-                    _ => {}
-                }
                 let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
             }
             state.set_height(block.header.height);
@@ -259,21 +245,12 @@ impl Chain {
         // Use same canonical derivation as validator_id_for_check (line 178).
         let validator_id = validator_id_for_check;
 
-        // Compute balance root: sort balances by agent_id for determinism, hash each entry.
+        // Compute balance root: sort by agent_id for determinism, hash concatenation.
         let mut bal_entries: Vec<_> = speculative_balances.balances.iter().collect();
         bal_entries.sort_by_key(|(k, _)| *k);
-        let bal_leaves: Vec<&[u8]> = bal_entries
-            .iter()
-            .map(|(k, v)| {
-                // Hash agent_id ++ raw_balance for each entry.
-                let _ = v; // Used via k below.
-                k.as_slice()
-            })
-            .collect();
-        let balance_root = if bal_leaves.is_empty() {
+        let balance_root = if bal_entries.is_empty() {
             ZERO_HASH
         } else {
-            // Simple hash of all sorted (agent_id, balance) pairs.
             let mut hasher_data = Vec::new();
             for (agent_id, balance) in &bal_entries {
                 hasher_data.extend_from_slice(*agent_id);

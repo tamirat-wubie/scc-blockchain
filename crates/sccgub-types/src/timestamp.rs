@@ -120,7 +120,7 @@ impl BoundedVectorClock {
                 self.entries.push((*node_id, other_entry.clone()));
             }
         }
-        while self.entries.len() as u32 > self.max_size {
+        if self.entries.len() as u32 > self.max_size {
             self.prune();
         }
     }

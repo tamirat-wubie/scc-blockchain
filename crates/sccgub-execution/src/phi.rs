@@ -298,7 +298,7 @@ fn phase_module(_block: &Block) -> PhiPhaseResult {
 
 fn phase_execution(block: &Block) -> PhiPhaseResult {
     // Verify transition count matches body.
-    if block.body.transition_count != block.body.transitions.len() as u32 {
+    if u32::try_from(block.body.transitions.len()) != Ok(block.body.transition_count) {
         return PhiPhaseResult {
             phase: PhiPhase::Execution,
             passed: false,

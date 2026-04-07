@@ -30,7 +30,10 @@ pub fn apply_block_transitions(
     }
 
     // Write ALL balance entries into trie for unified state root commitment.
-    for (agent_id, balance) in &balances.balances {
+    // Sort by agent_id for deterministic insertion order.
+    let mut sorted_balances: Vec<_> = balances.balances.iter().collect();
+    sorted_balances.sort_by_key(|(k, _)| *k);
+    for (agent_id, balance) in sorted_balances {
         let key = format!("balance/{}", hex::encode(agent_id)).into_bytes();
         state.apply_delta(&StateDelta {
             writes: vec![StateWrite {
