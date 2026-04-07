@@ -24,7 +24,7 @@ pub async fn get_status(
     let latest = match app.blocks.last() {
         Some(b) => b,
         None => {
-            return axum::Json(ApiResponse::err("No blocks"));
+            return axum::Json(ApiResponse::err(ErrorCode::NoBlocks, "No blocks in chain"));
         }
     };
 
@@ -67,7 +67,10 @@ pub async fn get_block(
         None => {
             return (
                 axum::http::StatusCode::NOT_FOUND,
-                axum::Json(ApiResponse::err(format!("Block {} not found", height))),
+                axum::Json(ApiResponse::err(
+                    ErrorCode::BlockNotFound,
+                    format!("Block {} not found", height),
+                )),
             );
         }
     };
@@ -159,7 +162,10 @@ pub async fn submit_tx(
     if req.tx_hex.is_empty() {
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            axum::Json(ApiResponse::err("tx_hex is required")),
+            axum::Json(ApiResponse::err(
+                ErrorCode::EmptyPayload,
+                "tx_hex is required",
+            )),
         );
     }
 
@@ -169,7 +175,10 @@ pub async fn submit_tx(
         Err(e) => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
-                axum::Json(ApiResponse::err(format!("Invalid hex: {}", e))),
+                axum::Json(ApiResponse::err(
+                    ErrorCode::InvalidHex,
+                    format!("Invalid hex: {}", e),
+                )),
             );
         }
     };
@@ -180,7 +189,10 @@ pub async fn submit_tx(
             Err(e) => {
                 return (
                     axum::http::StatusCode::BAD_REQUEST,
-                    axum::Json(ApiResponse::err(format!("Invalid transaction: {}", e))),
+                    axum::Json(ApiResponse::err(
+                        ErrorCode::InvalidTransaction,
+                        format!("Invalid transaction: {}", e),
+                    )),
                 );
             }
         };
@@ -217,7 +229,10 @@ pub async fn get_tx(
         _ => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
-                axum::Json(ApiResponse::err("Invalid tx_id: expected 64-char hex")),
+                axum::Json(ApiResponse::err(
+                    ErrorCode::InvalidHex,
+                    "Invalid tx_id: expected 64-char hex",
+                )),
             );
         }
     };
@@ -246,10 +261,10 @@ pub async fn get_tx(
 
     (
         axum::http::StatusCode::NOT_FOUND,
-        axum::Json(ApiResponse::err(format!(
-            "Transaction {} not found",
-            tx_id_hex
-        ))),
+        axum::Json(ApiResponse::err(
+            ErrorCode::TxNotFound,
+            format!("Transaction {} not found", tx_id_hex),
+        )),
     )
 }
 
@@ -261,7 +276,7 @@ pub async fn get_health(
     let latest = match app.blocks.last() {
         Some(b) => b,
         None => {
-            return axum::Json(ApiResponse::err("No blocks"));
+            return axum::Json(ApiResponse::err(ErrorCode::NoBlocks, "No blocks in chain"));
         }
     };
 

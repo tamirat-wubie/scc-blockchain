@@ -1,11 +1,55 @@
 use serde::Serialize;
 
-/// Standard API response wrapper.
+/// Standard API response wrapper with structured error codes.
+///
+/// Every response includes:
+/// - `success`: boolean flag for quick checks.
+/// - `data`: the response payload (only on success).
+/// - `error`: structured error with machine-readable code (only on failure).
+/// - `request_id`: optional idempotency/correlation key echoed back to caller.
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T: Serialize> {
     pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
-    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ApiError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+/// Structured error with machine-readable code for client integration.
+#[derive(Debug, Serialize)]
+pub struct ApiError {
+    /// Machine-readable error code (e.g., "INVALID_HEX", "TX_NOT_FOUND").
+    pub code: ErrorCode,
+    /// Human-readable description.
+    pub message: String,
+}
+
+/// Machine-readable error codes for every rejection path.
+/// Clients can switch on these codes without parsing message strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ErrorCode {
+    // Chain state errors.
+    NoBlocks,
+    BlockNotFound,
+    TxNotFound,
+
+    // Submission errors.
+    EmptyPayload,
+    InvalidHex,
+    InvalidTransaction,
+    InsufficientFunds,
+    NonceReplay,
+    GasExceeded,
+
+    // Auth errors.
+    Unauthorized,
+    RateLimited,
+
+    // Internal errors.
+    InternalError,
 }
 
 impl<T: Serialize> ApiResponse<T> {
@@ -14,14 +58,44 @@ impl<T: Serialize> ApiResponse<T> {
             success: true,
             data: Some(data),
             error: None,
+            request_id: None,
         }
     }
 
-    pub fn err(msg: impl Into<String>) -> Self {
+    pub fn ok_with_request_id(data: T, request_id: String) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+            request_id: Some(request_id),
+        }
+    }
+
+    pub fn err(code: ErrorCode, msg: impl Into<String>) -> Self {
         Self {
             success: false,
             data: None,
-            error: Some(msg.into()),
+            error: Some(ApiError {
+                code,
+                message: msg.into(),
+            }),
+            request_id: None,
+        }
+    }
+
+    pub fn err_with_request_id(
+        code: ErrorCode,
+        msg: impl Into<String>,
+        request_id: String,
+    ) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code,
+                message: msg.into(),
+            }),
+            request_id: Some(request_id),
         }
     }
 }
@@ -115,6 +189,9 @@ pub struct TxDetailResponse {
 pub struct SubmitTransactionRequest {
     /// Hex-encoded bincode-serialized SymbolicTransition.
     pub tx_hex: String,
+    /// Optional idempotency key — if the same key is submitted twice,
+    /// the second submission returns the first result without re-processing.
+    pub idempotency_key: Option<String>,
 }
 
 /// Transaction submission response.

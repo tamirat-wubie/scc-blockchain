@@ -27,30 +27,62 @@ pub struct BlockMetrics {
 }
 
 /// Aggregate metrics across the chain's lifetime.
+/// Production-grade: covers all dimensions an operator needs to monitor.
 #[derive(Debug, Clone, Default)]
 pub struct ChainMetrics {
+    // --- Production ---
     /// Total blocks produced.
     pub blocks_produced: u64,
     /// Total transactions processed.
     pub transactions_processed: u64,
     /// Total CPoG validation failures.
     pub cpog_failures: u64,
-    /// Total slashing events.
-    pub slashing_events: u64,
     /// Average validation time per transaction (nanoseconds).
     pub avg_validation_ns: u64,
     /// Peak validation time per transaction (nanoseconds).
     pub peak_validation_ns: u64,
+
+    // --- Finality ---
+    /// Current finality gap (blocks between tip and last finalized).
+    pub finality_gap: u64,
+    /// Current finalized height.
+    pub finalized_height: u64,
+
+    // --- State ---
     /// Total state entries.
     pub state_entries: u64,
     /// Total causal graph edges.
     pub causal_edges: u64,
-    /// Emergency mode activations.
-    pub emergency_activations: u64,
+
+    // --- Economics ---
+    /// Total gas consumed across all blocks.
+    pub total_gas_consumed: u64,
+    /// Total fees collected (raw i128 for display).
+    pub total_fees_collected_raw: i128,
+    /// Treasury pending balance (raw).
+    pub treasury_pending_raw: i128,
+    /// Active escrow count.
+    pub active_escrows: u64,
+    /// Total value locked in escrow (raw).
+    pub escrow_locked_raw: i128,
+
+    // --- Mempool ---
+    /// Current mempool pending count.
+    pub mempool_pending: u64,
+    /// Total transactions rejected at mempool admission.
+    pub mempool_rejections: u64,
+
+    // --- Security ---
+    /// Total slashing events.
+    pub slashing_events: u64,
     /// Containment quarantines.
     pub quarantine_count: u64,
+    /// Emergency mode activations.
+    pub emergency_activations: u64,
     /// Anti-concentration: governance concentration score.
     pub governance_concentration: f64,
+    /// Invariant violations detected.
+    pub invariant_violations: u64,
 }
 
 impl ChainMetrics {
@@ -106,6 +138,17 @@ impl ChainMetrics {
             "    Peak validation:       {} ns/tx\n",
             self.peak_validation_ns
         ));
+
+        s.push_str("\n  Finality\n");
+        s.push_str(&format!(
+            "    Finalized height:      {}\n",
+            self.finalized_height
+        ));
+        s.push_str(&format!(
+            "    Finality gap:          {}\n",
+            self.finality_gap
+        ));
+
         s.push_str("\n  State\n");
         s.push_str(&format!(
             "    State entries:         {}\n",
@@ -115,6 +158,39 @@ impl ChainMetrics {
             "    Causal edges:          {}\n",
             self.causal_edges
         ));
+
+        s.push_str("\n  Economics\n");
+        s.push_str(&format!(
+            "    Total gas consumed:    {}\n",
+            self.total_gas_consumed
+        ));
+        s.push_str(&format!(
+            "    Fees collected (raw):  {}\n",
+            self.total_fees_collected_raw
+        ));
+        s.push_str(&format!(
+            "    Treasury pending:      {}\n",
+            self.treasury_pending_raw
+        ));
+        s.push_str(&format!(
+            "    Active escrows:        {}\n",
+            self.active_escrows
+        ));
+        s.push_str(&format!(
+            "    Escrow locked (raw):   {}\n",
+            self.escrow_locked_raw
+        ));
+
+        s.push_str("\n  Mempool\n");
+        s.push_str(&format!(
+            "    Pending:               {}\n",
+            self.mempool_pending
+        ));
+        s.push_str(&format!(
+            "    Rejections:            {}\n",
+            self.mempool_rejections
+        ));
+
         s.push_str("\n  Security\n");
         s.push_str(&format!(
             "    Slashing events:       {}\n",
@@ -131,6 +207,10 @@ impl ChainMetrics {
         s.push_str(&format!(
             "    Governance conc.:      {:.3}\n",
             self.governance_concentration
+        ));
+        s.push_str(&format!(
+            "    Invariant violations:  {}\n",
+            self.invariant_violations
         ));
         s
     }
