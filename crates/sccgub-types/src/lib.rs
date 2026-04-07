@@ -3,6 +3,7 @@ pub mod block;
 pub mod bridge;
 pub mod builder;
 pub mod causal;
+pub mod compliance;
 pub mod contract;
 pub mod domain;
 pub mod economics;
