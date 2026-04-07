@@ -90,7 +90,7 @@ sccgub info               # Spec, invariants, and architecture reference
 # Build
 cargo build
 
-# Run all tests (125 tests)
+# Run all 125 tests
 cargo test
 
 # Initialize and produce blocks
@@ -121,9 +121,9 @@ cargo bench
 | INV-13 | Responsibility bounded by R_max_imbalance |
 | INV-17 | Causal graph acyclicity (iterative DFS) |
 
-### Audit Summary (3 passes)
+### Audit Summary (4 passes)
 
-- ~170+ issues identified and resolved
+- ~185+ issues identified and resolved
 - All critical/high severity issues fixed
 - Domain-separated Merkle trees (leaf/internal tags, length-prefixed hashing)
 - Saturating arithmetic throughout (no panic on untrusted input)
