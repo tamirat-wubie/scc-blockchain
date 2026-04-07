@@ -35,11 +35,14 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 | Full validation (13-phase Phi + SCCE + signature verify) | ~9,000-11,000 tx/s |
 | Merkle root computation (1000 leaves) | ~670 microseconds |
 
-## Crate Structure
+## Crate Structure (7 crates)
 
 ```
 crates/
-  sccgub-types/       14 modules: blocks, transitions, WHBinding, Mfidel seals,
+  sccgub-consensus/   Consensus protocol (two-round BFT voting), bounded finality,
+                       slashing engine, Phase 4 law synchronization, partition
+                       detection + recovery
+  sccgub-types/       16 modules: blocks, transitions, WHBinding, Mfidel seals,
                        tension (fixed-point), causal graph, governance, proofs,
                        receipts, economics, contracts, state, agents
   sccgub-crypto/       Blake3 hashing (domain-separated), Merkle trees (with
@@ -90,7 +93,7 @@ sccgub info               # Spec, invariants, and architecture reference
 # Build
 cargo build
 
-# Run all 143 tests
+# Run all 164 tests
 cargo test
 
 # Initialize and produce blocks

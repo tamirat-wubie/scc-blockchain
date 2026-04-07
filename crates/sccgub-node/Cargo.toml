@@ -20,6 +20,7 @@ sccgub-crypto = { path = "../sccgub-crypto" }
 sccgub-state = { path = "../sccgub-state" }
 sccgub-execution = { path = "../sccgub-execution" }
 sccgub-governance = { path = "../sccgub-governance" }
+sccgub-consensus = { path = "../sccgub-consensus" }
 thiserror = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }

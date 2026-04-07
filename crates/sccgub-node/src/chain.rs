@@ -17,11 +17,13 @@ use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::{StateDelta, SymbolicTransition, WHBindingResolved, ValidationResult};
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
 
+use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
+use sccgub_consensus::slashing::SlashingEngine;
 use sccgub_governance::anti_concentration::{GovernanceLimits, GovernancePowerTracker};
 
 use crate::mempool::Mempool;
 
-/// The chain — manages blocks, state, and block production.
+/// The chain — manages blocks, state, consensus, and block production.
 pub struct Chain {
     pub blocks: Vec<Block>,
     pub state: ManagedWorldState,
@@ -33,6 +35,9 @@ pub struct Chain {
     pub balances: BalanceLedger,
     pub governance_limits: GovernanceLimits,
     pub power_tracker: GovernancePowerTracker,
+    pub finality: FinalityTracker,
+    pub finality_config: FinalityConfig,
+    pub slashing: SlashingEngine,
 }
 
 impl Chain {
@@ -60,6 +65,10 @@ impl Chain {
         let mut balances = BalanceLedger::new();
         balances.credit(&validator_id, TensionValue::from_integer(1_000_000));
 
+        // Initialize slashing engine with validator stake.
+        let mut slashing = SlashingEngine::new(Default::default());
+        slashing.set_stake(validator_id, TensionValue::from_integer(100_000));
+
         let mut chain = Chain {
             blocks: vec![genesis],
             state,
@@ -70,6 +79,9 @@ impl Chain {
             balances,
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
+            finality: FinalityTracker::default(),
+            finality_config: FinalityConfig::default(),
+            slashing,
         };
 
         chain.state.set_height(0);
@@ -121,6 +133,16 @@ impl Chain {
             state.set_height(block.header.height);
         }
 
+        // Rebuild finality tracker from chain history.
+        let mut finality = FinalityTracker::default();
+        let finality_config = FinalityConfig::default();
+        if let Some(last) = blocks.last() {
+            finality.on_new_block(last.header.height);
+            finality.check_finality(&finality_config, |h| {
+                blocks.get(h as usize).map(|b| b.header.block_id)
+            });
+        }
+
         Chain {
             blocks,
             state,
@@ -131,6 +153,9 @@ impl Chain {
             balances,
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
+            finality,
+            finality_config,
+            slashing: SlashingEngine::new(Default::default()),
         }
     }
 
@@ -257,6 +282,18 @@ impl Chain {
                 self.state = speculative_state;
                 self.balances = speculative_balances;
                 self.blocks.push(block);
+
+                // Update finality tracker.
+                self.finality.on_new_block(height);
+                let blocks_ref = &self.blocks;
+                let _new_finals = self.finality.check_finality(
+                    &self.finality_config,
+                    |h| blocks_ref.get(h as usize).map(|b| b.header.block_id),
+                );
+
+                // Record validator presence (resets absence counter).
+                self.slashing.record_presence(&validator_id_for_check);
+
                 Ok(self.blocks.last().unwrap())
             }
             CpogResult::Invalid { errors } => {
@@ -268,6 +305,18 @@ impl Chain {
     /// Set the validator key (e.g., loaded from disk).
     pub fn set_validator_key(&mut self, key: ed25519_dalek::SigningKey) {
         self.validator_key = key;
+    }
+
+    /// Get the last finalized block height.
+    #[allow(dead_code)]
+    pub fn finalized_height(&self) -> u64 {
+        self.finality.finalized_height
+    }
+
+    /// Get the finality gap (blocks between tip and last finalized).
+    #[allow(dead_code)]
+    pub fn finality_gap(&self) -> u64 {
+        self.finality.finality_gap()
     }
 
     /// Create a state snapshot at the current height.
