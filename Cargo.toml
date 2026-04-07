@@ -8,6 +8,7 @@ members = [
     "crates/sccgub-governance",
     "crates/sccgub-consensus",
     "crates/sccgub-network",
+    "crates/sccgub-api",
     "crates/sccgub-node",
 ]
 
@@ -27,3 +28,6 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 hex = { version = "0.4", features = ["serde"] }
 bincode = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
