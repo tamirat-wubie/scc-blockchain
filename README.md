@@ -2,7 +2,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-## Architecture (8 crates)
+## Architecture (9 crates)
 
 | Layer | Component | Description |
 |-------|-----------|-------------|
@@ -38,7 +38,7 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 | Full validation (13-phase Phi + SCCE + signature verify) | ~9,000-11,000 tx/s |
 | Merkle root computation (1000 leaves) | ~670 microseconds |
 
-## CLI Commands (15)
+## CLI Commands (16)
 
 ```bash
 # Chain lifecycle
@@ -60,6 +60,9 @@ sccgub balance PREFIX     # Show agent balances
 sccgub export FILE        # Portable chain snapshot
 sccgub import FILE        # Import with CPoG re-validation
 
+# API server
+sccgub serve --port 3000  # Start REST API (status, health, blocks, state)
+
 # Reference
 sccgub demo               # In-memory demonstration
 sccgub info               # Spec + invariants reference
@@ -69,7 +72,7 @@ sccgub info               # Spec + invariants reference
 
 ```bash
 cargo build                    # Build
-cargo test                     # Run all 203 tests
+cargo test                     # Run all 207 tests
 cargo run -- init              # Initialize chain
 cargo run -- produce --txs 5   # Produce a block
 cargo run -- transfer 10000    # Transfer tokens
@@ -82,6 +85,8 @@ cargo bench                    # Run benchmarks
 
 ```
 crates/
+  sccgub-api/          REST API gateway (axum): /api/status, /api/health,
+                        /api/block/:height, /api/state
   sccgub-network/      Peer protocol, 9 message types (bincode-encoded), peer
                         registry with sync candidate selection
   sccgub-consensus/    Two-round BFT voting, bounded finality, slashing engine,
