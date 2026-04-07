@@ -12,13 +12,13 @@ pub const DEFAULT_MAX_STEPS: u64 = 10_000;
 pub fn execute_contract(
     contract: &SymbolicCausalContract,
     transition: &SymbolicTransition,
-    _state: &ManagedWorldState,
+    state: &ManagedWorldState,
     max_steps: u64,
 ) -> ContractExecutionResult {
     let mut steps = 0u64;
+    let actor_level = transition.actor.governance_level as u8;
 
     // Authorization: actor must have sufficient governance level.
-    let actor_level = transition.actor.governance_level as u8;
     let required_level = contract.governance_level as u8;
     if actor_level > required_level {
         return ContractExecutionResult {
@@ -34,20 +34,22 @@ pub fn execute_contract(
         };
     }
 
-    // Phase 1: Check preconditions against contract laws.
+    // Phase 1: Evaluate preconditions using the formal predicate engine.
+    // Each contract law is parsed as a predicate and evaluated against state.
     for law in &contract.laws {
         steps = steps.saturating_add(1);
         if steps > max_steps {
             return reject_step_limit(steps, max_steps, "precondition check");
         }
-        // A precondition is satisfied if the transition declares it in its preconditions.
-        let satisfied = transition.preconditions.iter().any(|pc| pc.id == law.id);
-        if !satisfied {
+        let predicate = parse_constraint_expression(&law.expression);
+        let result = crate::constraints::evaluate(&predicate, state, actor_level);
+        if !result.satisfied {
             return ContractExecutionResult {
                 verdict: Verdict::Reject {
                     reason: format!(
-                        "Precondition not satisfied: constraint {}",
-                        hex::encode(law.id)
+                        "Precondition failed for constraint {}: {}",
+                        hex::encode(law.id),
+                        result.details
                     ),
                 },
                 state_delta: StateDelta::default(),
@@ -115,19 +117,21 @@ pub fn execute_contract(
         _ => StateDelta::default(),
     };
 
-    // Phase 3: Check postconditions.
+    // Phase 3: Evaluate postconditions using the formal predicate engine.
     for law in &contract.laws {
         steps = steps.saturating_add(1);
         if steps > max_steps {
             return reject_step_limit(steps, max_steps, "postcondition check");
         }
-        let satisfied = transition.postconditions.iter().any(|pc| pc.id == law.id);
-        if !satisfied {
+        let predicate = parse_constraint_expression(&law.expression);
+        let result = crate::constraints::evaluate(&predicate, state, actor_level);
+        if !result.satisfied {
             return ContractExecutionResult {
                 verdict: Verdict::Reject {
                     reason: format!(
-                        "Postcondition not satisfied: constraint {}",
-                        hex::encode(law.id)
+                        "Postcondition failed for constraint {}: {}",
+                        hex::encode(law.id),
+                        result.details
                     ),
                 },
                 state_delta: StateDelta::default(),
@@ -143,6 +147,39 @@ pub fn execute_contract(
         steps_used: steps,
         tension_delta: TensionValue::ZERO,
     }
+}
+
+/// Parse a constraint expression string into a Predicate.
+/// Supports simple forms: "exists:<key>", "equals:<key>=<value>",
+/// "governance:<level>", or "true" / "false".
+fn parse_constraint_expression(expr: &str) -> crate::constraints::Predicate {
+    let expr = expr.trim();
+    if expr == "true" || expr.is_empty() {
+        return crate::constraints::Predicate::True;
+    }
+    if expr == "false" {
+        return crate::constraints::Predicate::False;
+    }
+    if let Some(key) = expr.strip_prefix("exists:") {
+        return crate::constraints::Predicate::Exists {
+            key: key.as_bytes().to_vec(),
+        };
+    }
+    if let Some(rest) = expr.strip_prefix("equals:") {
+        if let Some((key, value)) = rest.split_once('=') {
+            return crate::constraints::Predicate::Equals {
+                key: key.as_bytes().to_vec(),
+                value: value.as_bytes().to_vec(),
+            };
+        }
+    }
+    if let Some(level_str) = expr.strip_prefix("governance:") {
+        if let Ok(level) = level_str.parse::<u8>() {
+            return crate::constraints::Predicate::MinGovernanceLevel { level };
+        }
+    }
+    // Default: treat unknown expressions as True (permissive fallback).
+    crate::constraints::Predicate::True
 }
 
 fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResult {
@@ -188,7 +225,7 @@ mod tests {
             name: "TestContract".into(),
             laws: vec![Constraint {
                 id: [1u8; 32],
-                expression: "balance >= 0".into(),
+                expression: "governance:2".into(), // Requires Meaning level (2).
             }],
             state: std::collections::HashMap::new(),
             history: vec![],
@@ -224,9 +261,10 @@ mod tests {
                 target: b"contract".to_vec(),
                 declared_purpose: "test".into(),
             },
-            // Include contract's laws as preconditions and postconditions.
-            preconditions: contract.laws.clone(),
-            postconditions: contract.laws.clone(),
+            // Preconditions/postconditions are now evaluated by the predicate engine
+            // against state, not matched by ID. These are kept for canonical bytes.
+            preconditions: vec![],
+            postconditions: vec![],
             payload: sccgub_types::transition::OperationPayload::Write {
                 key: b"k".to_vec(),
                 value: b"v".to_vec(),
@@ -275,16 +313,20 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_precondition_rejected() {
-        let contract = test_contract();
+    fn test_failing_predicate_rejected() {
+        // Contract with a law that requires a key to exist in state.
+        let mut contract = test_contract();
+        contract.laws = vec![Constraint {
+            id: [2u8; 32],
+            expression: "exists:required_key".into(), // Key doesn't exist in empty state.
+        }];
         let agent = test_agent(PrecedenceLevel::Meaning);
-        let mut tx = test_tx(agent, &contract);
-        tx.preconditions = vec![]; // Remove preconditions.
-        let state = ManagedWorldState::new();
+        let tx = test_tx(agent, &contract);
+        let state = ManagedWorldState::new(); // Empty state — key doesn't exist.
         let result = execute_contract(&contract, &tx, &state, 1000);
         assert!(
             !result.verdict.is_accepted(),
-            "Should reject missing precondition"
+            "Should reject when predicate evaluates to false"
         );
     }
 

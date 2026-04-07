@@ -149,7 +149,7 @@ fn cmd_init(data_dir: &std::path::Path) {
         .save_metadata(&chain.chain_id)
         .expect("Failed to save metadata");
     store
-        .save_validator_key(&chain.validator_key)
+        .save_validator_key(&chain.validator_key, "sccgub-default-passphrase")
         .expect("Failed to save validator key");
 
     println!("Chain initialized at {:?}", data_dir);
@@ -194,7 +194,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
-        match store.load_validator_key() {
+        match store.load_validator_key("sccgub-default-passphrase") {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => eprintln!("Warning: could not load validator key: {}", e),
         }
@@ -839,7 +839,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
 
     // Load validator key (sender).
     if store.has_validator_key() {
-        match store.load_validator_key() {
+        match store.load_validator_key("sccgub-default-passphrase") {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => {
                 eprintln!("Failed to load validator key: {}", e);

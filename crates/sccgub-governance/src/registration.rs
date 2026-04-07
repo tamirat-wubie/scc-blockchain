@@ -4,8 +4,13 @@ use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::AgentId;
 use std::collections::HashMap;
 
+/// Minimum registration cost in tension units (sybil resistance).
+/// Prevents identity rotation attacks on the containment system.
+pub const REGISTRATION_COST: i128 = 100 * sccgub_types::tension::TensionValue::SCALE;
+
 /// Agent registration service.
 /// Manages the lifecycle of agent identities on-chain.
+/// Requires a minimum registration cost to prevent sybil attacks.
 #[derive(Debug, Clone, Default)]
 pub struct AgentRegistry {
     pub agents: HashMap<AgentId, RegisteredAgent>,

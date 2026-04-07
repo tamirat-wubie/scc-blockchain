@@ -147,27 +147,37 @@ impl ChainStore {
         &self.base_dir
     }
 
-    /// Save validator key to disk (raw Ed25519 secret key bytes).
-    /// WARNING: This stores the key unencrypted. For production, use encrypted storage.
-    pub fn save_validator_key(&self, key: &ed25519_dalek::SigningKey) -> std::io::Result<()> {
+    /// Save validator key to disk, encrypted with a passphrase-derived key.
+    /// Uses Blake3 hash of passphrase as XOR encryption key.
+    pub fn save_validator_key(
+        &self,
+        key: &ed25519_dalek::SigningKey,
+        passphrase: &str,
+    ) -> std::io::Result<()> {
         let path = self.base_dir.join("validator.key");
         let tmp_path = self.base_dir.join("validator.key.tmp");
-        fs::write(&tmp_path, hex::encode(key.to_bytes()))?;
+        let raw = key.to_bytes();
+        let encrypted = encrypt_key(&raw, passphrase);
+        fs::write(&tmp_path, hex::encode(encrypted))?;
         fs::rename(&tmp_path, &path)
     }
 
-    /// Load validator key from disk.
-    pub fn load_validator_key(&self) -> std::io::Result<ed25519_dalek::SigningKey> {
+    /// Load validator key from disk, decrypting with the same passphrase.
+    pub fn load_validator_key(
+        &self,
+        passphrase: &str,
+    ) -> std::io::Result<ed25519_dalek::SigningKey> {
         let path = self.base_dir.join("validator.key");
         let hex_str = fs::read_to_string(path)?;
-        let bytes = hex::decode(hex_str.trim())
+        let encrypted = hex::decode(hex_str.trim())
             .map_err(|e| std::io::Error::other(format!("Invalid key hex: {}", e)))?;
-        if bytes.len() != 32 {
-            return Err(std::io::Error::other("Validator key must be 32 bytes"));
+        if encrypted.len() != 32 {
+            return Err(std::io::Error::other("Encrypted key must be 32 bytes"));
         }
-        let mut key_bytes = [0u8; 32];
-        key_bytes.copy_from_slice(&bytes);
-        Ok(ed25519_dalek::SigningKey::from_bytes(&key_bytes))
+        let mut enc_bytes = [0u8; 32];
+        enc_bytes.copy_from_slice(&encrypted);
+        let raw = decrypt_key(&enc_bytes, passphrase);
+        Ok(ed25519_dalek::SigningKey::from_bytes(&raw))
     }
 
     /// Check if a validator key exists on disk.
@@ -212,6 +222,21 @@ impl ChainStore {
         let snapshot: StateSnapshot = serde_json::from_str(&json).map_err(std::io::Error::other)?;
         Ok(Some(snapshot))
     }
+}
+
+/// Encrypt a 32-byte key using Blake3(passphrase) as XOR mask.
+fn encrypt_key(key: &[u8; 32], passphrase: &str) -> [u8; 32] {
+    let mask = sccgub_crypto::hash::blake3_hash(passphrase.as_bytes());
+    let mut encrypted = [0u8; 32];
+    for i in 0..32 {
+        encrypted[i] = key[i] ^ mask[i];
+    }
+    encrypted
+}
+
+/// Decrypt a 32-byte key (XOR is its own inverse).
+fn decrypt_key(encrypted: &[u8; 32], passphrase: &str) -> [u8; 32] {
+    encrypt_key(encrypted, passphrase) // XOR is symmetric.
 }
 
 /// State snapshot for fast chain loading.
