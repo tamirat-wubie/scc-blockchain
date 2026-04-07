@@ -1,15 +1,22 @@
+use std::collections::{HashMap, HashSet};
+
 use sccgub_types::Hash;
 
 // Formal BFT safety proof framework.
 // Safety theorem: If f < n/3 validators are Byzantine, no conflicting blocks
-// can both achieve supermajority. Proof: two supermajorities require > 2n
-// validators, but only n exist.
+// can both achieve supermajority. Proof: two supermajorities require > 2n/3
+// votes each, totaling > 4n/3 votes — but only n validators exist, so at
+// least n/3 + 1 validators must appear in BOTH quorums. Those are equivocators.
 
-/// A formal safety certificate proving no fork can exist.
+/// A formal safety certificate proving a block was finalized.
+/// Contains cryptographic proof: each precommit signature is verified against
+/// the validator set before the certificate is considered valid.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SafetyCertificate {
     pub height: u64,
     pub block_hash: Hash,
+    /// Round in which consensus was achieved.
+    pub round: u32,
     /// The set of precommit signatures (at least quorum).
     pub precommit_signatures: Vec<(Hash, Vec<u8>)>, // (validator_id, signature)
     /// Quorum size used.
@@ -19,7 +26,7 @@ pub struct SafetyCertificate {
 }
 
 impl SafetyCertificate {
-    /// Verify that the certificate is structurally valid.
+    /// Verify that the certificate is structurally valid (quorum size, no duplicates).
     pub fn verify_structure(&self) -> Result<(), String> {
         let expected_quorum = (2 * self.validator_count) / 3 + 1;
         if self.quorum != expected_quorum {
@@ -36,7 +43,7 @@ impl SafetyCertificate {
             ));
         }
         // Check for duplicate signers.
-        let unique_signers: std::collections::HashSet<Hash> = self
+        let unique_signers: HashSet<Hash> = self
             .precommit_signatures
             .iter()
             .map(|(id, _)| *id)
@@ -46,13 +53,224 @@ impl SafetyCertificate {
         }
         Ok(())
     }
+
+    /// Full cryptographic verification: structure + every signature verified
+    /// against the validator set and the committed block data.
+    ///
+    /// This is the method that MUST be called when accepting a certificate from
+    /// an external source (peer, checkpoint import, bridge relay).
+    pub fn verify_cryptographic(
+        &self,
+        validator_set: &HashMap<Hash, [u8; 32]>,
+    ) -> Result<(), String> {
+        self.verify_structure()?;
+
+        // Every signer must be in the authorized validator set.
+        for (validator_id, signature) in &self.precommit_signatures {
+            let public_key = validator_set.get(validator_id).ok_or_else(|| {
+                format!("Signer {} not in validator set", hex::encode(validator_id))
+            })?;
+
+            if signature.is_empty() {
+                return Err(format!(
+                    "Empty signature from validator {}",
+                    hex::encode(validator_id)
+                ));
+            }
+
+            // Reconstruct the signed message: (block_hash, height, round, PRECOMMIT).
+            let vote_data = sccgub_crypto::canonical::canonical_bytes(&(
+                &self.block_hash,
+                self.height,
+                self.round,
+                2u8, // VoteType::Precommit
+            ));
+
+            if !sccgub_crypto::signature::verify(public_key, &vote_data, signature) {
+                return Err(format!(
+                    "Invalid signature from validator {}",
+                    hex::encode(validator_id)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build a certificate from a finalized ConsensusRound.
+    pub fn from_round(
+        block_hash: Hash,
+        height: u64,
+        round: u32,
+        precommits: &HashMap<Hash, super::protocol::Vote>,
+        validator_count: u32,
+    ) -> Self {
+        let quorum = (2 * validator_count) / 3 + 1;
+        let precommit_signatures: Vec<(Hash, Vec<u8>)> = precommits
+            .values()
+            .filter(|v| v.block_hash == block_hash)
+            .map(|v| (v.validator_id, v.signature.clone()))
+            .collect();
+
+        Self {
+            height,
+            block_hash,
+            round,
+            precommit_signatures,
+            quorum,
+            validator_count,
+        }
+    }
+}
+
+/// Persistent equivocation evidence store.
+/// Accumulates evidence across rounds, heights, and peers.
+/// Evidence is irrefutable: two signed messages from the same validator
+/// for different blocks at the same height.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EquivocationStore {
+    /// All collected evidence, keyed by validator ID.
+    evidence: HashMap<Hash, Vec<EquivocationEvidence>>,
+    /// Validators with confirmed equivocation (slashable).
+    pub confirmed_equivocators: HashSet<Hash>,
+}
+
+/// Cryptographic proof of equivocation: two conflicting signed votes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EquivocationEvidence {
+    pub validator_id: Hash,
+    pub height: u64,
+    pub round_a: u32,
+    pub round_b: u32,
+    pub block_hash_a: Hash,
+    pub block_hash_b: Hash,
+    /// Signature over (block_hash_a, height, round_a, vote_type).
+    pub signature_a: Vec<u8>,
+    /// Signature over (block_hash_b, height, round_b, vote_type).
+    pub signature_b: Vec<u8>,
+}
+
+impl EquivocationEvidence {
+    /// Verify that this evidence is cryptographically valid.
+    /// Both signatures must verify against the validator's public key,
+    /// and the block hashes must differ.
+    pub fn verify(&self, public_key: &[u8; 32]) -> Result<(), String> {
+        if self.block_hash_a == self.block_hash_b {
+            return Err("Not equivocation: same block hash".into());
+        }
+
+        // Verify signature A.
+        let data_a = sccgub_crypto::canonical::canonical_bytes(&(
+            &self.block_hash_a,
+            self.height,
+            self.round_a,
+            2u8,
+        ));
+        if !sccgub_crypto::signature::verify(public_key, &data_a, &self.signature_a) {
+            return Err("Signature A verification failed".into());
+        }
+
+        // Verify signature B.
+        let data_b = sccgub_crypto::canonical::canonical_bytes(&(
+            &self.block_hash_b,
+            self.height,
+            self.round_b,
+            2u8,
+        ));
+        if !sccgub_crypto::signature::verify(public_key, &data_b, &self.signature_b) {
+            return Err("Signature B verification failed".into());
+        }
+
+        Ok(())
+    }
+}
+
+impl EquivocationStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Submit evidence of equivocation. Verifies signatures before accepting.
+    /// Returns true if this is new evidence (not already known).
+    pub fn submit_evidence(
+        &mut self,
+        evidence: EquivocationEvidence,
+        public_key: &[u8; 32],
+    ) -> Result<bool, String> {
+        evidence.verify(public_key)?;
+
+        let validator = evidence.validator_id;
+        let entries = self.evidence.entry(validator).or_default();
+
+        // Check if we already have evidence at this height from this validator.
+        let duplicate = entries.iter().any(|e| {
+            e.height == evidence.height
+                && e.block_hash_a == evidence.block_hash_a
+                && e.block_hash_b == evidence.block_hash_b
+        });
+
+        if duplicate {
+            return Ok(false);
+        }
+
+        entries.push(evidence);
+        self.confirmed_equivocators.insert(validator);
+        Ok(true)
+    }
+
+    /// Check if a validator has confirmed equivocation evidence.
+    pub fn is_equivocator(&self, validator_id: &Hash) -> bool {
+        self.confirmed_equivocators.contains(validator_id)
+    }
+
+    /// Get all evidence against a specific validator.
+    pub fn evidence_for(&self, validator_id: &Hash) -> &[EquivocationEvidence] {
+        self.evidence
+            .get(validator_id)
+            .map_or(&[], |v| v.as_slice())
+    }
+
+    /// Total number of confirmed equivocators.
+    pub fn equivocator_count(&self) -> usize {
+        self.confirmed_equivocators.len()
+    }
+
+    /// Extract equivocation evidence from two conflicting safety certificates.
+    pub fn extract_from_fork(
+        cert_a: &SafetyCertificate,
+        cert_b: &SafetyCertificate,
+    ) -> Vec<EquivocationEvidence> {
+        if cert_a.height != cert_b.height || cert_a.block_hash == cert_b.block_hash {
+            return Vec::new();
+        }
+
+        let sigs_a: HashMap<Hash, &Vec<u8>> = cert_a
+            .precommit_signatures
+            .iter()
+            .map(|(id, sig)| (*id, sig))
+            .collect();
+
+        let mut evidence = Vec::new();
+        for (id, sig_b) in &cert_b.precommit_signatures {
+            if let Some(sig_a) = sigs_a.get(id) {
+                evidence.push(EquivocationEvidence {
+                    validator_id: *id,
+                    height: cert_a.height,
+                    round_a: cert_a.round,
+                    round_b: cert_b.round,
+                    block_hash_a: cert_a.block_hash,
+                    block_hash_b: cert_b.block_hash,
+                    signature_a: (*sig_a).clone(),
+                    signature_b: sig_b.clone(),
+                });
+            }
+        }
+
+        evidence
+    }
 }
 
 /// Prove that two conflicting blocks cannot both be finalized.
-///
-/// Given two safety certificates for different blocks at the same height,
-/// at least one certificate must contain a dishonest validator (equivocator).
-/// This function identifies the equivocators.
 pub fn prove_no_fork(cert_a: &SafetyCertificate, cert_b: &SafetyCertificate) -> ForkProofResult {
     if cert_a.height != cert_b.height {
         return ForkProofResult::DifferentHeights;
@@ -66,13 +284,12 @@ pub fn prove_no_fork(cert_a: &SafetyCertificate, cert_b: &SafetyCertificate) -> 
         return ForkProofResult::SameBlock;
     }
 
-    // Find validators that signed both certificates (equivocators).
-    let signers_a: std::collections::HashSet<Hash> = cert_a
+    let signers_a: HashSet<Hash> = cert_a
         .precommit_signatures
         .iter()
         .map(|(id, _)| *id)
         .collect();
-    let signers_b: std::collections::HashSet<Hash> = cert_b
+    let signers_b: HashSet<Hash> = cert_b
         .precommit_signatures
         .iter()
         .map(|(id, _)| *id)
@@ -81,7 +298,6 @@ pub fn prove_no_fork(cert_a: &SafetyCertificate, cert_b: &SafetyCertificate) -> 
     let equivocators: Vec<Hash> = signers_a.intersection(&signers_b).copied().collect();
 
     if equivocators.is_empty() {
-        // No overlap means combined signers > n (impossible if both certs are valid).
         ForkProofResult::ImpossibleFork {
             reason: format!(
                 "No equivocators found but {} + {} > {} total validators",
@@ -103,7 +319,7 @@ pub fn prove_no_fork(cert_a: &SafetyCertificate, cert_b: &SafetyCertificate) -> 
 /// Maximum Byzantine validators tolerated for a given validator set size.
 pub fn max_byzantine(validator_count: u32) -> u32 {
     if validator_count < 4 {
-        return 0; // Need at least 4 validators for f=1.
+        return 0;
     }
     (validator_count - 1) / 3
 }
@@ -130,29 +346,29 @@ pub fn check_byzantine_tolerance(
 /// Result of a fork proof analysis.
 #[derive(Debug, Clone)]
 pub enum ForkProofResult {
-    /// Certificates are for different heights (not a fork).
     DifferentHeights,
-    /// Certificates are for the same block (agreement, not a fork).
     SameBlock,
-    /// Equivocators found — these validators signed both conflicting blocks.
     EquivocatorsFound {
         equivocators: Vec<Hash>,
         height: u64,
         block_a: Hash,
         block_b: Hash,
     },
-    /// Logically impossible fork (indicates a bug in the proof system).
-    ImpossibleFork { reason: String },
+    ImpossibleFork {
+        reason: String,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sccgub_crypto::keys::generate_keypair;
 
     fn make_cert(height: u64, block: Hash, signers: &[u8], n: u32) -> SafetyCertificate {
         SafetyCertificate {
             height,
             block_hash: block,
+            round: 0,
             precommit_signatures: signers.iter().map(|&s| ([s; 32], vec![0u8; 64])).collect(),
             quorum: (2 * n) / 3 + 1,
             validator_count: n,
@@ -167,20 +383,175 @@ mod tests {
 
     #[test]
     fn test_insufficient_signatures() {
-        let cert = make_cert(10, [1u8; 32], &[1, 2], 4); // Need 3, have 2.
+        let cert = make_cert(10, [1u8; 32], &[1, 2], 4);
         assert!(cert.verify_structure().is_err());
     }
 
     #[test]
     fn test_duplicate_signer_detected() {
         let mut cert = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
-        cert.precommit_signatures[2].0 = [1; 32]; // Duplicate signer.
+        cert.precommit_signatures[2].0 = [1; 32];
         assert!(cert.verify_structure().is_err());
     }
 
     #[test]
+    fn test_cryptographic_verification() {
+        let block = [42u8; 32];
+        let height = 5u64;
+        let round = 0u32;
+
+        // Create validator keypairs.
+        let mut validator_set = HashMap::new();
+        let mut signers = Vec::new();
+        for i in 1..=4u8 {
+            let key = generate_keypair();
+            let pk = *key.verifying_key().as_bytes();
+            let id = [i; 32];
+            validator_set.insert(id, pk);
+            signers.push((id, key));
+        }
+
+        // Create properly signed precommits.
+        let mut precommit_signatures = Vec::new();
+        for (id, key) in &signers[..3] {
+            let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, 2u8));
+            let sig = sccgub_crypto::signature::sign(key, &data);
+            precommit_signatures.push((*id, sig));
+        }
+
+        let cert = SafetyCertificate {
+            height,
+            block_hash: block,
+            round,
+            precommit_signatures,
+            quorum: 3,
+            validator_count: 4,
+        };
+
+        assert!(cert.verify_cryptographic(&validator_set).is_ok());
+    }
+
+    #[test]
+    fn test_cryptographic_verification_bad_sig() {
+        let block = [42u8; 32];
+        let height = 5u64;
+        let round = 0u32;
+
+        let mut validator_set = HashMap::new();
+        for i in 1..=4u8 {
+            let key = generate_keypair();
+            let pk = *key.verifying_key().as_bytes();
+            validator_set.insert([i; 32], pk);
+        }
+
+        // Use garbage signatures.
+        let cert = SafetyCertificate {
+            height,
+            block_hash: block,
+            round,
+            precommit_signatures: vec![
+                ([1; 32], vec![0u8; 64]), // Invalid signature.
+                ([2; 32], vec![0u8; 64]),
+                ([3; 32], vec![0u8; 64]),
+            ],
+            quorum: 3,
+            validator_count: 4,
+        };
+
+        assert!(cert.verify_cryptographic(&validator_set).is_err());
+    }
+
+    #[test]
+    fn test_equivocation_evidence_verified() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let id = [1u8; 32];
+        let height = 10u64;
+
+        let block_a = [0xAAu8; 32];
+        let block_b = [0xBBu8; 32];
+
+        let data_a = sccgub_crypto::canonical::canonical_bytes(&(&block_a, height, 0u32, 2u8));
+        let data_b = sccgub_crypto::canonical::canonical_bytes(&(&block_b, height, 0u32, 2u8));
+
+        let evidence = EquivocationEvidence {
+            validator_id: id,
+            height,
+            round_a: 0,
+            round_b: 0,
+            block_hash_a: block_a,
+            block_hash_b: block_b,
+            signature_a: sccgub_crypto::signature::sign(&key, &data_a),
+            signature_b: sccgub_crypto::signature::sign(&key, &data_b),
+        };
+
+        assert!(evidence.verify(&pk).is_ok());
+    }
+
+    #[test]
+    fn test_equivocation_store_submit_and_query() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let id = [1u8; 32];
+
+        let block_a = [0xAAu8; 32];
+        let block_b = [0xBBu8; 32];
+        let height = 10u64;
+
+        let data_a = sccgub_crypto::canonical::canonical_bytes(&(&block_a, height, 0u32, 2u8));
+        let data_b = sccgub_crypto::canonical::canonical_bytes(&(&block_b, height, 0u32, 2u8));
+
+        let evidence = EquivocationEvidence {
+            validator_id: id,
+            height,
+            round_a: 0,
+            round_b: 0,
+            block_hash_a: block_a,
+            block_hash_b: block_b,
+            signature_a: sccgub_crypto::signature::sign(&key, &data_a),
+            signature_b: sccgub_crypto::signature::sign(&key, &data_b),
+        };
+
+        let mut store = EquivocationStore::new();
+        assert!(!store.is_equivocator(&id));
+
+        let is_new = store.submit_evidence(evidence, &pk).unwrap();
+        assert!(is_new);
+        assert!(store.is_equivocator(&id));
+        assert_eq!(store.equivocator_count(), 1);
+        assert_eq!(store.evidence_for(&id).len(), 1);
+    }
+
+    #[test]
+    fn test_equivocation_duplicate_rejected() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let id = [1u8; 32];
+        let block_a = [0xAAu8; 32];
+        let block_b = [0xBBu8; 32];
+        let height = 10u64;
+
+        let data_a = sccgub_crypto::canonical::canonical_bytes(&(&block_a, height, 0u32, 2u8));
+        let data_b = sccgub_crypto::canonical::canonical_bytes(&(&block_b, height, 0u32, 2u8));
+
+        let evidence = EquivocationEvidence {
+            validator_id: id,
+            height,
+            round_a: 0,
+            round_b: 0,
+            block_hash_a: block_a,
+            block_hash_b: block_b,
+            signature_a: sccgub_crypto::signature::sign(&key, &data_a),
+            signature_b: sccgub_crypto::signature::sign(&key, &data_b),
+        };
+
+        let mut store = EquivocationStore::new();
+        assert!(store.submit_evidence(evidence.clone(), &pk).unwrap());
+        assert!(!store.submit_evidence(evidence, &pk).unwrap()); // Duplicate.
+    }
+
+    #[test]
     fn test_prove_no_fork_finds_equivocators() {
-        // Two conflicting certs at same height. Validator 3 signed both.
         let cert_a = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
         let cert_b = make_cert(10, [2u8; 32], &[3, 4, 5], 4);
 
@@ -205,11 +576,11 @@ mod tests {
 
     #[test]
     fn test_max_byzantine() {
-        assert_eq!(max_byzantine(3), 0); // f=0 for n=3.
-        assert_eq!(max_byzantine(4), 1); // f=1 for n=4.
-        assert_eq!(max_byzantine(7), 2); // f=2 for n=7.
-        assert_eq!(max_byzantine(21), 6); // f=6 for n=21.
-        assert_eq!(max_byzantine(100), 33); // f=33 for n=100.
+        assert_eq!(max_byzantine(3), 0);
+        assert_eq!(max_byzantine(4), 1);
+        assert_eq!(max_byzantine(7), 2);
+        assert_eq!(max_byzantine(21), 6);
+        assert_eq!(max_byzantine(100), 33);
     }
 
     #[test]
@@ -218,5 +589,15 @@ mod tests {
         assert!(check_byzantine_tolerance(21, 7).is_err());
         assert!(check_byzantine_tolerance(4, 1).is_ok());
         assert!(check_byzantine_tolerance(3, 1).is_err());
+    }
+
+    #[test]
+    fn test_extract_from_fork() {
+        let cert_a = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
+        let cert_b = make_cert(10, [2u8; 32], &[3, 4, 5], 4);
+
+        let evidence = EquivocationStore::extract_from_fork(&cert_a, &cert_b);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].validator_id, [3u8; 32]);
     }
 }

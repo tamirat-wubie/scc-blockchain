@@ -6,7 +6,11 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::{AgentId, Hash, NormId};
 
 /// Governance proposal lifecycle.
-/// Proposals follow: Submitted -> Voting -> Accepted/Rejected -> Activated.
+/// Proposals follow: Submitted -> Voting -> Accepted/Rejected -> Timelocked -> Activated.
+///
+/// Timelocks enforce a mandatory delay between acceptance and activation,
+/// giving the community time to review and potentially veto changes.
+/// Constitutional proposals (Safety+) have longer timelocks than ordinary ones.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceProposal {
     pub id: Hash,
@@ -22,6 +26,9 @@ pub struct GovernanceProposal {
     pub voting_deadline: u64,
     /// Set of agents who have already voted (prevents duplicate voting).
     pub voters: HashSet<AgentId>,
+    /// Block height at which the timelock expires (activation becomes possible).
+    /// Set when proposal is accepted. Activation before this height is rejected.
+    pub timelock_until: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,8 +56,45 @@ pub enum ProposalStatus {
     Voting,
     Accepted,
     Rejected,
+    /// Timelock active — waiting for mandatory delay before activation.
+    Timelocked,
     Activated,
     Expired,
+}
+
+/// Timelock durations (in blocks) by proposal class.
+/// Constitutional changes (Safety-level) require longer timelocks.
+pub mod timelocks {
+    /// Ordinary proposals (norm changes, parameter tweaks): 50 blocks.
+    pub const ORDINARY: u64 = 50;
+    /// Constitutional proposals (safety parameters, emergency): 200 blocks.
+    pub const CONSTITUTIONAL: u64 = 200;
+}
+
+/// Settlement finality classification for financial operations.
+/// Each class represents a different level of commitment certainty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettlementFinality {
+    /// Soft finality: block accepted but not yet confirmed by depth.
+    /// Suitable for low-value transfers, notifications.
+    Soft,
+    /// Economic finality: block confirmed by k subsequent blocks.
+    /// Cost of revert exceeds value at stake. Suitable for most payments.
+    Economic,
+    /// Legal finality: block finalized with safety certificate.
+    /// Suitable for regulated finance, compliance-critical operations.
+    Legal,
+}
+
+impl SettlementFinality {
+    /// Minimum confirmation depth required for each finality class.
+    pub fn required_depth(&self) -> u64 {
+        match self {
+            Self::Soft => 0,     // Accepted in block.
+            Self::Economic => 2, // 2 confirmations.
+            Self::Legal => 6,    // 6 confirmations + safety certificate.
+        }
+    }
 }
 
 /// Proposal registry managing the lifecycle of governance proposals.
@@ -105,6 +149,7 @@ impl ProposalRegistry {
             required_level: required,
             voting_deadline: current_height + voting_period,
             voters: HashSet::new(),
+            timelock_until: 0, // Set when accepted.
         });
         self.index.insert(id, self.proposals.len() - 1);
 
@@ -149,7 +194,8 @@ impl ProposalRegistry {
     }
 
     /// Finalize proposals whose voting period has ended.
-    /// Returns list of accepted proposals ready for activation.
+    /// Accepted proposals enter a mandatory timelock period before activation.
+    /// Constitutional proposals (Safety-level) have longer timelocks.
     pub fn finalize(&mut self, current_height: u64) -> Vec<GovernanceProposal> {
         let mut accepted = Vec::new();
 
@@ -162,7 +208,15 @@ impl ProposalRegistry {
             }
 
             if proposal.votes_for > proposal.votes_against {
-                proposal.status = ProposalStatus::Accepted;
+                // Determine timelock duration based on proposal class.
+                let timelock_duration = match &proposal.kind {
+                    ProposalKind::ModifyParameter { .. }
+                    | ProposalKind::ActivateEmergency
+                    | ProposalKind::DeactivateEmergency => timelocks::CONSTITUTIONAL,
+                    _ => timelocks::ORDINARY,
+                };
+                proposal.timelock_until = current_height + timelock_duration;
+                proposal.status = ProposalStatus::Timelocked;
                 accepted.push(proposal.clone());
             } else {
                 proposal.status = ProposalStatus::Rejected;
@@ -172,13 +226,25 @@ impl ProposalRegistry {
         accepted
     }
 
-    /// Activate an accepted proposal. Returns the norm to register (if AddNorm).
-    pub fn activate(&mut self, proposal_id: &Hash) -> Result<Option<Norm>, String> {
+    /// Activate a timelocked proposal after its delay has expired.
+    /// Returns the norm to register (if AddNorm).
+    pub fn activate(
+        &mut self,
+        proposal_id: &Hash,
+        current_height: u64,
+    ) -> Result<Option<Norm>, String> {
         let idx = *self.index.get(proposal_id).ok_or("Proposal not found")?;
         let proposal = &mut self.proposals[idx];
 
-        if proposal.status != ProposalStatus::Accepted {
-            return Err("Proposal must be Accepted before activation".into());
+        if proposal.status != ProposalStatus::Timelocked {
+            return Err("Proposal must be Timelocked before activation".into());
+        }
+
+        if current_height < proposal.timelock_until {
+            return Err(format!(
+                "Timelock active until block {}. Current: {}",
+                proposal.timelock_until, current_height
+            ));
         }
 
         proposal.status = ProposalStatus::Activated;
@@ -253,18 +319,53 @@ mod tests {
             .vote(&id, [3u8; 32], PrecedenceLevel::Meaning, false, 107)
             .unwrap();
 
-        // Finalize after voting period.
+        // Finalize after voting period — enters timelock.
         let accepted = registry.finalize(111);
         assert_eq!(accepted.len(), 1);
         assert_eq!(accepted[0].votes_for, 2);
         assert_eq!(accepted[0].votes_against, 1);
+        assert_eq!(accepted[0].status, ProposalStatus::Timelocked);
 
-        // Activate.
-        let norm = registry.activate(&id).unwrap();
+        // Cannot activate during timelock.
+        let result = registry.activate(&id, 120);
+        assert!(result.is_err());
+
+        // Activate after timelock expires (ordinary = 50 blocks).
+        let norm = registry.activate(&id, 111 + timelocks::ORDINARY).unwrap();
         assert!(norm.is_some());
         let norm = norm.unwrap();
         assert_eq!(norm.name, "TestNorm");
         assert!(norm.active);
+    }
+
+    #[test]
+    fn test_constitutional_timelock_longer() {
+        let mut registry = ProposalRegistry::default();
+
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Safety,
+                ProposalKind::ActivateEmergency,
+                100,
+                5,
+            )
+            .unwrap();
+
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Safety, true, 102)
+            .unwrap();
+
+        let accepted = registry.finalize(106);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].timelock_until, 106 + timelocks::CONSTITUTIONAL);
+
+        // Cannot activate too early.
+        assert!(registry.activate(&id, 200).is_err());
+        // Can activate after constitutional timelock.
+        assert!(registry
+            .activate(&id, 106 + timelocks::CONSTITUTIONAL)
+            .is_ok());
     }
 
     #[test]
@@ -340,5 +441,12 @@ mod tests {
         let accepted = registry.finalize(106);
         assert!(accepted.is_empty());
         assert_eq!(registry.proposals[0].status, ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_settlement_finality_depths() {
+        assert_eq!(SettlementFinality::Soft.required_depth(), 0);
+        assert_eq!(SettlementFinality::Economic.required_depth(), 2);
+        assert_eq!(SettlementFinality::Legal.required_depth(), 6);
     }
 }

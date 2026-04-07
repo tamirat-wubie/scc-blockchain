@@ -811,12 +811,15 @@ fn test_governance_proposal_lifecycle() {
         .vote(&id, [11u8; 32], PrecedenceLevel::Meaning, true, 13)
         .unwrap();
 
-    // Finalize after voting period.
+    // Finalize after voting period — enters timelock.
     let accepted = proposals.finalize(16);
     assert_eq!(accepted.len(), 1);
 
-    // Activate and get the norm.
-    let norm = proposals.activate(&id).unwrap().unwrap();
+    // Activate after timelock expires (ordinary = 50 blocks from finalize height).
+    let norm = proposals
+        .activate(&id, 16 + sccgub_governance::proposals::timelocks::ORDINARY)
+        .unwrap()
+        .unwrap();
     assert_eq!(norm.name, "test-norm");
     assert!(norm.active);
 }
@@ -1043,7 +1046,13 @@ fn test_end_to_end_all_subsystems() {
         .unwrap();
     let accepted = proposals.finalize(7);
     assert_eq!(accepted.len(), 1);
-    let norm = proposals.activate(&prop_id).unwrap().unwrap();
+    let norm = proposals
+        .activate(
+            &prop_id,
+            7 + sccgub_governance::proposals::timelocks::ORDINARY,
+        )
+        .unwrap()
+        .unwrap();
 
     // ===== 10. NORM REPLICATOR DYNAMICS =====
     let mut norm_registry = NormRegistry::new();
