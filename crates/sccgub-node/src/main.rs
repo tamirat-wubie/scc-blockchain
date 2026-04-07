@@ -85,13 +85,20 @@ enum Commands {
     },
     /// Show chain health report (metrics, performance, security).
     Health,
+    /// Start the REST API server.
+    Serve {
+        /// Port to listen on.
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+    },
     /// Run the full demo (init + produce + status) in-memory.
     Demo,
     /// Show information about the chain/spec.
     Info,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -108,6 +115,7 @@ fn main() {
         Commands::Stats => cmd_stats(&cli.data_dir),
         Commands::Balance { agent } => cmd_balance(&cli.data_dir, &agent),
         Commands::Health => cmd_health(&cli.data_dir),
+        Commands::Serve { port } => cmd_serve(&cli.data_dir, port).await,
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
     }
@@ -1021,6 +1029,79 @@ fn cmd_health(data_dir: &std::path::Path) {
     println!("    Current seal:       f[{}][{}]", latest.header.mfidel_seal.row, latest.header.mfidel_seal.column);
     println!("    Cycle:              {}", sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height));
     println!("    Fidels completed:   {}", latest.header.height % 272);
+}
+
+async fn cmd_serve(data_dir: &std::path::Path, port: u16) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    // Rebuild state from blocks.
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+    for block in &blocks {
+        for tx in &block.body.transitions {
+            if let OperationPayload::Write { key, value } = &tx.payload {
+                state.apply_delta(&StateDelta {
+                    writes: vec![StateWrite {
+                        address: key.clone(),
+                        value: value.clone(),
+                    }],
+                    deletes: vec![],
+                });
+            }
+        }
+    }
+
+    // Compute finality.
+    let mut finality = sccgub_consensus::finality::FinalityTracker::default();
+    let finality_config = sccgub_consensus::finality::FinalityConfig::default();
+    if let Some(last) = blocks.last() {
+        for h in 1..=last.header.height {
+            finality.on_new_block(h);
+        }
+        finality.check_finality(&finality_config, |h| {
+            blocks.get(h as usize).map(|b| b.header.block_id)
+        });
+    }
+
+    let chain_id = blocks[0].header.chain_id;
+
+    let app_state = sccgub_api::handlers::SharedState::from(
+        std::sync::Arc::new(tokio::sync::RwLock::new(
+            sccgub_api::handlers::AppState {
+                blocks,
+                state,
+                chain_id,
+                finalized_height: finality.finalized_height,
+            },
+        )),
+    );
+
+    let app = sccgub_api::router::build_router(app_state);
+
+    let addr = format!("0.0.0.0:{}", port);
+    println!("SCCGUB API server starting on http://{}", addr);
+    println!("Endpoints:");
+    println!("  GET /api/status");
+    println!("  GET /api/health");
+    println!("  GET /api/block/:height");
+    println!("  GET /api/state");
+    println!();
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 
 fn cmd_demo() {

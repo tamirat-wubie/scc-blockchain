@@ -21,6 +21,9 @@ sccgub-state = { path = "../sccgub-state" }
 sccgub-execution = { path = "../sccgub-execution" }
 sccgub-governance = { path = "../sccgub-governance" }
 sccgub-consensus = { path = "../sccgub-consensus" }
+sccgub-api = { path = "../sccgub-api" }
+tokio = { workspace = true }
+axum = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
