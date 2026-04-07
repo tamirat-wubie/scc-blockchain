@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::agent::AgentIdentity;
 use crate::contract::SymbolicCausalContract;
@@ -37,16 +37,16 @@ pub struct SymbolState {
     pub owner: AgentId,
     pub version: u64,
     pub constraints: HashSet<ConstraintId>,
-    pub causal_history: Vec<Hash>,
+    pub causal_history: VecDeque<Hash>,
 }
 
 impl SymbolState {
-    /// Append to causal history with bounded size.
+    /// Append to causal history with bounded size. O(1) using VecDeque.
     pub fn push_history(&mut self, hash: Hash) {
         if self.causal_history.len() >= MAX_CAUSAL_HISTORY {
-            self.causal_history.remove(0);
+            self.causal_history.pop_front();
         }
-        self.causal_history.push(hash);
+        self.causal_history.push_back(hash);
     }
 }
 
@@ -58,7 +58,7 @@ impl SymbolState {
             owner,
             version: 1,
             constraints: HashSet::new(),
-            causal_history: Vec::new(),
+            causal_history: VecDeque::new(),
         }
     }
 }

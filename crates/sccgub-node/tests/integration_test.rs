@@ -155,6 +155,7 @@ fn build_test_block(
         tension_before,
         tension_after: tension_before,
         mfidel_seal: seal,
+        balance_root: ZERO_HASH,
         validator_id,
         version: 1,
     };

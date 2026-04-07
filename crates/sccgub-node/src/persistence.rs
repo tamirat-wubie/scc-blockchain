@@ -266,6 +266,7 @@ mod tests {
                 tension_before: TensionValue::ZERO,
                 tension_after: TensionValue::ZERO,
                 mfidel_seal: MfidelAtomicSeal::from_height(height),
+                balance_root: ZERO_HASH,
                 validator_id: ZERO_HASH,
                 version: 1,
             },

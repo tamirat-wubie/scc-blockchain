@@ -124,11 +124,12 @@ pub fn validate_cpog(
                     });
                 }
                 sccgub_types::transition::OperationPayload::AssetTransfer { .. } => {
-                    // Asset transfers don't modify the state trie directly —
-                    // they modify the balance ledger (tracked separately).
+                    // Asset transfers modify the balance ledger (tracked separately).
                 }
                 _ => {}
             }
+            // Replay nonces for symmetry with chain.rs produce_block.
+            let _ = speculative.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
         let computed_state_root = speculative.state_root();
         if block.header.state_root != computed_state_root {

@@ -163,15 +163,18 @@ impl ContainmentState {
         }
     }
 
-    /// Decrement quarantine counters (called once per block).
+    /// Decrement quarantine counters and decay negative delta over time.
     pub fn tick_block(&mut self) {
         for profile in self.nodes.values_mut() {
+            // Decay negative_delta by 1% per block (positive behavior over time reduces hostility).
+            let decay = TensionValue(profile.negative_delta.raw() / 100);
+            profile.negative_delta = profile.negative_delta - decay;
+
             if let ContainmentLevel::Quarantine { blocks_remaining } = &mut profile.containment {
                 if *blocks_remaining > 0 {
                     *blocks_remaining -= 1;
                 }
                 if *blocks_remaining == 0 {
-                    // Release from quarantine to reduced throughput.
                     profile.containment = ContainmentLevel::ReducedThroughput {
                         max_txs_per_block: 1,
                     };

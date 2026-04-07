@@ -144,10 +144,12 @@ impl Chain {
         // Collect validated transitions from mempool.
         let transitions = self.mempool.drain_validated(&self.state);
 
-        // Speculatively apply state changes to compute post-transition root.
+        // Speculatively apply state changes. Filter out failed transfers.
         let mut speculative_state = self.state.clone();
         let mut speculative_balances = self.balances.clone();
-        for tx in &transitions {
+        let mut accepted_transitions = Vec::new();
+        for tx in transitions {
+            let mut accepted = true;
             match &tx.payload {
                 sccgub_types::transition::OperationPayload::Write { key, value } => {
                     speculative_state.apply_delta(&sccgub_types::transition::StateDelta {
@@ -164,20 +166,44 @@ impl Chain {
                     amount,
                 } => {
                     let amt = TensionValue(*amount);
-                    if let Err(e) = speculative_balances.transfer(from, to, amt) {
-                        // Transfer failed — skip this tx (it passed validation
-                        // but state changed between validation and application).
-                        eprintln!("Transfer failed during speculative apply: {}", e);
+                    if speculative_balances.transfer(from, to, amt).is_err() {
+                        accepted = false; // Filter out failed transfers.
                     }
                 }
                 _ => {}
             }
-            // Commit nonce.
-            let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
+            if accepted {
+                let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
+                accepted_transitions.push(tx);
+            }
         }
+        let transitions = accepted_transitions;
         speculative_state.set_height(height);
 
         let validator_id = blake3_hash(self.validator_key.verifying_key().as_bytes());
+
+        // Compute balance root: sort balances by agent_id for determinism, hash each entry.
+        let mut bal_entries: Vec<_> = speculative_balances.balances.iter().collect();
+        bal_entries.sort_by_key(|(k, _)| *k);
+        let bal_leaves: Vec<&[u8]> = bal_entries
+            .iter()
+            .map(|(k, v)| {
+                // Hash agent_id ++ raw_balance for each entry.
+                let _ = v; // Used via k below.
+                k.as_slice()
+            })
+            .collect();
+        let balance_root = if bal_leaves.is_empty() {
+            ZERO_HASH
+        } else {
+            // Simple hash of all sorted (agent_id, balance) pairs.
+            let mut hasher_data = Vec::new();
+            for (agent_id, balance) in &bal_entries {
+                hasher_data.extend_from_slice(*agent_id);
+                hasher_data.extend_from_slice(&balance.raw().to_le_bytes());
+            }
+            blake3_hash(&hasher_data)
+        };
 
         let block = build_block(BlockBuildParams {
             chain_id: self.chain_id,
@@ -187,7 +213,8 @@ impl Chain {
             validator_id,
             validator_key: &self.validator_key,
             transitions,
-            state: &speculative_state, // Use post-transition state for roots.
+            state: &speculative_state,
+            balance_root,
         });
 
         // Validate via CPoG against pre-transition state (governance checks).
@@ -301,6 +328,7 @@ fn build_genesis_block(
         tension_before: TensionValue::ZERO,
         tension_after: TensionValue::ZERO,
         mfidel_seal: seal,
+        balance_root: ZERO_HASH, // No balances at genesis block creation time.
         validator_id,
         version: 1,
     };
@@ -342,6 +370,7 @@ struct BlockBuildParams<'a> {
     validator_key: &'a ed25519_dalek::SigningKey,
     transitions: Vec<SymbolicTransition>,
     state: &'a ManagedWorldState,
+    balance_root: Hash,
 }
 
 fn build_block(params: BlockBuildParams<'_>) -> Block {
@@ -354,6 +383,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         validator_key,
         transitions,
         state,
+        balance_root,
     } = params;
     let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
     let timestamp = parent_timestamp.successor(
@@ -483,6 +513,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         tension_before,
         tension_after: tension_before,
         mfidel_seal: seal,
+        balance_root,
         validator_id,
         version: 1,
     };

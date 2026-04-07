@@ -52,6 +52,8 @@ pub struct BlockHeader {
     pub tension_after: TensionValue,
     /// Mfidel atomic seal (deterministic from height).
     pub mfidel_seal: MfidelAtomicSeal,
+    /// Hash of the balance ledger state (enables light-client balance proofs).
+    pub balance_root: Hash,
     /// Node identity of the validator/proposer.
     pub validator_id: Hash,
     /// Block format version.
