@@ -96,6 +96,26 @@ pub enum PhiPhase {
     Evolution = 13,
 }
 
+impl std::fmt::Display for PhiPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Distinction => write!(f, "Distinction"),
+            Self::Constraint => write!(f, "Constraint"),
+            Self::Ontology => write!(f, "Ontology"),
+            Self::Topology => write!(f, "Topology"),
+            Self::Form => write!(f, "Form"),
+            Self::Organization => write!(f, "Organization"),
+            Self::Module => write!(f, "Module"),
+            Self::Execution => write!(f, "Execution"),
+            Self::Body => write!(f, "Body"),
+            Self::Architecture => write!(f, "Architecture"),
+            Self::Performance => write!(f, "Performance"),
+            Self::Feedback => write!(f, "Feedback"),
+            Self::Evolution => write!(f, "Evolution"),
+        }
+    }
+}
+
 impl PhiPhase {
     pub const ALL: [PhiPhase; 13] = [
         Self::Distinction,

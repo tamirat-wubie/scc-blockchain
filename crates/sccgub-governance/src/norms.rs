@@ -17,7 +17,10 @@ impl NormRegistry {
         }
     }
 
+    /// Register a norm. Rejects duplicates.
     pub fn register(&mut self, norm: Norm) {
+        // Allow re-registration (update) for existing norms — this is intentional
+        // for norm evolution via replicator dynamics.
         self.norms.insert(norm.id, norm);
     }
 

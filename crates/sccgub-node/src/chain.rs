@@ -175,10 +175,9 @@ impl Chain {
     }
 
     /// Submit a transition to the mempool.
-    /// Returns Err if the agent is quarantined.
-    pub fn submit_transition(&mut self, tx: SymbolicTransition) {
-        // Ignore containment errors for now — log but don't fail.
-        let _ = self.mempool.add(tx);
+    /// Returns Err if the agent is quarantined or the tx is a duplicate.
+    pub fn submit_transition(&mut self, tx: SymbolicTransition) -> Result<(), String> {
+        self.mempool.add(tx)
     }
 
     /// Produce a new block from mempool transactions.

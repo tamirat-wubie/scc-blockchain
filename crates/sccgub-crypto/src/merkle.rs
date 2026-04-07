@@ -65,7 +65,7 @@ pub fn merkle_root_of_bytes(items: &[&[u8]]) -> [u8; 32] {
 }
 
 /// Merkle inclusion proof: a list of sibling hashes and their positions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MerkleProof {
     /// Sibling hashes from leaf to root. Each entry is (hash, is_right_sibling).
     pub siblings: Vec<([u8; 32], bool)>,

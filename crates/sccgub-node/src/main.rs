@@ -222,7 +222,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
     let current_height = chain.height();
     for i in 0..num_txs {
         let tx = create_test_transition(&agent, &agent_key, i, current_height);
-        chain.submit_transition(tx);
+        let _ = chain.submit_transition(tx);
     }
     println!("Submitted {} transitions to mempool.", num_txs);
 
@@ -925,7 +925,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
     tx.tx_id = blake3_hash(&canonical);
     tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
 
-    chain.submit_transition(tx);
+    let _ = chain.submit_transition(tx);
 
     let produced_height = match chain.produce_block() {
         Ok(block) => {
@@ -1308,7 +1308,7 @@ fn cmd_demo() {
     for i in 0..3 {
         let tx = create_test_transition(&agent, &agent_key, i, 0);
         println!("[Submit] Tx #{}: {}", i, hex::encode(tx.tx_id));
-        chain.submit_transition(tx);
+        let _ = chain.submit_transition(tx);
     }
     println!();
 

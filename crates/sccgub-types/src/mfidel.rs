@@ -10,6 +10,12 @@ pub struct MfidelAtomicSeal {
     pub column: u8,
 }
 
+impl std::fmt::Display for MfidelAtomicSeal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "f[{}][{}]", self.row, self.column)
+    }
+}
+
 impl MfidelAtomicSeal {
     /// Total fidels in the grid.
     pub const GRID_ROWS: u8 = 34;

@@ -38,6 +38,18 @@ pub enum Verdict {
     Escalate { level: u8 },
 }
 
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Accept => write!(f, "Accept"),
+            Self::Reject { reason } => write!(f, "Reject: {}", reason),
+            Self::Defer { condition } => write!(f, "Defer: {}", condition),
+            Self::Compensate { plan } => write!(f, "Compensate: {}", plan),
+            Self::Escalate { level } => write!(f, "Escalate to level {}", level),
+        }
+    }
+}
+
 impl Verdict {
     pub fn is_accepted(&self) -> bool {
         matches!(self, Verdict::Accept)

@@ -16,6 +16,18 @@ pub enum PrecedenceLevel {
     Optimization = 4,
 }
 
+impl std::fmt::Display for PrecedenceLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Genesis => write!(f, "Genesis"),
+            Self::Safety => write!(f, "Safety"),
+            Self::Meaning => write!(f, "Meaning"),
+            Self::Emotion => write!(f, "Emotion"),
+            Self::Optimization => write!(f, "Optimization"),
+        }
+    }
+}
+
 impl PrecedenceLevel {
     /// Check if this level has authority over another.
     pub fn overrides(self, other: Self) -> bool {
