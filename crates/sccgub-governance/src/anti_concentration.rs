@@ -40,7 +40,7 @@ impl Default for GovernanceLimits {
 }
 
 /// Tracks governance power distribution across agents.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GovernancePowerTracker {
     /// Actions per agent in the current epoch.
     pub actions_this_epoch: HashMap<AgentId, u32>,

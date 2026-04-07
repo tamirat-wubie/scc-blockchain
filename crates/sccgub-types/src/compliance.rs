@@ -57,7 +57,7 @@ pub struct DeletionProof {
 }
 
 /// Data lifecycle tracker.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DataLifecycleTracker {
     /// Off-chain data references indexed by content hash.
     pub references: std::collections::HashMap<Hash, OffChainRef>,

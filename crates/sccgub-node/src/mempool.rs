@@ -111,3 +111,117 @@ impl Mempool {
         self.pending.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+    use sccgub_types::governance::PrecedenceLevel;
+    use sccgub_types::mfidel::MfidelAtomicSeal;
+    use sccgub_types::timestamp::CausalTimestamp;
+    use sccgub_types::transition::*;
+    use std::collections::HashSet;
+
+    fn test_tx(agent_id: [u8; 32], nonce: u128) -> SymbolicTransition {
+        SymbolicTransition {
+            tx_id: {
+                let mut id = [0u8; 32];
+                id[0] = nonce as u8;
+                id[1..5].copy_from_slice(&agent_id[..4]);
+                id
+            },
+            actor: AgentIdentity {
+                agent_id,
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(1),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Noop,
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: b"test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce,
+            signature: vec![0u8; 64],
+        }
+    }
+
+    #[test]
+    fn test_duplicate_rejected() {
+        let mut mempool = Mempool::new(100);
+        let tx = test_tx([1u8; 32], 1);
+        assert!(mempool.add(tx.clone()).is_ok());
+        assert!(mempool.add(tx).is_err()); // Duplicate tx_id.
+    }
+
+    #[test]
+    fn test_confirmed_tx_rejected() {
+        let mut mempool = Mempool::new(100);
+        let tx = test_tx([1u8; 32], 1);
+        mempool.mark_confirmed(&[tx.tx_id]);
+        assert!(mempool.add(tx).is_err()); // Already confirmed.
+    }
+
+    #[test]
+    fn test_capacity_eviction() {
+        let mut mempool = Mempool::new(2);
+        let tx1 = test_tx([1u8; 32], 1);
+        let tx2 = test_tx([2u8; 32], 2);
+        let tx3 = test_tx([3u8; 32], 3);
+
+        mempool.add(tx1.clone()).unwrap();
+        mempool.add(tx2).unwrap();
+        assert_eq!(mempool.len(), 2);
+
+        mempool.add(tx3).unwrap(); // Should evict tx1 (oldest).
+        assert_eq!(mempool.len(), 2);
+
+        // tx1 was evicted, so re-adding should succeed.
+        assert!(mempool.add(tx1).is_ok());
+    }
+
+    #[test]
+    fn test_quarantined_agent_rejected() {
+        let mut mempool = Mempool::new(100);
+        let agent = [99u8; 32];
+
+        // Quarantine the agent.
+        mempool.containment.nodes.insert(
+            agent,
+            sccgub_governance::containment::NodeBehaviorProfile {
+                node_id: agent,
+                positive_delta: TensionValue::ZERO,
+                negative_delta: TensionValue::from_integer(1000),
+                containment: sccgub_governance::containment::ContainmentLevel::Quarantine {
+                    blocks_remaining: 50,
+                },
+                invalid_count: 100,
+                valid_count: 0,
+            },
+        );
+
+        let tx = test_tx(agent, 1);
+        assert!(mempool.add(tx).is_err()); // Quarantined.
+    }
+}
