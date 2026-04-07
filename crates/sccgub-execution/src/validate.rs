@@ -1,12 +1,18 @@
 use sccgub_state::world::{ManagedWorldState, MAX_STATE_ENTRY_SIZE};
-use sccgub_types::transition::SymbolicTransition;
+use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
+use sccgub_types::tension::TensionValue;
+use sccgub_types::transition::{
+    StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
+};
 use sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
 
+use crate::gas::GasMeter;
 use crate::phi::phi_traversal_tx;
 use crate::wh_check::check_transition_wh;
 
 /// Validate a single transition before inclusion in a block.
 /// Checks: WHBinding, signature, agent_id binding, nonce, size limits, Phi traversal.
+/// Returns errors list on failure.
 pub fn validate_transition(
     tx: &SymbolicTransition,
     state: &ManagedWorldState,
@@ -83,6 +89,138 @@ pub fn validate_transition(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Validate a transition with gas metering and produce a typed receipt.
+/// Every transition — accepted or rejected — produces a CausalReceipt.
+/// This is the function that should be used in block production for auditable execution.
+pub fn validate_transition_metered(
+    tx: &SymbolicTransition,
+    state: &ManagedWorldState,
+    gas_limit: u64,
+) -> (CausalReceipt, u64) {
+    let mut gas = GasMeter::new(gas_limit);
+    let state_root_before = state.state_root();
+
+    // Charge base transaction overhead.
+    if let Err(e) = gas.charge_tx_base() {
+        return (
+            make_reject_receipt(tx, state_root_before, &format!("{}", e), &gas),
+            gas.used,
+        );
+    }
+
+    // Charge for payload size.
+    let payload_size = sccgub_crypto::canonical::canonical_bytes(&tx.payload).len() as u64;
+    if let Err(e) = gas.charge_payload(payload_size) {
+        return (
+            make_reject_receipt(tx, state_root_before, &format!("{}", e), &gas),
+            gas.used,
+        );
+    }
+
+    // Charge for signature verification.
+    if let Err(e) = gas.charge_sig_verify() {
+        return (
+            make_reject_receipt(tx, state_root_before, &format!("{}", e), &gas),
+            gas.used,
+        );
+    }
+
+    // Charge for hashing (agent_id derivation).
+    if let Err(e) = gas.charge_hash() {
+        return (
+            make_reject_receipt(tx, state_root_before, &format!("{}", e), &gas),
+            gas.used,
+        );
+    }
+
+    // Run the core validation.
+    let validation_result = validate_transition(tx, state);
+
+    // Charge for Phi traversal compute (13 phases).
+    let _ = gas.charge_compute(13);
+
+    match validation_result {
+        Ok(()) => {
+            let receipt = CausalReceipt {
+                tx_id: tx.tx_id,
+                verdict: Verdict::Accept,
+                pre_state_root: state_root_before,
+                post_state_root: state_root_before, // Updated after apply.
+                read_set: vec![],
+                write_set: extract_write_set(tx),
+                causes: vec![],
+                resource_used: ResourceUsage {
+                    compute_steps: gas.used,
+                    state_reads: (gas.breakdown.state_reads / crate::gas::costs::STATE_READ.max(1))
+                        as u32,
+                    state_writes: (gas.breakdown.state_writes
+                        / crate::gas::costs::STATE_WRITE.max(1))
+                        as u32,
+                    proof_size_bytes: gas.breakdown.proof,
+                },
+                emitted_events: vec![],
+                wh_binding: empty_wh_resolved(tx),
+                phi_phase_reached: 13,
+                tension_delta: TensionValue::ZERO,
+            };
+            (receipt, gas.used)
+        }
+        Err(errors) => {
+            let reason = errors.join("; ");
+            (
+                make_reject_receipt(tx, state_root_before, &reason, &gas),
+                gas.used,
+            )
+        }
+    }
+}
+
+fn make_reject_receipt(
+    tx: &SymbolicTransition,
+    state_root: [u8; 32],
+    reason: &str,
+    gas: &GasMeter,
+) -> CausalReceipt {
+    CausalReceipt {
+        tx_id: tx.tx_id,
+        verdict: Verdict::Reject {
+            reason: reason.to_string(),
+        },
+        pre_state_root: state_root,
+        post_state_root: state_root, // No state change on rejection.
+        read_set: vec![],
+        write_set: vec![],
+        causes: vec![],
+        resource_used: ResourceUsage {
+            compute_steps: gas.used,
+            state_reads: 0,
+            state_writes: 0,
+            proof_size_bytes: 0,
+        },
+        emitted_events: vec![],
+        wh_binding: empty_wh_resolved(tx),
+        phi_phase_reached: 0,
+        tension_delta: TensionValue::ZERO,
+    }
+}
+
+fn empty_wh_resolved(tx: &SymbolicTransition) -> WHBindingResolved {
+    WHBindingResolved {
+        intent: tx.wh_binding_intent.clone(),
+        what_actual: StateDelta::default(),
+        whether: ValidationResult::Valid,
+    }
+}
+
+fn extract_write_set(tx: &SymbolicTransition) -> Vec<[u8; 32]> {
+    match &tx.payload {
+        sccgub_types::transition::OperationPayload::Write { key, .. } => {
+            vec![sccgub_crypto::hash::blake3_hash(key)]
+        }
+        _ => vec![],
     }
 }
 
