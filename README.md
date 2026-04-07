@@ -2,7 +2,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-## Architecture (7 crates)
+## Architecture (8 crates)
 
 | Layer | Component | Description |
 |-------|-----------|-------------|
@@ -69,7 +69,7 @@ sccgub info               # Spec + invariants reference
 
 ```bash
 cargo build                    # Build
-cargo test                     # Run all 185 tests
+cargo test                     # Run all 203 tests
 cargo run -- init              # Initialize chain
 cargo run -- produce --txs 5   # Produce a block
 cargo run -- transfer 10000    # Transfer tokens
@@ -82,14 +82,16 @@ cargo bench                    # Run benchmarks
 
 ```
 crates/
+  sccgub-network/      Peer protocol, 9 message types (bincode-encoded), peer
+                        registry with sync candidate selection
   sccgub-consensus/    Two-round BFT voting, bounded finality, slashing engine,
-                        Phase 4 law synchronization, partition detection + recovery
+                        Phase 4 law synchronization, partition recovery, BFT safety proofs
   sccgub-types/        19 modules: blocks, transitions, WHBinding, Mfidel seals,
                         tension, causal graph, governance, proofs, receipts,
                         economics, contracts, domain packs, bridge adapters,
                         transaction builder, compliance (GDPR), multi-asset
   sccgub-crypto/       Blake3 (domain-separated), Merkle trees (with proofs),
-                        Ed25519 signatures
+                        Ed25519 signatures, bincode canonical encoding
   sccgub-state/        State trie (lazy cache + prefix scan), world state (nonces),
                         tension computation, balance ledger, multi-asset ledger
   sccgub-execution/    13-phase Phi traversal, CPoG (7 root verifications), SCCE,
