@@ -208,6 +208,13 @@ impl ConsensusRound {
     }
 
     /// Detect equivocation: a validator voting for two different blocks.
+    /// NOTE: Within a single ConsensusRound, add_prevote/add_precommit reject
+    /// duplicate validator IDs, so equivocation within one round is prevented
+    /// at admission. This method detects cross-evidence equivocation — e.g.,
+    /// when gossip reveals a validator signed conflicting votes in different
+    /// rounds or received from external sources. In the current single-round
+    /// implementation, this will always return empty. It becomes useful when
+    /// multi-round or cross-node evidence is aggregated.
     pub fn detect_equivocation(&self) -> Vec<EquivocationProof> {
         let mut proofs = Vec::new();
 

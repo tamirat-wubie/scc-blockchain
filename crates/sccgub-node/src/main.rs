@@ -397,20 +397,22 @@ fn cmd_show_state(data_dir: &std::path::Path) {
         return;
     }
 
-    // Replay all blocks to reconstruct state.
+    // Replay all blocks using shared apply function (single source of truth).
     let mut state = sccgub_state::world::ManagedWorldState::new();
+    let mut balances = sccgub_state::balances::BalanceLedger::new();
+    if let Some(genesis) = blocks.first() {
+        sccgub_state::apply::apply_genesis_mint(
+            &mut state,
+            &mut balances,
+            &genesis.header.validator_id,
+        );
+    }
     for block in &blocks {
-        for tx in &block.body.transitions {
-            if let OperationPayload::Write { key, value } = &tx.payload {
-                state.apply_delta(&StateDelta {
-                    writes: vec![StateWrite {
-                        address: key.clone(),
-                        value: value.clone(),
-                    }],
-                    deletes: vec![],
-                });
-            }
-        }
+        sccgub_state::apply::apply_block_transitions(
+            &mut state,
+            &mut balances,
+            &block.body.transitions,
+        );
     }
 
     println!(

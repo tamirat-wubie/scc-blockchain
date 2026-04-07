@@ -33,7 +33,6 @@ pub struct Chain {
     pub mempool: Mempool,
     pub chain_id: Hash,
     pub validator_key: ed25519_dalek::SigningKey,
-    #[allow(dead_code)]
     pub economics: EconomicState,
     pub balances: BalanceLedger,
     pub governance_limits: GovernanceLimits,
@@ -241,6 +240,17 @@ impl Chain {
             let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
         }
         speculative_state.set_height(height);
+
+        // Compute and record economic fees for this block.
+        let prior_tension = self
+            .blocks
+            .last()
+            .map(|b| b.header.tension_after)
+            .unwrap_or(TensionValue::ZERO);
+        let budget = self.state.state.tension_field.budget.current_budget;
+        let fee_per_tx = self.economics.effective_fee(prior_tension, budget);
+        let total_fees = TensionValue(fee_per_tx.raw().saturating_mul(transitions.len() as i128));
+        self.economics.record_fee(total_fees);
 
         // Use same canonical derivation as validator_id_for_check (line 178).
         let validator_id = validator_id_for_check;
@@ -623,11 +633,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         causal_hash: blake3_hash_concat(&[&parent_id, &transition_root]),
     };
 
+    let transition_count = transitions.len() as u32;
     Block {
         header,
         body: BlockBody {
-            transitions: transitions.clone(),
-            transition_count: transitions.len() as u32,
+            transitions,
+            transition_count,
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
         },
