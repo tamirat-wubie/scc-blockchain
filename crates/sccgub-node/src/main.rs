@@ -121,6 +121,37 @@ async fn main() {
     }
 }
 
+/// Replay blocks to reconstruct full state (single source of truth).
+/// Used by: cmd_verify, cmd_stats, cmd_health, cmd_serve, cmd_balance.
+fn replay_chain_state(
+    blocks: &[sccgub_types::block::Block],
+) -> (
+    sccgub_state::world::ManagedWorldState,
+    sccgub_state::balances::BalanceLedger,
+) {
+    let mut state = sccgub_state::world::ManagedWorldState::new();
+    let mut balances = sccgub_state::balances::BalanceLedger::new();
+    if let Some(genesis) = blocks.first() {
+        sccgub_state::apply::apply_genesis_mint(
+            &mut state,
+            &mut balances,
+            &genesis.header.validator_id,
+        );
+    }
+    for block in blocks {
+        sccgub_state::apply::apply_block_transitions(
+            &mut state,
+            &mut balances,
+            &block.body.transitions,
+        );
+        for tx in &block.body.transitions {
+            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+        }
+        state.set_height(block.header.height);
+    }
+    (state, balances)
+}
+
 fn cmd_init(data_dir: &std::path::Path) {
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
@@ -1049,21 +1080,7 @@ fn cmd_stats(data_dir: &std::path::Path) {
         }
     }
 
-    // State size.
-    let mut state = sccgub_state::world::ManagedWorldState::new();
-    for block in &blocks {
-        for tx in &block.body.transitions {
-            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
-                state.apply_delta(&sccgub_types::transition::StateDelta {
-                    writes: vec![sccgub_types::transition::StateWrite {
-                        address: key.clone(),
-                        value: value.clone(),
-                    }],
-                    deletes: vec![],
-                });
-            }
-        }
-    }
+    let (state, _balances) = replay_chain_state(&blocks);
 
     let latest = blocks.last().unwrap();
     let mfidel_cycle = sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height);

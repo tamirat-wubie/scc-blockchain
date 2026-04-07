@@ -178,8 +178,8 @@ fn parse_constraint_expression(expr: &str) -> crate::constraints::Predicate {
             return crate::constraints::Predicate::MinGovernanceLevel { level };
         }
     }
-    // Default: treat unknown expressions as True (permissive fallback).
-    crate::constraints::Predicate::True
+    // Reject unknown expressions — a typo in a constraint must not silently pass.
+    crate::constraints::Predicate::False
 }
 
 fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResult {
