@@ -7,6 +7,7 @@ members = [
     "crates/sccgub-execution",
     "crates/sccgub-governance",
     "crates/sccgub-consensus",
+    "crates/sccgub-network",
     "crates/sccgub-node",
 ]
 
@@ -25,3 +26,4 @@ rand = "0.8"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 hex = { version = "0.4", features = ["serde"] }
+bincode = "1"

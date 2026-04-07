@@ -1,15 +1,14 @@
 [package]
-name = "sccgub-crypto"
+name = "sccgub-network"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-blake3 = { workspace = true }
-ed25519-dalek = { workspace = true }
-rand = { workspace = true }
+serde_json = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 sccgub-types = { path = "../sccgub-types" }
+sccgub-crypto = { path = "../sccgub-crypto" }
+sccgub-consensus = { path = "../sccgub-consensus" }
 bincode = { workspace = true }
-serde_json = { workspace = true }
