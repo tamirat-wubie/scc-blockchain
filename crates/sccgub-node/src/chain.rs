@@ -36,7 +36,13 @@ impl Chain {
     /// Create a new chain with a genesis block.
     pub fn init() -> Self {
         let validator_key = generate_keypair();
-        let validator_id = blake3_hash(validator_key.verifying_key().as_bytes());
+        let pk = *validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(0);
+        // Agent ID = Hash(pubkey ++ seal) — canonical derivation matching validate.rs.
+        let validator_id = blake3_hash_concat(&[
+            &pk,
+            &serde_json::to_vec(&seal).expect("serialization cannot fail"),
+        ]);
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
         let mut state = ManagedWorldState::new();

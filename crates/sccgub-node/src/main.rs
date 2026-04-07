@@ -70,6 +70,11 @@ enum Commands {
         /// Input file path.
         input: std::path::PathBuf,
     },
+    /// Transfer tokens from the validator to a new agent and produce a block.
+    Transfer {
+        /// Amount to transfer (integer tokens).
+        amount: u64,
+    },
     /// Show chain economics: total supply, accounts, fees.
     Stats,
     /// Show the balance of a specific agent (by hex ID prefix).
@@ -96,6 +101,7 @@ fn main() {
         Commands::SearchTx { prefix } => cmd_search_tx(&cli.data_dir, &prefix),
         Commands::Export { output } => cmd_export(&cli.data_dir, &output),
         Commands::Import { input } => cmd_import(&cli.data_dir, &input),
+        Commands::Transfer { amount } => cmd_transfer(&cli.data_dir, amount),
         Commands::Stats => cmd_stats(&cli.data_dir),
         Commands::Balance { agent } => cmd_balance(&cli.data_dir, &agent),
         Commands::Demo => cmd_demo(),
@@ -661,6 +667,133 @@ fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
     if !found {
         println!("No transaction found with prefix '{}'", prefix);
     }
+}
+
+fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    let mut chain = Chain::from_blocks(blocks);
+
+    // Load validator key (sender).
+    if store.has_validator_key() {
+        match store.load_validator_key() {
+            Ok(key) => chain.set_validator_key(key),
+            Err(e) => {
+                eprintln!("Failed to load validator key: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Sender: the validator (who has the genesis mint).
+    let sender_pk = *chain.validator_key.verifying_key().as_bytes();
+    let sender_seal = MfidelAtomicSeal::from_height(0);
+    let sender_id = sccgub_crypto::hash::blake3_hash_concat(&[
+        &sender_pk,
+        &serde_json::to_vec(&sender_seal).unwrap(),
+    ]);
+    let sender = AgentIdentity {
+        agent_id: sender_id,
+        public_key: sender_pk,
+        mfidel_seal: sender_seal,
+        registration_block: 0,
+        governance_level: PrecedenceLevel::Meaning,
+        norm_set: HashSet::new(),
+        responsibility: ResponsibilityState::default(),
+    };
+
+    // Recipient: generate a new agent.
+    let recipient_key = generate_keypair();
+    let recipient_pk = *recipient_key.verifying_key().as_bytes();
+    let recipient_seal = MfidelAtomicSeal::from_height(chain.height() + 1);
+    let recipient_id = sccgub_crypto::hash::blake3_hash_concat(&[
+        &recipient_pk,
+        &serde_json::to_vec(&recipient_seal).unwrap(),
+    ]);
+
+    let current_height = chain.height();
+    let nonce = (current_height + 1) * 1000 + 1;
+    let transfer_amount = sccgub_types::tension::TensionValue::from_integer(amount as i64);
+
+    // Build transfer transaction.
+    let intent = WHBindingIntent {
+        who: sender_id,
+        when: CausalTimestamp::genesis(),
+        r#where: b"ledger/transfer".to_vec(),
+        why: CausalJustification {
+            invoking_rule: blake3_hash(b"asset-transfer-rule"),
+            precedence_level: PrecedenceLevel::Meaning,
+            causal_ancestors: vec![],
+            constraint_proof: vec![],
+        },
+        how: TransitionMechanism::DirectStateWrite,
+        which: HashSet::new(),
+        what_declared: format!("Transfer {} tokens", amount),
+    };
+
+    let mut tx = SymbolicTransition {
+        tx_id: [0u8; 32],
+        actor: sender.clone(),
+        intent: TransitionIntent {
+            kind: TransitionKind::AssetTransfer,
+            target: b"ledger/transfer".to_vec(),
+            declared_purpose: format!("Transfer {} tokens to {}", amount, &hex::encode(recipient_id)[..16]),
+        },
+        preconditions: vec![],
+        postconditions: vec![],
+        payload: OperationPayload::AssetTransfer {
+            from: sender_id,
+            to: recipient_id,
+            amount: transfer_amount.raw(),
+        },
+        causal_chain: vec![],
+        wh_binding_intent: intent,
+        nonce: nonce as u128,
+        signature: vec![],
+    };
+
+    let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+    tx.tx_id = blake3_hash(&canonical);
+    tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+    chain.submit_transition(tx);
+
+    let produced_height = match chain.produce_block() {
+        Ok(block) => {
+            store.save_block(block).expect("Failed to save block");
+            block.header.height
+        }
+        Err(e) => {
+            eprintln!("Failed to produce block: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("Transfer complete in Block #{}:", produced_height);
+    println!("  From:   {} (validator)", &hex::encode(sender_id)[..16]);
+    println!("  To:     {}", hex::encode(recipient_id));
+    println!("  Amount: {} tokens", amount);
+    println!();
+
+    // Show updated balances.
+    println!("Balances after transfer:");
+    println!("  Sender:    {}", chain.balances.balance_of(&sender_id));
+    println!("  Recipient: {}", chain.balances.balance_of(&recipient_id));
+    println!("  Supply:    {}", chain.balances.total_supply());
 }
 
 fn cmd_balance(data_dir: &std::path::Path, agent_prefix: &str) {
