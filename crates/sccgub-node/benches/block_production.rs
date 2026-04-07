@@ -67,7 +67,7 @@ fn main() {
     let seal = MfidelAtomicSeal::from_height(1);
     let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
         &pk,
-        &serde_json::to_vec(&seal).unwrap(),
+        &sccgub_crypto::canonical::canonical_bytes(&seal),
     ]);
     let agent = AgentIdentity {
         agent_id,

@@ -89,7 +89,7 @@ impl ProposalRegistry {
         }
 
         let id = sccgub_crypto::hash::blake3_hash(
-            &serde_json::to_vec(&(&proposer, &kind, current_height)).expect("serialization cannot fail"),
+            &sccgub_crypto::canonical::canonical_bytes(&(&proposer, &kind, current_height)),
         );
 
         self.proposals.push(GovernanceProposal {

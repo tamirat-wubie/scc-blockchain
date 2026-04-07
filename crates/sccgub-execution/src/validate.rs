@@ -96,26 +96,25 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
         }
         sccgub_types::transition::OperationPayload::Noop => [0u8; 32],
         _ => {
-            let serialized = serde_json::to_vec(&tx.payload)
-                .expect("canonical_tx_bytes: payload serialization cannot fail");
+            let serialized = sccgub_crypto::canonical::canonical_bytes(&tx.payload);
             sccgub_crypto::hash::blake3_hash(&serialized)
         }
     };
 
     let pre_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.preconditions).expect("serialization cannot fail"),
+        &sccgub_crypto::canonical::canonical_bytes(&tx.preconditions),
     );
     let post_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.postconditions).expect("serialization cannot fail"),
+        &sccgub_crypto::canonical::canonical_bytes(&tx.postconditions),
     );
     let wh_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.wh_binding_intent).expect("serialization cannot fail"),
+        &sccgub_crypto::canonical::canonical_bytes(&tx.wh_binding_intent),
     );
     let causal_hash = sccgub_crypto::hash::blake3_hash(
-        &serde_json::to_vec(&tx.causal_chain).expect("serialization cannot fail"),
+        &sccgub_crypto::canonical::canonical_bytes(&tx.causal_chain),
     );
 
-    serde_json::to_vec(&(
+    sccgub_crypto::canonical::canonical_bytes(&(
         &tx.actor.agent_id,
         tx.intent.kind as u8,
         &tx.intent.target,
@@ -126,7 +125,6 @@ pub fn canonical_tx_bytes(tx: &SymbolicTransition) -> Vec<u8> {
         &wh_hash,
         &causal_hash,
     ))
-    .expect("canonical_tx_bytes: serialization cannot fail")
 }
 
 #[cfg(test)]

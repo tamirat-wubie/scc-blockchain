@@ -178,8 +178,7 @@ impl Chain {
         // Anti-concentration: check consecutive proposal limit.
         let validator_id_for_check = blake3_hash_concat(&[
             self.validator_key.verifying_key().as_bytes(),
-            &serde_json::to_vec(&MfidelAtomicSeal::from_height(0))
-                .expect("serialization cannot fail"),
+            &canonical_bytes(&MfidelAtomicSeal::from_height(0)),
         ]);
         if let Err(e) = self
             .power_tracker
@@ -386,7 +385,7 @@ fn build_genesis_block(
         finality_mode: FinalityMode::Deterministic,
     };
 
-    let header_data = serde_json::to_vec(&("genesis", &chain_id)).expect("serialization cannot fail");
+    let header_data = sccgub_crypto::canonical::canonical_bytes(&("genesis", &chain_id));
     let block_id = blake3_hash(&header_data);
 
     let header = BlockHeader {
@@ -474,7 +473,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 
     let governance = GovernanceSnapshot {
         state_hash: blake3_hash(
-            &serde_json::to_vec(&state.state.governance_state).expect("serialization cannot fail"),
+            &sccgub_crypto::canonical::canonical_bytes(&state.state.governance_state),
         ),
         active_norm_count: state.state.governance_state.active_norms.len() as u32,
         emergency_mode: state.state.governance_state.emergency_mode,
@@ -485,7 +484,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 
     // Build causal graph delta.
     let block_vertex = CausalVertex::Block(blake3_hash(
-        &serde_json::to_vec(&(chain_id, height)).expect("serialization cannot fail"),
+        &sccgub_crypto::canonical::canonical_bytes(&(chain_id, height)),
     ));
     let mut causal_vertices = vec![block_vertex.clone()];
     let mut causal_edges = Vec::new();
