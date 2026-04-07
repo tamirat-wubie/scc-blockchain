@@ -1,122 +1,117 @@
-use blake3::Hasher;
+use argon2::Argon2;
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce,
+};
 use ed25519_dalek::SigningKey;
+use rand::RngCore;
 
-/// Secure keystore — encrypts private keys at rest using a passphrase.
+/// Finance-grade keystore — encrypts private keys at rest.
 ///
-/// Key derivation: BLAKE3-based KDF with configurable iterations (memory-hard
-/// properties via iteration count). In production, use Argon2id — this serves
-/// as the deterministic, no-extra-dependency baseline.
+/// Key derivation: Argon2id (memory-hard, resistant to GPU/ASIC attacks).
+/// Encryption: ChaCha20-Poly1305 AEAD (authenticated encryption).
 ///
-/// Encryption: XOR stream cipher from BLAKE3 keyed hash (deterministic,
-/// no additional dependencies). In production, upgrade to ChaCha20-Poly1305.
-///
-/// This module is designed so the encryption scheme can be swapped without
-/// changing the keystore interface.
-const KDF_ITERATIONS: u32 = 100_000;
+/// Security properties:
+/// - Passphrase -> Argon2id -> 32-byte encryption key.
+/// - Random 32-byte salt (unique per bundle, stored alongside ciphertext).
+/// - Random 12-byte nonce (unique per encryption, stored alongside ciphertext).
+/// - AEAD authentication tag prevents tampered ciphertext from decrypting.
+/// - BLAKE3 checksum of plaintext for defense-in-depth integrity check.
+/// - Public key stored in cleartext for identification without decryption.
 const SALT_LEN: usize = 32;
-const KEY_LEN: usize = 32;
+const NONCE_LEN: usize = 12;
 
 /// Encrypted key bundle stored on disk.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedKeyBundle {
-    /// KDF salt (random, unique per bundle).
+    /// Argon2id salt (random, unique per bundle).
     pub salt: Vec<u8>,
-    /// Encrypted private key bytes (64 bytes for Ed25519 SigningKey).
+    /// ChaCha20-Poly1305 nonce (random, unique per encryption).
+    pub nonce: Vec<u8>,
+    /// AEAD-encrypted private key bytes (32 bytes + 16-byte auth tag).
     pub ciphertext: Vec<u8>,
-    /// KDF iteration count (stored for forward compatibility).
-    pub kdf_iterations: u32,
     /// Public key (stored in plaintext for identification).
     pub public_key: [u8; 32],
     /// BLAKE3 checksum of plaintext key for integrity verification.
     pub checksum: [u8; 32],
+    /// KDF algorithm identifier for forward compatibility.
+    pub kdf: String,
+    /// Encryption algorithm identifier.
+    pub cipher: String,
 }
 
-/// Derive an encryption key from a passphrase and salt.
-fn derive_key(passphrase: &[u8], salt: &[u8], iterations: u32) -> [u8; KEY_LEN] {
-    let mut key = [0u8; KEY_LEN];
-    let mut state = {
-        let mut h = Hasher::new();
-        h.update(passphrase);
-        h.update(salt);
-        h.finalize()
-    };
-
-    // Iterative hashing for key stretching.
-    for _ in 0..iterations {
-        let mut h = Hasher::new();
-        h.update(state.as_bytes());
-        h.update(salt);
-        state = h.finalize();
-    }
-
-    key.copy_from_slice(&state.as_bytes()[..KEY_LEN]);
-    key
+/// Derive a 32-byte encryption key from passphrase + salt using Argon2id.
+fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
+    let mut key = [0u8; 32];
+    Argon2::default()
+        .hash_password_into(passphrase, salt, &mut key)
+        .map_err(|e| format!("Argon2id KDF failed: {}", e))?;
+    Ok(key)
 }
 
-/// XOR-based stream encryption using BLAKE3 keyed hash.
-/// Deterministic: same key + data = same ciphertext.
-fn xor_encrypt(key: &[u8; KEY_LEN], data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
+/// Encrypt a signing key with a passphrase using Argon2id + ChaCha20-Poly1305.
+pub fn encrypt_key(key: &SigningKey, passphrase: &str) -> Result<EncryptedKeyBundle, String> {
+    // Generate random salt and nonce.
+    let mut salt = vec![0u8; SALT_LEN];
+    let mut nonce_bytes = vec![0u8; NONCE_LEN];
+    rand::thread_rng().fill_bytes(&mut salt);
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    for (block_idx, chunk) in data.chunks(32).enumerate() {
-        let mut h = Hasher::new_keyed(key);
-        h.update(&(block_idx as u64).to_le_bytes());
-        let stream = h.finalize();
-        let stream_bytes = stream.as_bytes();
+    // Derive encryption key.
+    let derived = derive_key(passphrase.as_bytes(), &salt)?;
 
-        for (i, &byte) in chunk.iter().enumerate() {
-            out.push(byte ^ stream_bytes[i]);
-        }
-    }
-
-    out
-}
-
-/// Encrypt a signing key with a passphrase.
-pub fn encrypt_key(key: &SigningKey, passphrase: &str) -> EncryptedKeyBundle {
-    let mut salt = [0u8; SALT_LEN];
-    // Use the key itself as entropy for the salt (deterministic per key).
-    // In production, use OsRng for random salt.
-    let mut h = Hasher::new();
-    h.update(key.as_bytes());
-    h.update(b"keystore-salt");
-    let hash = h.finalize();
-    salt.copy_from_slice(&hash.as_bytes()[..SALT_LEN]);
-
-    let derived = derive_key(passphrase.as_bytes(), &salt, KDF_ITERATIONS);
+    // Encrypt with ChaCha20-Poly1305.
+    let cipher =
+        ChaCha20Poly1305::new_from_slice(&derived).map_err(|e| format!("Cipher init: {}", e))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
     let plaintext = key.as_bytes();
-    let ciphertext = xor_encrypt(&derived, plaintext);
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_slice())
+        .map_err(|e| format!("Encryption failed: {}", e))?;
 
-    // Checksum for integrity.
     let checksum = crate::hash::blake3_hash(plaintext);
 
-    EncryptedKeyBundle {
-        salt: salt.to_vec(),
+    Ok(EncryptedKeyBundle {
+        salt,
+        nonce: nonce_bytes,
         ciphertext,
-        kdf_iterations: KDF_ITERATIONS,
         public_key: *key.verifying_key().as_bytes(),
         checksum,
-    }
+        kdf: "argon2id".into(),
+        cipher: "chacha20-poly1305".into(),
+    })
 }
 
 /// Decrypt a signing key from an encrypted bundle.
 pub fn decrypt_key(bundle: &EncryptedKeyBundle, passphrase: &str) -> Result<SigningKey, String> {
-    let derived = derive_key(passphrase.as_bytes(), &bundle.salt, bundle.kdf_iterations);
-    let plaintext = xor_encrypt(&derived, &bundle.ciphertext);
+    // Derive the same encryption key.
+    let derived = derive_key(passphrase.as_bytes(), &bundle.salt)?;
+
+    // Decrypt with ChaCha20-Poly1305.
+    let cipher =
+        ChaCha20Poly1305::new_from_slice(&derived).map_err(|e| format!("Cipher init: {}", e))?;
+
+    if bundle.nonce.len() != NONCE_LEN {
+        return Err("Invalid nonce length".into());
+    }
+    let nonce = Nonce::from_slice(&bundle.nonce);
+
+    let plaintext = cipher
+        .decrypt(nonce, bundle.ciphertext.as_slice())
+        .map_err(|_| "Decryption failed: wrong passphrase or corrupted data".to_string())?;
 
     if plaintext.len() != 32 {
         return Err("Decrypted key has wrong length".into());
     }
 
-    // Verify checksum.
+    // Verify BLAKE3 checksum.
     let checksum = crate::hash::blake3_hash(&plaintext);
     if checksum != bundle.checksum {
-        return Err("Passphrase incorrect or key corrupted (checksum mismatch)".into());
+        return Err("Integrity check failed: checksum mismatch".into());
     }
 
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(&plaintext);
-
     let key = SigningKey::from_bytes(&key_bytes);
 
     // Verify public key matches.
@@ -149,7 +144,7 @@ mod tests {
         let key = generate_keypair();
         let passphrase = "test-passphrase-123";
 
-        let bundle = encrypt_key(&key, passphrase);
+        let bundle = encrypt_key(&key, passphrase).unwrap();
         let recovered = decrypt_key(&bundle, passphrase).unwrap();
 
         assert_eq!(key.as_bytes(), recovered.as_bytes());
@@ -162,7 +157,7 @@ mod tests {
     #[test]
     fn test_wrong_passphrase_rejected() {
         let key = generate_keypair();
-        let bundle = encrypt_key(&key, "correct-passphrase");
+        let bundle = encrypt_key(&key, "correct-passphrase").unwrap();
 
         let result = decrypt_key(&bundle, "wrong-passphrase");
         assert!(result.is_err());
@@ -171,34 +166,45 @@ mod tests {
     #[test]
     fn test_public_key_stored_plaintext() {
         let key = generate_keypair();
-        let bundle = encrypt_key(&key, "pass");
-
-        // Public key is readable without decryption.
+        let bundle = encrypt_key(&key, "pass").unwrap();
         assert_eq!(bundle.public_key, *key.verifying_key().as_bytes());
     }
 
     #[test]
     fn test_ciphertext_differs_from_plaintext() {
         let key = generate_keypair();
-        let bundle = encrypt_key(&key, "pass");
-        assert_ne!(&bundle.ciphertext, key.as_bytes().as_slice());
+        let bundle = encrypt_key(&key, "pass").unwrap();
+        // Ciphertext is 32 bytes + 16 byte auth tag = 48 bytes.
+        assert_eq!(bundle.ciphertext.len(), 48);
+        assert_ne!(&bundle.ciphertext[..32], key.as_bytes().as_slice());
     }
 
     #[test]
-    fn test_different_passphrases_different_ciphertext() {
+    fn test_tampered_ciphertext_rejected() {
         let key = generate_keypair();
-        let bundle1 = encrypt_key(&key, "pass1");
-        let bundle2 = encrypt_key(&key, "pass2");
-
-        // Same key, different passphrases → different ciphertext.
-        // Note: salt is derived from key, so same salt. But derived key differs.
-        assert_ne!(bundle1.ciphertext, bundle2.ciphertext);
+        let mut bundle = encrypt_key(&key, "pass").unwrap();
+        bundle.ciphertext[0] ^= 0xFF; // Tamper one byte.
+        let result = decrypt_key(&bundle, "pass");
+        assert!(result.is_err(), "AEAD must reject tampered ciphertext");
     }
 
     #[test]
-    fn test_kdf_iterations_stored() {
+    fn test_kdf_and_cipher_recorded() {
         let key = generate_keypair();
-        let bundle = encrypt_key(&key, "pass");
-        assert_eq!(bundle.kdf_iterations, KDF_ITERATIONS);
+        let bundle = encrypt_key(&key, "pass").unwrap();
+        assert_eq!(bundle.kdf, "argon2id");
+        assert_eq!(bundle.cipher, "chacha20-poly1305");
+    }
+
+    #[test]
+    fn test_random_salt_unique_per_encryption() {
+        let key = generate_keypair();
+        let b1 = encrypt_key(&key, "pass").unwrap();
+        let b2 = encrypt_key(&key, "pass").unwrap();
+        assert_ne!(b1.salt, b2.salt, "Each encryption must use a unique salt");
+        assert_ne!(
+            b1.nonce, b2.nonce,
+            "Each encryption must use a unique nonce"
+        );
     }
 }

@@ -658,3 +658,308 @@ fn test_gas_fee_conservation() {
     let expected = TensionValue((total_gas as i128).saturating_mul(gas_price.raw()));
     assert_eq!(treasury.total_fees_collected, expected);
 }
+
+// === Adversarial escrow tests ===
+
+#[test]
+fn test_escrow_double_release_rejected() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+
+    let mut bal = BalanceLedger::new();
+    bal.credit(&[1u8; 32], TensionValue::from_integer(1000));
+    let initial = bal.total_supply();
+
+    let mut escrow = EscrowRegistry::new();
+    let id = escrow
+        .create(
+            [1u8; 32],
+            [2u8; 32],
+            TensionValue::from_integer(500),
+            EscrowCondition::ArbiterApproval { arbiter: [3u8; 32] },
+            1,
+            100,
+            &mut bal,
+        )
+        .unwrap();
+
+    escrow.release(&id, &mut bal).unwrap();
+
+    // Second release must fail — funds already released.
+    let result = escrow.release(&id, &mut bal);
+    assert!(result.is_err(), "Double release must be rejected");
+    assert_eq!(bal.total_supply(), initial, "Supply must be conserved");
+}
+
+#[test]
+fn test_escrow_refund_after_release_rejected() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+
+    let mut bal = BalanceLedger::new();
+    bal.credit(&[1u8; 32], TensionValue::from_integer(1000));
+
+    let mut escrow = EscrowRegistry::new();
+    let id = escrow
+        .create(
+            [1u8; 32],
+            [2u8; 32],
+            TensionValue::from_integer(500),
+            EscrowCondition::TimeLocked { release_at: 50 },
+            1,
+            100,
+            &mut bal,
+        )
+        .unwrap();
+
+    escrow.release(&id, &mut bal).unwrap();
+
+    // Refund after release must fail.
+    let result = escrow.refund(&id, 200, &mut bal);
+    assert!(result.is_err(), "Refund after release must be rejected");
+}
+
+#[test]
+fn test_escrow_premature_refund_rejected() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+
+    let mut bal = BalanceLedger::new();
+    bal.credit(&[1u8; 32], TensionValue::from_integer(1000));
+
+    let mut escrow = EscrowRegistry::new();
+    let id = escrow
+        .create(
+            [1u8; 32],
+            [2u8; 32],
+            TensionValue::from_integer(300),
+            EscrowCondition::ArbiterApproval { arbiter: [3u8; 32] },
+            1,
+            100, // timeout at block 101.
+            &mut bal,
+        )
+        .unwrap();
+
+    // Refund at block 50 (before timeout 101).
+    let result = escrow.refund(&id, 50, &mut bal);
+    assert!(result.is_err(), "Premature refund must be rejected");
+}
+
+#[test]
+fn test_escrow_zero_amount_rejected() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+
+    let mut bal = BalanceLedger::new();
+    bal.credit(&[1u8; 32], TensionValue::from_integer(1000));
+
+    let mut escrow = EscrowRegistry::new();
+    let result = escrow.create(
+        [1u8; 32],
+        [2u8; 32],
+        TensionValue::ZERO,
+        EscrowCondition::TimeLocked { release_at: 50 },
+        1,
+        100,
+        &mut bal,
+    );
+    assert!(result.is_err(), "Zero-amount escrow must be rejected");
+}
+
+#[test]
+fn test_escrow_self_escrow_rejected() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+
+    let mut bal = BalanceLedger::new();
+    bal.credit(&[1u8; 32], TensionValue::from_integer(1000));
+
+    let mut escrow = EscrowRegistry::new();
+    let result = escrow.create(
+        [1u8; 32],
+        [1u8; 32], // Same sender and recipient.
+        TensionValue::from_integer(100),
+        EscrowCondition::TimeLocked { release_at: 50 },
+        1,
+        100,
+        &mut bal,
+    );
+    assert!(result.is_err(), "Self-escrow must be rejected");
+}
+
+// === Adversarial receipt / validation tests ===
+
+#[test]
+fn test_metered_validation_rejects_invalid_tx() {
+    use sccgub_execution::validate::validate_transition_metered;
+    use sccgub_state::world::ManagedWorldState;
+    use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+    use sccgub_types::governance::PrecedenceLevel;
+    use sccgub_types::mfidel::MfidelAtomicSeal;
+    use sccgub_types::timestamp::CausalTimestamp;
+    use sccgub_types::transition::*;
+    use std::collections::HashSet;
+
+    let state = ManagedWorldState::new();
+
+    // Create a tx with empty signature (invalid).
+    let tx = SymbolicTransition {
+        tx_id: [0u8; 32],
+        actor: AgentIdentity {
+            agent_id: [1u8; 32],
+            public_key: [0u8; 32],
+            mfidel_seal: MfidelAtomicSeal::from_height(1),
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: HashSet::new(),
+            responsibility: ResponsibilityState::default(),
+        },
+        intent: TransitionIntent {
+            kind: TransitionKind::StateWrite,
+            target: b"test".to_vec(),
+            declared_purpose: "test".into(),
+        },
+        preconditions: vec![],
+        postconditions: vec![],
+        payload: OperationPayload::Write {
+            key: b"test".to_vec(),
+            value: b"val".to_vec(),
+        },
+        causal_chain: vec![],
+        wh_binding_intent: WHBindingIntent {
+            who: [1u8; 32],
+            when: CausalTimestamp::genesis(),
+            r#where: b"test".to_vec(),
+            why: CausalJustification {
+                invoking_rule: [2u8; 32],
+                precedence_level: PrecedenceLevel::Meaning,
+                causal_ancestors: vec![],
+                constraint_proof: vec![],
+            },
+            how: TransitionMechanism::DirectStateWrite,
+            which: HashSet::new(),
+            what_declared: "test".into(),
+        },
+        nonce: 1,
+        signature: vec![], // Empty — invalid.
+    };
+
+    let (receipt, gas_used) =
+        validate_transition_metered(&tx, &state, sccgub_execution::gas::costs::DEFAULT_TX_LIMIT);
+
+    assert!(
+        !receipt.verdict.is_accepted(),
+        "Invalid tx must be rejected"
+    );
+    assert!(gas_used > 0, "Gas must be consumed even for rejected txs");
+    assert_eq!(
+        receipt.pre_state_root, receipt.post_state_root,
+        "Rejected tx must not change state"
+    );
+}
+
+// === Restart / replay convergence tests ===
+
+#[test]
+fn test_chain_init_replay_convergence() {
+    // Two independent chain inits produce different keys but identical genesis structure.
+    use sccgub_state::apply::apply_genesis_mint;
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::world::ManagedWorldState;
+
+    let validator = [42u8; 32];
+
+    let mut s1 = ManagedWorldState::new();
+    let mut b1 = BalanceLedger::new();
+    apply_genesis_mint(&mut s1, &mut b1, &validator);
+
+    let mut s2 = ManagedWorldState::new();
+    let mut b2 = BalanceLedger::new();
+    apply_genesis_mint(&mut s2, &mut b2, &validator);
+
+    assert_eq!(
+        s1.state_root(),
+        s2.state_root(),
+        "Genesis mint must be deterministic"
+    );
+    assert_eq!(b1.total_supply(), b2.total_supply());
+    assert_eq!(b1.balance_of(&validator), b2.balance_of(&validator));
+}
+
+#[test]
+fn test_keystore_roundtrip_argon2_chacha() {
+    use sccgub_crypto::keystore::{decrypt_key, encrypt_key};
+
+    let key = sccgub_crypto::keys::generate_keypair();
+    let passphrase = "production-grade-passphrase-2024!";
+
+    let bundle = encrypt_key(&key, passphrase).unwrap();
+    assert_eq!(bundle.kdf, "argon2id");
+    assert_eq!(bundle.cipher, "chacha20-poly1305");
+
+    let recovered = decrypt_key(&bundle, passphrase).unwrap();
+    assert_eq!(key.as_bytes(), recovered.as_bytes());
+
+    // Wrong passphrase must fail with AEAD rejection.
+    assert!(decrypt_key(&bundle, "wrong").is_err());
+}
+
+#[test]
+fn test_keystore_tampered_ciphertext_detected() {
+    use sccgub_crypto::keystore::{decrypt_key, encrypt_key};
+
+    let key = sccgub_crypto::keys::generate_keypair();
+    let mut bundle = encrypt_key(&key, "pass").unwrap();
+    bundle.ciphertext[5] ^= 0xFF; // Tamper.
+    assert!(
+        decrypt_key(&bundle, "pass").is_err(),
+        "AEAD must detect tampering"
+    );
+}
+
+// === Role-based custody tests ===
+
+#[test]
+fn test_custody_role_separation() {
+    use sccgub_crypto::roles::*;
+
+    let mut keyring = OperatorKeyring::new();
+    let val_pk = [1u8; 32];
+    let treasury_pk = [2u8; 32];
+
+    keyring.register(KeyRole::Validator, val_pk, 0);
+    keyring.register(KeyRole::Treasury, treasury_pk, 0);
+
+    // Validator key can sign blocks but not mint.
+    assert!(keyring
+        .authorize(&val_pk, &AuthorizedAction::SignBlock, 10)
+        .is_ok());
+    assert!(keyring
+        .authorize(&val_pk, &AuthorizedAction::AuthorizeMint, 10)
+        .is_err());
+
+    // Treasury key can mint but not sign blocks.
+    assert!(keyring
+        .authorize(&treasury_pk, &AuthorizedAction::AuthorizeMint, 10)
+        .is_ok());
+    assert!(keyring
+        .authorize(&treasury_pk, &AuthorizedAction::SignBlock, 10)
+        .is_err());
+}
+
+#[test]
+fn test_custody_revoked_key_blocked() {
+    use sccgub_crypto::roles::*;
+
+    let mut keyring = OperatorKeyring::new();
+    let pk = [1u8; 32];
+    keyring.register(KeyRole::Validator, pk, 0);
+
+    keyring.revoke(KeyRole::Validator).unwrap();
+    assert!(
+        keyring
+            .authorize(&pk, &AuthorizedAction::SignBlock, 10)
+            .is_err(),
+        "Revoked key must be blocked"
+    );
+}
