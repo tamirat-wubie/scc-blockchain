@@ -6,6 +6,7 @@ members = [
     "crates/sccgub-state",
     "crates/sccgub-execution",
     "crates/sccgub-governance",
+    "crates/sccgub-consensus",
     "crates/sccgub-node",
 ]
 

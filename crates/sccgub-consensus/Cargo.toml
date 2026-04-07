@@ -1,0 +1,12 @@
+[package]
+name = "sccgub-consensus"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+sccgub-types = { path = "../sccgub-types" }
+sccgub-crypto = { path = "../sccgub-crypto" }
