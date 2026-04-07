@@ -179,6 +179,56 @@ impl ChainStore {
     pub fn has_validator_key(&self) -> bool {
         self.base_dir.join("validator.key").exists()
     }
+
+    /// Save a state snapshot at a given height.
+    /// Snapshots contain the full state trie + nonces + balances, enabling
+    /// fast chain load without replaying all blocks from genesis.
+    pub fn save_snapshot(&self, snapshot: &StateSnapshot) -> std::io::Result<()> {
+        let filename = format!("snapshot_{:010}.json", snapshot.height);
+        let path = self.base_dir.join("state").join(&filename);
+        let tmp_path = self.base_dir.join("state").join(format!("{}.tmp", filename));
+        let json = serde_json::to_string(snapshot)
+            .map_err(std::io::Error::other)?;
+        fs::write(&tmp_path, &json)?;
+        fs::rename(&tmp_path, &path)
+    }
+
+    /// Load the latest state snapshot.
+    pub fn load_latest_snapshot(&self) -> std::io::Result<Option<StateSnapshot>> {
+        let state_dir = self.base_dir.join("state");
+        let mut entries: Vec<_> = fs::read_dir(&state_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with("snapshot_") && s.ends_with(".json") && !s.ends_with(".tmp")
+            })
+            .collect();
+
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        entries.sort_by_key(|e| e.file_name());
+        let latest = entries.last().unwrap();
+        let json = fs::read_to_string(latest.path())?;
+        let snapshot: StateSnapshot = serde_json::from_str(&json)
+            .map_err(std::io::Error::other)?;
+        Ok(Some(snapshot))
+    }
+}
+
+/// State snapshot for fast chain loading.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StateSnapshot {
+    pub height: u64,
+    pub state_root: sccgub_types::MerkleRoot,
+    /// Full state trie entries.
+    pub trie_entries: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Per-agent nonces.
+    pub agent_nonces: Vec<(sccgub_types::AgentId, u128)>,
+    /// Balance ledger entries.
+    pub balances: Vec<(sccgub_types::AgentId, i128)>,
 }
 
 #[cfg(test)]

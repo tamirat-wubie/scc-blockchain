@@ -70,9 +70,9 @@ impl ManagedWorldState {
         Ok(())
     }
 
-    /// Get the current Merkle state root.
+    /// Get the current Merkle state root (uses cache if clean).
     pub fn state_root(&self) -> MerkleRoot {
-        self.trie.root()
+        self.trie.root_readonly()
     }
 
     /// Read a value from the state.

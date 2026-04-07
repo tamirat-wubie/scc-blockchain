@@ -212,6 +212,40 @@ impl Chain {
         self.validator_key = key;
     }
 
+    /// Create a state snapshot at the current height.
+    pub fn create_snapshot(&self) -> crate::persistence::StateSnapshot {
+        crate::persistence::StateSnapshot {
+            height: self.state.state.height,
+            state_root: self.state.state_root(),
+            trie_entries: self.state.trie.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            agent_nonces: self.state.agent_nonces.iter().map(|(k, v)| (*k, *v)).collect(),
+            balances: self.balances.balances.iter().map(|(k, v)| (*k, v.raw())).collect(),
+        }
+    }
+
+    /// Restore chain state from a snapshot (fast load — no block replay needed).
+    pub fn restore_from_snapshot(&mut self, snapshot: &crate::persistence::StateSnapshot) {
+        // Clear and rebuild trie.
+        self.state = ManagedWorldState::new();
+        self.state.state.governance_state = GovernanceState {
+            finality_mode: FinalityMode::Deterministic,
+            ..GovernanceState::default()
+        };
+        for (key, value) in &snapshot.trie_entries {
+            self.state.trie.insert(key.clone(), value.clone());
+        }
+        for (agent_id, nonce) in &snapshot.agent_nonces {
+            self.state.agent_nonces.insert(*agent_id, *nonce);
+        }
+        self.state.set_height(snapshot.height);
+
+        // Restore balances.
+        self.balances = BalanceLedger::new();
+        for (agent_id, raw_balance) in &snapshot.balances {
+            self.balances.credit(agent_id, TensionValue(*raw_balance));
+        }
+    }
+
     /// Get the latest block.
     pub fn latest_block(&self) -> Option<&Block> {
         self.blocks.last()

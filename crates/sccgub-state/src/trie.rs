@@ -5,17 +5,19 @@ use sccgub_crypto::merkle::compute_merkle_root;
 use sccgub_types::{Hash, MerkleRoot, SymbolAddress, ZERO_HASH};
 
 /// Simplified Merkle Patricia Trie backed by a BTreeMap.
-/// MVP implementation: HashMap storage with on-demand Merkle root computation.
-/// A full Patricia trie is a later optimization.
+/// Features lazy root caching — root is recomputed only when the trie is dirty.
 #[derive(Debug, Clone)]
 pub struct StateTrie {
     store: BTreeMap<SymbolAddress, Vec<u8>>,
+    /// Cached Merkle root. `None` means dirty (needs recomputation).
+    cached_root: Option<MerkleRoot>,
 }
 
 impl StateTrie {
     pub fn new() -> Self {
         Self {
             store: BTreeMap::new(),
+            cached_root: Some(ZERO_HASH),
         }
     }
 
@@ -25,10 +27,15 @@ impl StateTrie {
 
     pub fn insert(&mut self, key: SymbolAddress, value: Vec<u8>) {
         self.store.insert(key, value);
+        self.cached_root = None; // Invalidate cache.
     }
 
     pub fn remove(&mut self, key: &SymbolAddress) -> Option<Vec<u8>> {
-        self.store.remove(key)
+        let result = self.store.remove(key);
+        if result.is_some() {
+            self.cached_root = None; // Invalidate cache.
+        }
+        result
     }
 
     pub fn contains(&self, key: &SymbolAddress) -> bool {
@@ -44,19 +51,33 @@ impl StateTrie {
     }
 
     /// Compute the Merkle root of the entire trie state.
-    /// Hashes each (key, value) pair, then builds a Merkle tree.
-    pub fn root(&self) -> MerkleRoot {
+    /// Uses lazy caching — only recomputes when the trie has been modified.
+    pub fn root(&mut self) -> MerkleRoot {
+        if let Some(cached) = self.cached_root {
+            return cached;
+        }
+        let computed = self.compute_root();
+        self.cached_root = Some(computed);
+        computed
+    }
+
+    /// Force recompute (for immutable contexts where &self is needed).
+    pub fn root_readonly(&self) -> MerkleRoot {
+        if let Some(cached) = self.cached_root {
+            return cached;
+        }
+        self.compute_root()
+    }
+
+    fn compute_root(&self) -> MerkleRoot {
         if self.store.is_empty() {
             return ZERO_HASH;
         }
         // Domain-separated hashing: hash(len(key) || key || len(value) || value)
-        // Prevents key/value boundary confusion attacks.
         let leaves: Vec<Hash> = self
             .store
             .iter()
-            .map(|(k, v)| {
-                blake3_hash_concat(&[k.as_slice(), v.as_slice()])
-            })
+            .map(|(k, v)| blake3_hash_concat(&[k.as_slice(), v.as_slice()]))
             .collect();
         compute_merkle_root(&leaves)
     }
@@ -72,7 +93,9 @@ impl StateTrie {
         prefix: &'a [u8],
     ) -> impl Iterator<Item = (&'a SymbolAddress, &'a Vec<u8>)> {
         let start = prefix.to_vec();
-        self.store.range(start..).take_while(move |(k, _)| k.starts_with(prefix))
+        self.store
+            .range(start..)
+            .take_while(move |(k, _)| k.starts_with(prefix))
     }
 
     /// Count entries matching a prefix (efficient).
@@ -93,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_empty_trie() {
-        let trie = StateTrie::new();
+        let mut trie = StateTrie::new();
         assert_eq!(trie.root(), ZERO_HASH);
         assert!(trie.is_empty());
     }
@@ -128,5 +151,26 @@ mod tests {
         t2.insert(b"a".to_vec(), b"2".to_vec());
 
         assert_ne!(t1.root(), t2.root());
+    }
+
+    #[test]
+    fn test_cache_invalidation() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"key".to_vec(), b"val1".to_vec());
+        let root1 = trie.root();
+
+        trie.insert(b"key".to_vec(), b"val2".to_vec());
+        let root2 = trie.root();
+
+        assert_ne!(root1, root2, "Root should change after mutation");
+    }
+
+    #[test]
+    fn test_cache_hit() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"key".to_vec(), b"val".to_vec());
+        let root1 = trie.root();
+        let root2 = trie.root(); // Should be a cache hit.
+        assert_eq!(root1, root2);
     }
 }

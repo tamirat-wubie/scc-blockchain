@@ -155,6 +155,13 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     let mut chain = Chain::from_blocks(blocks);
 
+    // Try to restore from snapshot for faster loading.
+    if let Ok(Some(snapshot)) = store.load_latest_snapshot() {
+        if snapshot.height == chain.height() {
+            chain.restore_from_snapshot(&snapshot);
+        }
+    }
+
     // Load persisted validator key if available.
     if store.has_validator_key() {
         match store.load_validator_key() {
@@ -189,16 +196,24 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
     }
     println!("Submitted {} transitions to mempool.", num_txs);
 
-    match chain.produce_block() {
+    let produced_height = match chain.produce_block() {
         Ok(block) => {
             store.save_block(block).expect("Failed to save block");
             println!("Block #{} produced and saved.", block.header.height);
             print_block_summary(block);
+            block.header.height
         }
         Err(e) => {
             eprintln!("Failed to produce block: {}", e);
             std::process::exit(1);
         }
+    };
+
+    // Save state snapshot every 10 blocks for fast reload.
+    if produced_height % 10 == 0 && produced_height > 0 {
+        let snapshot = chain.create_snapshot();
+        store.save_snapshot(&snapshot).expect("Failed to save snapshot");
+        println!("  Snapshot saved at height {}.", produced_height);
     }
 }
 
