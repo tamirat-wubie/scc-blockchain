@@ -14,6 +14,11 @@ use sccgub_types::Hash;
 /// Security: votes are verified at admission (signature + validator set membership).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusRound {
+    /// Chain identifier — binds votes to this specific chain (prevents cross-chain replay).
+    pub chain_id: Hash,
+    /// Validator set epoch — incremented when the validator set changes.
+    /// Votes signed under a different epoch are rejected.
+    pub epoch: u64,
     /// Block being voted on.
     pub block_hash: Hash,
     /// Block height.
@@ -82,7 +87,11 @@ pub enum ConsensusResult {
 impl ConsensusRound {
     /// Create a new consensus round with an authorized validator set.
     /// validator_set maps validator_id -> public_key for signature verification.
+    /// chain_id and epoch are bound into every vote signature to prevent
+    /// cross-chain replay and stale-epoch attacks.
     pub fn new(
+        chain_id: Hash,
+        epoch: u64,
         block_hash: Hash,
         height: u64,
         round: u32,
@@ -92,6 +101,8 @@ impl ConsensusRound {
         let validator_count = validator_set.len() as u32;
         let quorum = (2 * validator_count) / 3 + 1;
         Self {
+            chain_id,
+            epoch,
             block_hash,
             height,
             round,
@@ -129,14 +140,16 @@ impl ConsensusRound {
         if store.contains_key(&vote.validator_id) {
             return Err("Duplicate vote from validator".into());
         }
-        // Signature verification.
+        // Signature verification — domain-separated with chain_id and epoch.
         if !vote.signature.is_empty() {
-            let vote_data = sccgub_crypto::canonical::canonical_bytes(&(
+            let vote_data = vote_sign_data(
+                &self.chain_id,
+                self.epoch,
                 &vote.block_hash,
                 vote.height,
                 vote.round,
-                vote.vote_type as u8,
-            ));
+                vote.vote_type,
+            );
             if !sccgub_crypto::signature::verify(public_key, &vote_data, &vote.signature) {
                 return Err("Vote signature verification failed".into());
             }
@@ -273,6 +286,27 @@ impl ConsensusRound {
     }
 }
 
+/// Compute domain-separated vote data for signing/verification.
+/// Includes chain_id and epoch to prevent cross-chain replay and stale-epoch attacks.
+/// All vote signers and verifiers MUST use this function for consistency.
+pub fn vote_sign_data(
+    chain_id: &Hash,
+    epoch: u64,
+    block_hash: &Hash,
+    height: u64,
+    round: u32,
+    vote_type: VoteType,
+) -> Vec<u8> {
+    sccgub_crypto::canonical::canonical_bytes(&(
+        chain_id,
+        epoch,
+        block_hash,
+        height,
+        round,
+        vote_type as u8,
+    ))
+}
+
 /// Proof that a validator voted for two different blocks (equivocation).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EquivocationProof {
@@ -308,7 +342,10 @@ mod tests {
         (set, keys)
     }
 
-    /// Create a properly signed vote.
+    const TEST_CHAIN_ID: Hash = [0xCC; 32];
+    const TEST_EPOCH: u64 = 1;
+
+    /// Create a properly signed vote with domain separation.
     fn signed_vote(
         id: Hash,
         key: &ed25519_dalek::SigningKey,
@@ -317,7 +354,7 @@ mod tests {
         round: u32,
         vtype: VoteType,
     ) -> Vote {
-        let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, vtype as u8));
+        let data = vote_sign_data(&TEST_CHAIN_ID, TEST_EPOCH, &block, height, round, vtype);
         let sig = sccgub_crypto::signature::sign(key, &data);
         Vote {
             validator_id: id,
@@ -329,14 +366,23 @@ mod tests {
         }
     }
 
+    fn test_round(
+        block: Hash,
+        height: u64,
+        round: u32,
+        vs: HashMap<Hash, [u8; 32]>,
+    ) -> ConsensusRound {
+        ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, block, height, round, vs, 10)
+    }
+
     #[test]
     fn test_quorum_calculation() {
         let (vs3, _) = make_validators(3);
-        let round = ConsensusRound::new([1u8; 32], 1, 0, vs3, 10);
+        let round = ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, [1u8; 32], 1, 0, vs3, 10);
         assert_eq!(round.quorum, 3);
 
         let (vs4, _) = make_validators(4);
-        let round = ConsensusRound::new([1u8; 32], 1, 0, vs4, 10);
+        let round = ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, [1u8; 32], 1, 0, vs4, 10);
         assert_eq!(round.quorum, 3);
     }
 
@@ -344,7 +390,7 @@ mod tests {
     fn test_two_round_finality() {
         let block = [1u8; 32];
         let (vs, keys) = make_validators(3);
-        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+        let mut round = test_round(block, 1, 0, vs);
 
         for (id, key) in &keys {
             round
@@ -378,7 +424,7 @@ mod tests {
         let block = [1u8; 32];
         let other_block = [2u8; 32];
         let (vs, keys) = make_validators(4);
-        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+        let mut round = test_round(block, 1, 0, vs);
 
         // 2 for block, 2 for other_block.
         round
@@ -429,7 +475,7 @@ mod tests {
     fn test_duplicate_vote_rejected() {
         let block = [1u8; 32];
         let (vs, keys) = make_validators(3);
-        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+        let mut round = test_round(block, 1, 0, vs);
 
         round
             .add_prevote(signed_vote(
@@ -456,7 +502,7 @@ mod tests {
     fn test_max_rounds_abort() {
         let block = [1u8; 32];
         let (vs, _) = make_validators(3);
-        let mut round = ConsensusRound::new(block, 1, 5, vs, 5);
+        let mut round = ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, block, 1, 5, vs, 5);
 
         match round.evaluate() {
             ConsensusResult::Aborted { .. } => {}
@@ -469,7 +515,7 @@ mod tests {
         let block = [1u8; 32];
         let bad_block = [99u8; 32];
         let (vs, keys) = make_validators(4);
-        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+        let mut round = test_round(block, 1, 0, vs);
 
         // 3 honest for block, 1 Byzantine for bad_block.
         for i in 0..3 {
@@ -529,7 +575,7 @@ mod tests {
     fn test_non_member_vote_rejected() {
         let block = [1u8; 32];
         let (vs, _) = make_validators(3);
-        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+        let mut round = test_round(block, 1, 0, vs);
 
         // Vote from validator not in the set.
         let outsider_key = generate_keypair();

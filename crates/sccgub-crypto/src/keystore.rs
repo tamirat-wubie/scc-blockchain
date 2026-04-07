@@ -5,6 +5,7 @@ use chacha20poly1305::{
 };
 use ed25519_dalek::SigningKey;
 use rand::RngCore;
+use zeroize::Zeroize;
 
 /// Finance-grade keystore — encrypts private keys at rest.
 ///
@@ -57,12 +58,13 @@ pub fn encrypt_key(key: &SigningKey, passphrase: &str) -> Result<EncryptedKeyBun
     rand::thread_rng().fill_bytes(&mut salt);
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    // Derive encryption key.
-    let derived = derive_key(passphrase.as_bytes(), &salt)?;
+    // Derive encryption key (zeroized after use).
+    let mut derived = derive_key(passphrase.as_bytes(), &salt)?;
 
     // Encrypt with ChaCha20-Poly1305.
     let cipher =
         ChaCha20Poly1305::new_from_slice(&derived).map_err(|e| format!("Cipher init: {}", e))?;
+    derived.zeroize(); // Wipe derived key from memory.
     let nonce = Nonce::from_slice(&nonce_bytes);
     let plaintext = key.as_bytes();
     let ciphertext = cipher
@@ -84,35 +86,40 @@ pub fn encrypt_key(key: &SigningKey, passphrase: &str) -> Result<EncryptedKeyBun
 
 /// Decrypt a signing key from an encrypted bundle.
 pub fn decrypt_key(bundle: &EncryptedKeyBundle, passphrase: &str) -> Result<SigningKey, String> {
-    // Derive the same encryption key.
-    let derived = derive_key(passphrase.as_bytes(), &bundle.salt)?;
+    // Derive the same encryption key (zeroized after use).
+    let mut derived = derive_key(passphrase.as_bytes(), &bundle.salt)?;
 
     // Decrypt with ChaCha20-Poly1305.
     let cipher =
         ChaCha20Poly1305::new_from_slice(&derived).map_err(|e| format!("Cipher init: {}", e))?;
+    derived.zeroize(); // Wipe derived key from memory.
 
     if bundle.nonce.len() != NONCE_LEN {
         return Err("Invalid nonce length".into());
     }
     let nonce = Nonce::from_slice(&bundle.nonce);
 
-    let plaintext = cipher
+    let mut plaintext = cipher
         .decrypt(nonce, bundle.ciphertext.as_slice())
         .map_err(|_| "Decryption failed: wrong passphrase or corrupted data".to_string())?;
 
     if plaintext.len() != 32 {
+        plaintext.zeroize();
         return Err("Decrypted key has wrong length".into());
     }
 
     // Verify BLAKE3 checksum.
     let checksum = crate::hash::blake3_hash(&plaintext);
     if checksum != bundle.checksum {
+        plaintext.zeroize();
         return Err("Integrity check failed: checksum mismatch".into());
     }
 
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(&plaintext);
+    plaintext.zeroize(); // Wipe decrypted plaintext from memory.
     let key = SigningKey::from_bytes(&key_bytes);
+    key_bytes.zeroize(); // Wipe key bytes copy.
 
     // Verify public key matches.
     if *key.verifying_key().as_bytes() != bundle.public_key {

@@ -34,6 +34,9 @@ fn make_validators(
     (set, keys)
 }
 
+const TEST_CHAIN_ID: [u8; 32] = [0xCC; 32];
+const TEST_EPOCH: u64 = 1;
+
 fn signed_vote(
     id: [u8; 32],
     key: &ed25519_dalek::SigningKey,
@@ -42,7 +45,14 @@ fn signed_vote(
     round: u32,
     vtype: VoteType,
 ) -> Vote {
-    let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, vtype as u8));
+    let data = sccgub_consensus::protocol::vote_sign_data(
+        &TEST_CHAIN_ID,
+        TEST_EPOCH,
+        &block,
+        height,
+        round,
+        vtype,
+    );
     let sig = sccgub_crypto::signature::sign(key, &data);
     Vote {
         validator_id: id,
@@ -54,6 +64,15 @@ fn signed_vote(
     }
 }
 
+fn test_round(
+    block: [u8; 32],
+    height: u64,
+    round: u32,
+    vs: HashMap<[u8; 32], [u8; 32]>,
+) -> ConsensusRound {
+    ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, block, height, round, vs, 10)
+}
+
 // === Gate 1: Byzantine consensus tests ===
 
 #[test]
@@ -61,7 +80,7 @@ fn test_byzantine_minority_cannot_finalize() {
     let block = [0xAAu8; 32];
     let bad_block = [0xBBu8; 32];
     let (vs, keys) = make_validators(7);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     for i in 0..5 {
         round
@@ -97,7 +116,7 @@ fn test_one_third_byzantine_blocks_quorum() {
     let block = [0xAAu8; 32];
     let bad_block = [0xBBu8; 32];
     let (vs, keys) = make_validators(6);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     for i in 0..4 {
         round
@@ -134,7 +153,7 @@ fn test_one_third_byzantine_blocks_quorum() {
 fn test_forged_vote_from_non_member_rejected() {
     let block = [0xAAu8; 32];
     let (vs, _) = make_validators(4);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     let outsider = generate_keypair();
     let vote = signed_vote([99u8; 32], &outsider, block, 1, 0, VoteType::Prevote);
@@ -145,7 +164,7 @@ fn test_forged_vote_from_non_member_rejected() {
 fn test_vote_with_wrong_height_rejected() {
     let block = [0xAAu8; 32];
     let (vs, keys) = make_validators(4);
-    let mut round = ConsensusRound::new(block, 5, 0, vs, 10);
+    let mut round = ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, block, 5, 0, vs, 10);
 
     let vote = signed_vote(keys[0].0, &keys[0].1, block, 999, 0, VoteType::Prevote);
     assert!(round.add_prevote(vote).is_err());
@@ -155,7 +174,7 @@ fn test_vote_with_wrong_height_rejected() {
 fn test_vote_with_wrong_round_rejected() {
     let block = [0xAAu8; 32];
     let (vs, keys) = make_validators(4);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     let vote = signed_vote(keys[0].0, &keys[0].1, block, 1, 5, VoteType::Prevote);
     assert!(round.add_prevote(vote).is_err());
@@ -165,7 +184,7 @@ fn test_vote_with_wrong_round_rejected() {
 fn test_empty_signature_rejected() {
     let block = [0xAAu8; 32];
     let (vs, keys) = make_validators(4);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     let vote = Vote {
         validator_id: keys[0].0,
@@ -182,7 +201,7 @@ fn test_empty_signature_rejected() {
 fn test_corrupted_signature_rejected() {
     let block = [0xAAu8; 32];
     let (vs, keys) = make_validators(4);
-    let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+    let mut round = test_round(block, 1, 0, vs);
 
     let mut vote = signed_vote(keys[0].0, &keys[0].1, block, 1, 0, VoteType::Prevote);
     vote.signature[0] ^= 0xFF;

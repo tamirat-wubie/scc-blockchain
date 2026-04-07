@@ -10,6 +10,27 @@ use crate::gas::GasMeter;
 use crate::phi::phi_traversal_tx;
 use crate::wh_check::check_transition_wh;
 
+/// Sentinel value for an unsealed receipt (post_state_root not yet committed).
+/// Any receipt with this root is NOT final and must be sealed before inclusion.
+pub const UNSEALED_ROOT: [u8; 32] = [0xFF; 32];
+
+/// Seal a receipt's post_state_root after state has been applied.
+/// This is the ONLY correct way to finalize an accepted receipt.
+/// Returns Err if the receipt was already sealed or is a reject.
+pub fn seal_receipt_post_state(
+    receipt: &mut CausalReceipt,
+    post_state_root: [u8; 32],
+) -> Result<(), String> {
+    if !receipt.verdict.is_accepted() {
+        return Err("Cannot seal a rejected receipt".into());
+    }
+    if receipt.post_state_root != UNSEALED_ROOT {
+        return Err("Receipt already sealed".into());
+    }
+    receipt.post_state_root = post_state_root;
+    Ok(())
+}
+
 /// Validate a single transition before inclusion in a block.
 /// Checks: WHBinding, signature, agent_id binding, nonce, size limits, Phi traversal.
 /// Returns errors list on failure.
@@ -144,11 +165,15 @@ pub fn validate_transition_metered(
 
     match validation_result {
         Ok(()) => {
+            // Receipt is created with post_state_root = UNSEALED.
+            // Caller MUST call seal_receipt_post_state() after state apply.
+            // This prevents a receipt from existing with a finalized state root
+            // before the state is actually committed.
             let receipt = CausalReceipt {
                 tx_id: tx.tx_id,
                 verdict: Verdict::Accept,
                 pre_state_root: state_root_before,
-                post_state_root: state_root_before, // Updated after apply.
+                post_state_root: UNSEALED_ROOT,
                 read_set: vec![],
                 write_set: extract_write_set(tx),
                 causes: vec![],

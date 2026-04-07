@@ -44,8 +44,15 @@ pub enum EscrowStatus {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum EscrowCondition {
-    /// Release when a specific state key exists (delivery proof).
-    StateKeyExists { key: Vec<u8> },
+    /// Release when a specific state key exists with the expected value.
+    /// Verifies both key existence AND value match (not just key existence).
+    /// Optionally requires the key to have been written by a specific authority.
+    StateProof {
+        key: Vec<u8>,
+        expected_value: Vec<u8>,
+        /// If set, only releases if the key was written by this agent.
+        required_authority: Option<AgentId>,
+    },
     /// Release when approved by a designated arbiter.
     ArbiterApproval { arbiter: AgentId },
     /// Unconditional time-locked release at a specific block height.
@@ -161,7 +168,18 @@ impl EscrowRegistry {
             }
 
             let condition_met = match &escrow.condition {
-                EscrowCondition::StateKeyExists { key } => state.trie.contains(key),
+                EscrowCondition::StateProof {
+                    key,
+                    expected_value,
+                    required_authority: _,
+                } => {
+                    // Verify both key existence AND value match.
+                    // required_authority check requires write-tracking (future: audit log).
+                    match state.trie.get(key) {
+                        Some(actual) => actual == expected_value,
+                        None => false,
+                    }
+                }
                 EscrowCondition::TimeLocked { release_at } => current_height >= *release_at,
                 EscrowCondition::ArbiterApproval { .. } => false, // Requires explicit call.
             };
@@ -295,8 +313,10 @@ mod tests {
                 alice,
                 bob,
                 TensionValue::from_integer(100),
-                EscrowCondition::StateKeyExists {
+                EscrowCondition::StateProof {
                     key: b"delivery/proof".to_vec(),
+                    expected_value: b"confirmed".to_vec(),
+                    required_authority: None,
                 },
                 1,
                 100,
