@@ -1304,3 +1304,110 @@ fn test_duplicate_voter_rejected() {
     let result = proposals.vote(&id, voter, PrecedenceLevel::Meaning, false, 2);
     assert!(result.is_err(), "Duplicate voter should be rejected");
 }
+
+// ===== INVARIANT TEST SUITE =====
+// Maps every README invariant to a machine-checked test.
+
+#[test]
+fn test_inv4_no_fork_deterministic_finality() {
+    // INV-4: No fork (deterministic finality).
+    // Two blocks at the same height with same parent should have identical block_id
+    // if they contain the same transactions (deterministic block production).
+    let (agent, agent_key) = create_test_agent();
+    let validator_key = generate_keypair();
+    let state = ManagedWorldState::new();
+
+    let genesis = build_test_block(
+        0,
+        ZERO_HASH,
+        &CausalTimestamp::genesis(),
+        vec![],
+        &validator_key,
+        &state,
+    );
+
+    let tx = create_write_tx(&agent, &agent_key, b"inv4/test", b"data", 1);
+
+    let block_a = build_test_block(
+        1,
+        genesis.header.block_id,
+        &genesis.header.timestamp,
+        vec![tx.clone()],
+        &validator_key,
+        &state,
+    );
+    let block_b = build_test_block(
+        1,
+        genesis.header.block_id,
+        &genesis.header.timestamp,
+        vec![tx.clone()],
+        &validator_key,
+        &state,
+    );
+
+    // Same inputs -> same block_id (deterministic).
+    assert_eq!(block_a.header.block_id, block_b.header.block_id);
+}
+
+#[test]
+fn test_inv8_contract_decidability_bound() {
+    // INV-8: No contract beyond decidability bound.
+    use sccgub_execution::contract::{execute_contract, DEFAULT_MAX_STEPS};
+    use sccgub_types::contract::SymbolicCausalContract;
+    use sccgub_types::transition::Constraint;
+
+    let contract = SymbolicCausalContract {
+        contract_id: [42u8; 32],
+        name: "TestBound".into(),
+        laws: vec![Constraint {
+            id: [1u8; 32],
+            expression: "governance:2".into(),
+        }],
+        state: std::collections::HashMap::new(),
+        history: vec![],
+        deployer: [0u8; 32],
+        governance_level: PrecedenceLevel::Meaning,
+        deployed_at: 0,
+    };
+
+    let (agent, _) = create_test_agent();
+    let tx = create_write_tx(&agent, &generate_keypair(), b"contract/test", b"v", 1);
+    let state = ManagedWorldState::new();
+
+    // With max_steps=0, contract MUST reject (decidability bound enforced).
+    let result = execute_contract(&contract, &tx, &state, 0);
+    assert!(
+        !result.verdict.is_accepted(),
+        "INV-8: step limit must be enforced"
+    );
+
+    // With DEFAULT_MAX_STEPS, should have room to execute.
+    let result = execute_contract(&contract, &tx, &state, DEFAULT_MAX_STEPS);
+    // Passes or fails on precondition, but does NOT exceed step limit.
+    assert!(result.steps_used <= DEFAULT_MAX_STEPS);
+}
+
+#[test]
+fn test_inv13_responsibility_bounded() {
+    // INV-13: |Σ R_i_net| <= R_max_imbalance.
+    use sccgub_governance::responsibility;
+
+    let mut s1 = sccgub_types::agent::ResponsibilityState::default();
+    responsibility::record_positive(&mut s1, [1u8; 32], TensionValue::from_integer(500), 1);
+
+    let mut s2 = sccgub_types::agent::ResponsibilityState::default();
+    responsibility::record_negative(&mut s2, [2u8; 32], TensionValue::from_integer(200), 1);
+
+    let max_imbalance = TensionValue::from_integer(1000);
+    assert!(
+        responsibility::check_responsibility_bound(&[&s1, &s2], max_imbalance),
+        "INV-13: total net responsibility should be within bounds"
+    );
+
+    // Exceed the bound.
+    let strict = TensionValue::from_integer(100);
+    assert!(
+        !responsibility::check_responsibility_bound(&[&s1, &s2], strict),
+        "INV-13: should fail when bound exceeded"
+    );
+}

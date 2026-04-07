@@ -75,9 +75,12 @@ pub fn validate_cpog(
         errors.push("Transition count mismatch".into());
     }
 
-    // 7. Receipt root.
-    if !block.receipts.is_empty() {
-        // Hash canonical receipt content (not just tx_id) for full receipt binding.
+    // 7. Receipt root (empty sections must be ZERO_HASH).
+    if block.receipts.is_empty() {
+        if block.header.receipt_root != sccgub_types::ZERO_HASH {
+            errors.push("Non-zero receipt root for empty receipts".into());
+        }
+    } else {
         let receipt_bytes: Vec<Vec<u8>> = block.receipts.iter().map(canonical_bytes).collect();
         let receipt_refs: Vec<&[u8]> = receipt_bytes.iter().map(|b| b.as_slice()).collect();
         let computed = merkle_root_of_bytes(&receipt_refs);
@@ -92,8 +95,12 @@ pub fn validate_cpog(
         errors.push("Governance hash mismatch".into());
     }
 
-    // 9. Causal root.
-    if !block.causal_delta.new_edges.is_empty() {
+    // 9. Causal root (empty sections must be ZERO_HASH).
+    if block.causal_delta.new_edges.is_empty() {
+        if block.header.causal_root != sccgub_types::ZERO_HASH {
+            errors.push("Non-zero causal root for empty edges".into());
+        }
+    } else if !block.causal_delta.new_edges.is_empty() {
         let edge_bytes: Vec<Vec<u8>> = block
             .causal_delta
             .new_edges

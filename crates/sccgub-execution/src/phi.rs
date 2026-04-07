@@ -280,19 +280,62 @@ fn phase_form(block: &Block) -> PhiPhaseResult {
     }
 }
 
-fn phase_organization(_block: &Block) -> PhiPhaseResult {
+fn phase_organization(block: &Block) -> PhiPhaseResult {
+    // Verify governance invariants: GovernanceUpdate/NormProposal transitions
+    // must come from actors with at least Meaning precedence level.
+    for (i, tx) in block.body.transitions.iter().enumerate() {
+        let requires_meaning = matches!(
+            tx.intent.kind,
+            sccgub_types::transition::TransitionKind::GovernanceUpdate
+                | sccgub_types::transition::TransitionKind::NormProposal
+                | sccgub_types::transition::TransitionKind::ConstraintAddition
+        );
+        if requires_meaning {
+            let level = tx.actor.governance_level as u8;
+            let meaning = sccgub_types::governance::PrecedenceLevel::Meaning as u8;
+            if level > meaning {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Organization,
+                    passed: false,
+                    details: format!(
+                        "Tx {} requires Meaning precedence but actor has {:?}",
+                        i, tx.actor.governance_level
+                    ),
+                };
+            }
+        }
+    }
     PhiPhaseResult {
         phase: PhiPhase::Organization,
         passed: true,
-        details: "Organization invariants hold".into(),
+        details: format!(
+            "Governance invariants verified for {} transitions",
+            block.body.transitions.len()
+        ),
     }
 }
 
-fn phase_module(_block: &Block) -> PhiPhaseResult {
+fn phase_module(block: &Block) -> PhiPhaseResult {
+    // Verify receipt-transition consistency: every non-genesis block with
+    // transitions must have matching receipt count.
+    if !block.body.transitions.is_empty()
+        && !block.receipts.is_empty()
+        && block.receipts.len() != block.body.transitions.len()
+    {
+        return PhiPhaseResult {
+            phase: PhiPhase::Module,
+            passed: false,
+            details: format!(
+                "Receipt count {} != transition count {}",
+                block.receipts.len(),
+                block.body.transitions.len()
+            ),
+        };
+    }
     PhiPhaseResult {
         phase: PhiPhase::Module,
         passed: true,
-        details: "Module contracts respected".into(),
+        details: "Module boundaries respected".into(),
     }
 }
 
