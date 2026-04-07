@@ -963,3 +963,108 @@ fn test_custody_revoked_key_blocked() {
         "Revoked key must be blocked"
     );
 }
+
+// === Snapshot roundtrip verification ===
+
+#[test]
+fn test_snapshot_roundtrip_preserves_state() {
+    use sccgub_state::apply::apply_genesis_mint;
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::world::ManagedWorldState;
+    use sccgub_types::transition::{StateDelta, StateWrite};
+
+    let validator = [42u8; 32];
+
+    // Build state with genesis + writes.
+    let mut state = ManagedWorldState::new();
+    let mut balances = BalanceLedger::new();
+    apply_genesis_mint(&mut state, &mut balances, &validator);
+
+    state.apply_delta(&StateDelta {
+        writes: vec![
+            StateWrite {
+                address: b"doc/title".to_vec(),
+                value: b"hello world".to_vec(),
+            },
+            StateWrite {
+                address: b"doc/author".to_vec(),
+                value: b"alice".to_vec(),
+            },
+        ],
+        deletes: vec![],
+    });
+    state.set_height(5);
+
+    let root_before = state.state_root();
+    let supply_before = balances.total_supply();
+    let entries_before = state.trie.len();
+
+    // Export snapshot (simulate by collecting trie entries).
+    let snapshot_entries: Vec<(Vec<u8>, Vec<u8>)> = state
+        .trie
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let snapshot_nonces: Vec<([u8; 32], u128)> =
+        state.agent_nonces.iter().map(|(k, v)| (*k, *v)).collect();
+    let snapshot_balances: Vec<([u8; 32], i128)> = balances
+        .balances
+        .iter()
+        .map(|(k, v)| (*k, v.raw()))
+        .collect();
+
+    // Import into fresh state.
+    let mut restored = ManagedWorldState::new();
+    for (k, v) in &snapshot_entries {
+        restored.trie.insert(k.clone(), v.clone());
+    }
+    for (agent, nonce) in &snapshot_nonces {
+        restored.agent_nonces.insert(*agent, *nonce);
+    }
+    restored.set_height(5);
+
+    let mut restored_bal = BalanceLedger::new();
+    for (agent, raw) in &snapshot_balances {
+        restored_bal.credit(agent, TensionValue(*raw));
+    }
+
+    // Verify: roots, supply, entry count must be identical.
+    assert_eq!(
+        restored.state_root(),
+        root_before,
+        "State root must survive snapshot roundtrip"
+    );
+    assert_eq!(
+        restored_bal.total_supply(),
+        supply_before,
+        "Supply must survive snapshot roundtrip"
+    );
+    assert_eq!(
+        restored.trie.len(),
+        entries_before,
+        "Entry count must match"
+    );
+}
+
+#[test]
+fn test_nonce_state_survives_replay() {
+    use sccgub_state::world::ManagedWorldState;
+
+    let mut state = ManagedWorldState::new();
+    let agent = [1u8; 32];
+
+    // Simulate nonce progression.
+    for nonce in 1..=10u128 {
+        assert!(state.check_nonce(&agent, nonce).is_ok());
+    }
+
+    // Nonce 10 should be the last committed.
+    assert!(
+        state.check_nonce(&agent, 10).is_err(),
+        "Nonce 10 already used"
+    );
+    assert!(
+        state.check_nonce(&agent, 11).is_ok(),
+        "Nonce 11 should be valid"
+    );
+}

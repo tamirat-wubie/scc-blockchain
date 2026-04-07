@@ -184,6 +184,25 @@ pub struct TxDetailResponse {
     pub nonce: u128,
 }
 
+/// Receipt summary for a processed transaction.
+#[derive(Debug, Serialize)]
+pub struct ReceiptSummary {
+    pub tx_id: String,
+    pub verdict: String,
+    pub compute_steps: u64,
+    pub state_reads: u32,
+    pub state_writes: u32,
+    pub phi_phase_reached: u8,
+}
+
+/// Block receipts response.
+#[derive(Debug, Serialize)]
+pub struct BlockReceiptsResponse {
+    pub height: u64,
+    pub receipt_count: usize,
+    pub receipts: Vec<ReceiptSummary>,
+}
+
 /// Transaction submission request (hex-encoded canonical bytes).
 #[derive(Debug, serde::Deserialize)]
 pub struct SubmitTransactionRequest {

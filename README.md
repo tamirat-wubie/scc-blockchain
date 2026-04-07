@@ -2,55 +2,67 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
+**Status:** Production hardening phase. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 77 source files, ~19K lines Rust, 301 tests, all CI green (Ubuntu + Windows + security audit).
+
 ## Architecture (9 crates)
 
-| Layer | Component | Description |
-|-------|-----------|-------------|
-| 7 | Application | 15 CLI commands, observability, health monitoring |
-| 6 | Contract | Decidable step-bounded contracts + formal constraint evaluator |
-| 5 | Governance | Norms, precedence, proposals, agent policy, anti-concentration |
-| 4 | Consensus | Two-round BFT voting, bounded finality, slashing, law sync, partition recovery |
-| 3 | Execution | 13-phase Phi traversal + SCCE constraint engine |
-| 2 | State | Merkle trie (lazy cache), tension field, balance + multi-asset ledger |
-| 1 | Compliance | GDPR data lifecycle, bridge adapters, domain packs |
-| 0 | Foundation | Blake3 + Ed25519, Mfidel 34x8 Ge'ez seal, Merkle proofs |
+| Layer | Crate | Description |
+|-------|-------|-------------|
+| 7 | `sccgub-node` | 16 CLI commands, chain lifecycle, mempool, persistence, observability |
+| 6 | `sccgub-api` | REST API (7 endpoints), CORS, structured error codes, versioned routes |
+| 5 | `sccgub-governance` | Norms, precedence, proposals with timelocks, anti-concentration, AI agent policy |
+| 4 | `sccgub-consensus` | Two-round BFT voting, bounded finality, slashing, partition recovery, safety proofs |
+| 3 | `sccgub-execution` | 13-phase Phi traversal (all real), CPoG, gas metering, runtime invariant monitor |
+| 2 | `sccgub-state` | Merkle trie (lazy cache), balance ledger, treasury, escrow/DvP, multi-asset |
+| 1 | `sccgub-types` | 20 modules: blocks, transitions, causal graph, events, economics, compliance |
+| 0 | `sccgub-crypto` | BLAKE3, Ed25519, Merkle proofs, Argon2id+ChaCha20-Poly1305 keystore, role keys |
+| - | `sccgub-network` | Peer protocol, 9 message types, peer registry |
 
 ## Key Properties
 
-- **Consensus:** Causal Proof-of-Governance (CPoG) with two-round BFT voting
-- **Finality:** Bounded k-block confirmation with SLA monitoring
-- **Validation:** 13-phase Phi traversal on every block and transaction
-- **Contracts:** Decidable step-bounded symbolic programs — no halting problem
+- **Consensus:** Causal Proof-of-Governance (CPoG) with two-round BFT voting (Ed25519-verified votes)
+- **Finality:** Bounded k-block confirmation with 3 settlement classes (Soft/Economic/Legal)
+- **Validation:** 13-phase Phi traversal — all 13 phases have real enforcement
+- **Contracts:** Decidable step-bounded symbolic programs with gas metering
 - **Identity:** Mfidel 34x8 Ge'ez atomic seal + cryptographic agent binding
-- **Governance:** Phi-squared precedence with anti-concentration limits
+- **Governance:** Precedence hierarchy with timelocks (ordinary 50 / constitutional 200 blocks)
+- **Economics:** Gas metering, treasury (fee/reward/burn lifecycle), escrow/DvP
+- **Custody:** 6 operator key roles (Genesis/Governance/Treasury/Validator/Operator/Auditor)
+- **Keystore:** Argon2id KDF + ChaCha20-Poly1305 AEAD (finance-grade)
 - **Arithmetic:** Fixed-point i128 (18 decimals) — no floating-point in consensus
-- **Signatures:** Ed25519 covering all 9 semantic fields
+- **Signatures:** Ed25519 over canonical bincode covering all 9 semantic fields
 - **Compliance:** GDPR erasure proofs, off-chain data references, audit trails
-- **AI Agents:** OWASP-compliant policy enforcement (write/read limits, cosign, budgets)
-- **Assets:** Multi-asset ledger (Native, Stablecoin, Bond, RealEstate, Commodity)
-- **Security:** 4 audit passes, ~185+ issues resolved, domain-separated Merkle trees
+- **AI Agents:** OWASP-compliant policy enforcement (default-deny, write/read prefixes)
+- **Assets:** Multi-asset ledger (Native, Stablecoin, Bond, RealEstate, Commodity, Custom)
+- **Events:** 11 typed chain events for full audit trail
+- **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
-## Performance
+## REST API (7 endpoints)
 
-| Operation | Throughput |
-|-----------|-----------|
-| Transaction creation + Ed25519 signing | ~15,000-17,000 tx/s |
-| Full validation (13-phase Phi + SCCE + signature verify) | ~9,000-11,000 tx/s |
-| Merkle root computation (1000 leaves) | ~670 microseconds |
+```
+GET  /api/v1/status          Chain summary (height, finality, tension, governance)
+GET  /api/v1/health          System health + finality SLA
+GET  /api/v1/block/:height   Block detail with transaction list
+GET  /api/v1/state           Paginated world state (?offset=&limit=)
+GET  /api/v1/tx/:tx_id       Transaction detail by hex ID
+POST /api/v1/tx/submit       Submit signed transaction (hex-encoded canonical bytes)
+```
+
+Structured error codes (12 machine-readable `ErrorCode` variants). CORS enabled. Legacy routes at `/api/*`.
 
 ## CLI Commands (16)
 
 ```bash
 # Chain lifecycle
 sccgub init               # Genesis + 1M token mint + validator key
-sccgub produce --txs N    # Produce CPoG-validated block
+sccgub produce --txs N    # Produce gas-metered CPoG-validated block
 sccgub transfer AMOUNT    # Asset transfer with Ed25519 signature
-sccgub verify             # Replay + verify all 7 Merkle roots + state
+sccgub verify             # Replay + verify all Merkle roots + state
 
 # Inspection
 sccgub status             # Chain summary with block history
 sccgub stats              # Detailed statistics (graph, state, governance)
-sccgub health             # Health report (finality, security, SLA)
+sccgub health             # Health report (finality, economics, security)
 sccgub show-block N       # Block detail with all transactions
 sccgub show-state         # World state entries
 sccgub search-tx PREFIX   # Find transaction by ID
@@ -61,7 +73,7 @@ sccgub export FILE        # Portable chain snapshot
 sccgub import FILE        # Import with CPoG re-validation
 
 # API server
-sccgub serve --port 3000  # Start REST API (status, health, blocks, state)
+sccgub serve --port 3000  # Start REST API
 
 # Reference
 sccgub demo               # In-memory demonstration
@@ -71,94 +83,66 @@ sccgub info               # Spec + invariants reference
 ## Quick Start
 
 ```bash
-cargo build                    # Build
-cargo test                     # Run all 207 tests
+cargo build                    # Build all 9 crates
+cargo test                     # Run all 301 tests
 cargo run -- init              # Initialize chain
 cargo run -- produce --txs 5   # Produce a block
 cargo run -- transfer 10000    # Transfer tokens
 cargo run -- verify            # Verify chain integrity
 cargo run -- health            # Chain health report
-cargo bench                    # Run benchmarks
+cargo run -- serve             # Start API server
 ```
 
-## Crate Structure
+## Production Gate Status
 
-```
-crates/
-  sccgub-api/          REST API gateway (axum): /api/status, /api/health,
-                        /api/block/:height, /api/state
-  sccgub-network/      Peer protocol, 9 message types (bincode-encoded), peer
-                        registry with sync candidate selection
-  sccgub-consensus/    Two-round BFT voting, bounded finality, slashing engine,
-                        Phase 4 law synchronization, partition recovery, BFT safety proofs
-  sccgub-types/        19 modules: blocks, transitions, WHBinding, Mfidel seals,
-                        tension, causal graph, governance, proofs, receipts,
-                        economics, contracts, domain packs, bridge adapters,
-                        transaction builder, compliance (GDPR), multi-asset
-  sccgub-crypto/       Blake3 (domain-separated), Merkle trees (with proofs),
-                        Ed25519 signatures, bincode canonical encoding
-  sccgub-state/        State trie (lazy cache + prefix scan), world state (nonces),
-                        tension computation, balance ledger, multi-asset ledger
-  sccgub-execution/    13-phase Phi traversal, CPoG (7 root verifications), SCCE,
-                        formal constraint evaluator, contract execution, WHBinding,
-                        signature verification
-  sccgub-governance/   Precedence enforcement, norm replicator dynamics, validator
-                        selection, responsibility, containment, emergency governance,
-                        proposals (voting), agent registration, anti-concentration,
-                        AI agent policy enforcement
-  sccgub-node/         15 CLI commands, chain lifecycle, mempool (dedup + confirmed),
-                        persistence (atomic + snapshots), observability, benchmarks
-```
+| Gate | Status | Evidence |
+|------|--------|----------|
+| Protocol freeze | Done | [PROTOCOL.md](PROTOCOL.md) — 14-section canonical spec |
+| Consensus adversarial | 12 tests | Byzantine tolerance, vote forgery, equivocation, partition recovery |
+| Financial conservation | 7 tests | Transfer, treasury, escrow (release + refund), no phantom supply |
+| Replay determinism | Verified | Identical operations produce identical state roots |
+| Keystore crypto | Argon2id + ChaCha20-Poly1305 | AEAD tamper detection, memory-hard KDF |
+| Custody roles | 6 roles | Validator/Treasury/Governance separation with rotation and revocation |
+| Structured API errors | 12 error codes | Machine-readable rejection for every failure path |
+| Escrow attack surface | 5 tests | Double-release, premature refund, self-escrow, zero-amount |
+| Gas metering | Wired | Per-tx gas (12 cost categories), per-block limit (50M), treasury integration |
+| Governance timelocks | Enforced | Ordinary 50 blocks, constitutional 200 blocks |
+| Runtime invariants | 7 checks | Supply, nonce, state root, tension, receipts, causality |
+| CI | 3 jobs | Ubuntu (fmt+build+test+clippy), Windows (build+test), security (cargo-audit) |
 
 ## Security Model
+
+### Conservation Laws (consensus-critical)
+
+| Law | Enforcement |
+|-----|-------------|
+| Supply conservation | `total_supply` constant except at genesis mint |
+| Treasury conservation | `collected = distributed + burned + pending` |
+| Escrow conservation | `total_supply = balances + escrow_locked` |
+| Nonce monotonicity | Per-agent strictly increasing |
+| Tension homeostasis | `tension_after <= tension_before + budget` |
 
 ### Invariants (10 enforced)
 
 | ID | Invariant |
 |----|-----------|
-| INV-1 | No block without valid CPoG (13-phase Phi + 7 Merkle roots) |
+| INV-1 | No block without valid CPoG (13-phase Phi + Merkle roots) |
 | INV-2 | No state change without Phi traversal |
 | INV-3 | No governance change below MEANING precedence |
 | INV-4 | No fork (deterministic finality) |
-| INV-5 | No unbounded tension growth (budget enforcement) |
+| INV-5 | No unbounded tension growth |
 | INV-6 | No identity mutation post-genesis |
-| INV-7 | No transition without complete WHBinding (7 fields + cross-checks) |
-| INV-8 | No contract beyond decidability bound (step-limited) |
-| INV-13 | Responsibility bounded by R_max_imbalance |
-| INV-17 | Causal graph acyclicity (iterative DFS) |
-
-### Audit Summary (4 passes, ~185+ issues resolved)
-
-- Domain-separated Merkle trees (leaf/internal tags, length-prefixed hashing)
-- Saturating arithmetic throughout (no panic on untrusted input)
-- Nonce replay protection (per-agent monotonic tracking)
-- Agent identity cryptographically bound to public key + Mfidel seal
-- Canonical signatures cover all 9 semantic fields
-- Adversarial containment with gradual de-escalation + positive decay
-- Atomic persistence writes (crash-safe)
-- State root verified via speculative replay in CPoG
-- Balance root committed in block header
-- Anti-concentration: 33% action cap, consecutive proposal limits, term limits, multi-sig
-
-### Real-World Problems Addressed
-
-| Problem | Solution |
-|---------|----------|
-| OWASP Agentic Risks (2025) | AI agent policy: write/read prefixes, transfer limits, cosign |
-| $30B RWA Tokenization | Multi-asset ledger: 6 asset types, mint/burn/freeze |
-| GDPR vs Immutability | Off-chain refs + deletion proofs + erasure verification |
-| $17B Smart Contract Exploits | Formal constraint evaluator + decidable contracts |
-| Consortium Governance Collapse | CPoG + on-chain proposals + anti-concentration |
-| Enterprise Pilot Failures | Single-binary deployment, built-in finality, snapshots |
-| Ethiopian Digital Identity Gap | Mfidel cultural grounding + agent registration |
-| Cross-Border Payments | Multi-asset + bridge adapters (EVM/Cosmos/Fabric) |
+| INV-7 | No transition without complete WHBinding (7 fields) |
+| INV-8 | No contract beyond decidability bound |
+| INV-13 | Responsibility bounded |
+| INV-17 | Causal graph acyclicity |
 
 ## Specification
 
-Full specification documents in `specs/`:
-- `SCCGUB_SPEC.md` — v1.0 original specification
-- `SCCGUB_v2_ENHANCED.md` — v2.0 enhanced (dual-source merge)
-- `SCCGUB_v2.1_AUDIT_AND_REFINEMENT.md` — v2.1 DCA audit + fixes
+- [PROTOCOL.md](PROTOCOL.md) — Frozen protocol spec (consensus, finality, fees, replay rules)
+- `specs/SCCGUB_SPEC.md` — v1.0 original specification
+- `specs/SCCGUB_v2_ENHANCED.md` — v2.0 enhanced
+- `specs/SCCGUB_v2.1_AUDIT_AND_REFINEMENT.md` — v2.1 audit + refinement
 
 ## License
 

@@ -268,6 +268,107 @@ pub async fn get_tx(
     )
 }
 
+/// GET /block/:height/receipts — receipts for a specific block.
+pub async fn get_block_receipts(
+    state: axum::extract::State<SharedState>,
+    axum::extract::Path(height): axum::extract::Path<u64>,
+) -> (
+    axum::http::StatusCode,
+    axum::Json<ApiResponse<BlockReceiptsResponse>>,
+) {
+    let app = state.read().await;
+    let block = match app.blocks.get(height as usize) {
+        Some(b) => b,
+        None => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(ApiResponse::err(
+                    ErrorCode::BlockNotFound,
+                    format!("Block {} not found", height),
+                )),
+            );
+        }
+    };
+
+    let receipts: Vec<ReceiptSummary> = block
+        .receipts
+        .iter()
+        .map(|r| ReceiptSummary {
+            tx_id: hex::encode(r.tx_id),
+            verdict: format!("{}", r.verdict),
+            compute_steps: r.resource_used.compute_steps,
+            state_reads: r.resource_used.state_reads,
+            state_writes: r.resource_used.state_writes,
+            phi_phase_reached: r.phi_phase_reached,
+        })
+        .collect();
+
+    let resp = BlockReceiptsResponse {
+        height: block.header.height,
+        receipt_count: receipts.len(),
+        receipts,
+    };
+
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(ApiResponse::ok(resp)),
+    )
+}
+
+/// GET /receipt/:tx_id — receipt for a specific transaction.
+pub async fn get_receipt(
+    state: axum::extract::State<SharedState>,
+    axum::extract::Path(tx_id_hex): axum::extract::Path<String>,
+) -> (
+    axum::http::StatusCode,
+    axum::Json<ApiResponse<ReceiptSummary>>,
+) {
+    let tx_id_bytes = match hex::decode(&tx_id_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::Json(ApiResponse::err(
+                    ErrorCode::InvalidHex,
+                    "Invalid tx_id: expected 64-char hex",
+                )),
+            );
+        }
+    };
+
+    let app = state.read().await;
+    for block in &app.blocks {
+        for receipt in &block.receipts {
+            if receipt.tx_id == tx_id_bytes {
+                let resp = ReceiptSummary {
+                    tx_id: hex::encode(receipt.tx_id),
+                    verdict: format!("{}", receipt.verdict),
+                    compute_steps: receipt.resource_used.compute_steps,
+                    state_reads: receipt.resource_used.state_reads,
+                    state_writes: receipt.resource_used.state_writes,
+                    phi_phase_reached: receipt.phi_phase_reached,
+                };
+                return (
+                    axum::http::StatusCode::OK,
+                    axum::Json(ApiResponse::ok(resp)),
+                );
+            }
+        }
+    }
+
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(ApiResponse::err(
+            ErrorCode::TxNotFound,
+            format!("Receipt for tx {} not found", tx_id_hex),
+        )),
+    )
+}
+
 /// GET /health — system health.
 pub async fn get_health(
     state: axum::extract::State<SharedState>,

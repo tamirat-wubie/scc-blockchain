@@ -26,6 +26,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/v1/state", get(handlers::get_state))
         .route("/api/v1/tx/submit", post(handlers::submit_tx))
         .route("/api/v1/tx/{tx_id}", get(handlers::get_tx))
+        .route(
+            "/api/v1/block/{height}/receipts",
+            get(handlers::get_block_receipts),
+        )
+        .route("/api/v1/receipt/{tx_id}", get(handlers::get_receipt))
         // Legacy unversioned routes.
         .route("/api/status", get(handlers::get_status))
         .route("/api/health", get(handlers::get_health))
@@ -239,6 +244,52 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_v1_block_receipts_not_found() {
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/block/999/receipts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_v1_receipt_bad_id() {
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/receipt/not-valid-hex")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_v1_receipt_not_found() {
+        let app = build_router(test_state());
+        let tx_id = hex::encode([0u8; 32]);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/v1/receipt/{}", tx_id))
                     .body(Body::empty())
                     .unwrap(),
             )
