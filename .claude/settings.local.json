@@ -4,7 +4,8 @@
       "Bash(cargo clippy:*)",
       "Bash(gh run:*)",
       "Bash(cargo build:*)",
-      "Bash(grep -B2 \"missing \\\\`balance_root\\\\`\")"
+      "Bash(grep -B2 \"missing \\\\`balance_root\\\\`\")",
+      "Bash(cargo test:*)"
     ]
   }
 }

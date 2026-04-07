@@ -1,5 +1,7 @@
 pub mod agent;
 pub mod block;
+pub mod bridge;
+pub mod builder;
 pub mod causal;
 pub mod contract;
 pub mod domain;
