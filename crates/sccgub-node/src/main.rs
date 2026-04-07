@@ -1,4 +1,5 @@
 mod chain;
+pub mod config;
 mod mempool;
 mod observability;
 mod persistence;
@@ -25,11 +26,19 @@ const DEFAULT_DATA_DIR: &str = ".sccgub";
 #[derive(Parser)]
 #[command(name = "sccgub")]
 #[command(about = "Symbolic Causal Chain General Universal Blockchain — Node CLI")]
-#[command(version = "0.1.0")]
+#[command(version = "0.2.0")]
 struct Cli {
     /// Data directory for chain storage.
     #[arg(long, default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
+
+    /// Validator key passphrase (or set SCCGUB_PASSPHRASE env var).
+    #[arg(long, env = "SCCGUB_PASSPHRASE", default_value = "")]
+    passphrase: String,
+
+    /// Path to TOML configuration file.
+    #[arg(long, default_value = "sccgub.toml")]
+    config: PathBuf,
 
     #[command(subcommand)]
     command: Commands,
@@ -99,6 +108,14 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
+    // Initialize structured logging.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("sccgub=info".parse().unwrap()),
+        )
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -180,7 +197,7 @@ fn cmd_init(data_dir: &std::path::Path) {
         .save_metadata(&chain.chain_id)
         .expect("Failed to save metadata");
     store
-        .save_validator_key(&chain.validator_key, "sccgub-default-passphrase")
+        .save_validator_key(&chain.validator_key, "")
         .expect("Failed to save validator key");
 
     println!("Chain initialized at {:?}", data_dir);
@@ -225,7 +242,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
-        match store.load_validator_key("sccgub-default-passphrase") {
+        match store.load_validator_key("") {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => eprintln!("Warning: could not load validator key: {}", e),
         }
@@ -872,7 +889,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
 
     // Load validator key (sender).
     if store.has_validator_key() {
-        match store.load_validator_key("sccgub-default-passphrase") {
+        match store.load_validator_key("") {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => {
                 eprintln!("Failed to load validator key: {}", e);
