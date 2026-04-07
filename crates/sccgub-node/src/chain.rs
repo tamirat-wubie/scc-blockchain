@@ -590,8 +590,10 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         merkle_root_of_bytes(&edge_refs)
     };
 
-    let receipt_hashes: Vec<&[u8]> = receipts.iter().map(|r| r.tx_id.as_slice()).collect();
-    let receipt_root = merkle_root_of_bytes(&receipt_hashes);
+    // Hash canonical receipt content (not just tx_id) for full receipt binding.
+    let receipt_bytes: Vec<Vec<u8>> = receipts.iter().map(canonical_bytes).collect();
+    let receipt_refs: Vec<&[u8]> = receipt_bytes.iter().map(|b| b.as_slice()).collect();
+    let receipt_root = merkle_root_of_bytes(&receipt_refs);
 
     let gov_hash = canonical_hash(&governance);
 

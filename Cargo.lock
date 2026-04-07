@@ -749,6 +749,7 @@ dependencies = [
 name = "sccgub-consensus"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "hex",
  "sccgub-crypto",
  "sccgub-types",

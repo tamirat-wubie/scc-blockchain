@@ -77,9 +77,10 @@ pub fn validate_cpog(
 
     // 7. Receipt root.
     if !block.receipts.is_empty() {
-        let receipt_hashes: Vec<&[u8]> =
-            block.receipts.iter().map(|r| r.tx_id.as_slice()).collect();
-        let computed = merkle_root_of_bytes(&receipt_hashes);
+        // Hash canonical receipt content (not just tx_id) for full receipt binding.
+        let receipt_bytes: Vec<Vec<u8>> = block.receipts.iter().map(canonical_bytes).collect();
+        let receipt_refs: Vec<&[u8]> = receipt_bytes.iter().map(|b| b.as_slice()).collect();
+        let computed = merkle_root_of_bytes(&receipt_refs);
         if block.header.receipt_root != computed {
             errors.push("Receipt root mismatch".into());
         }

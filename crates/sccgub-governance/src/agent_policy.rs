@@ -37,12 +37,14 @@ pub struct AgentPolicy {
 
 impl AgentPolicy {
     /// Check if an agent is allowed to write to a specific address.
+    /// Default-deny: empty prefix list means NO access (fail-closed).
     pub fn can_write(&self, address: &SymbolAddress) -> bool {
         if !self.active {
             return false;
         }
+        // Default-deny: empty means no access, not all access.
         if self.allowed_write_prefixes.is_empty() {
-            return true; // No restrictions = all writes allowed.
+            return false;
         }
         self.allowed_write_prefixes
             .iter()
@@ -50,12 +52,13 @@ impl AgentPolicy {
     }
 
     /// Check if an agent is allowed to read from a specific address.
+    /// Default-deny: empty prefix list means NO access (fail-closed).
     pub fn can_read(&self, address: &SymbolAddress) -> bool {
         if !self.active {
             return false;
         }
         if self.allowed_read_prefixes.is_empty() {
-            return true;
+            return false;
         }
         self.allowed_read_prefixes
             .iter()

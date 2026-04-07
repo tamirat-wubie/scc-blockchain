@@ -28,14 +28,16 @@ impl ManagedWorldState {
     }
 
     /// Apply a state delta to the world state.
-    /// Validates entry sizes to prevent memory exhaustion.
-    pub fn apply_delta(&mut self, delta: &StateDelta) {
+    /// Rejects oversized entries (fail-closed, not silent skip).
+    /// Returns list of rejected addresses.
+    pub fn apply_delta(&mut self, delta: &StateDelta) -> Vec<SymbolAddress> {
+        let mut rejected = Vec::new();
         for write in &delta.writes {
-            // Enforce size limits.
             if write.address.len() > MAX_STATE_ENTRY_SIZE
                 || write.value.len() > MAX_STATE_ENTRY_SIZE
             {
-                continue; // Skip oversized entries.
+                rejected.push(write.address.clone());
+                continue;
             }
             self.trie.insert(write.address.clone(), write.value.clone());
             let symbol = self
@@ -50,6 +52,7 @@ impl ManagedWorldState {
             self.trie.remove(addr);
             self.state.symbol_store.remove(addr);
         }
+        rejected
     }
 
     /// Check and update nonce for an agent.

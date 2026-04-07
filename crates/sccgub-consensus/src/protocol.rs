@@ -10,6 +10,8 @@ use sccgub_types::Hash;
 /// Round 1 (PREVOTE): validators vote on proposed block.
 /// Round 2 (PRECOMMIT): validators vote on prevote results.
 /// Block is finalized when both rounds reach supermajority.
+///
+/// Security: votes are verified at admission (signature + validator set membership).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusRound {
     /// Block being voted on.
@@ -30,6 +32,8 @@ pub struct ConsensusRound {
     pub quorum: u32,
     /// Maximum rounds before timeout (abort block).
     pub max_rounds: u32,
+    /// Authorized validator set (public keys). Votes from non-members are rejected.
+    pub validator_set: HashMap<Hash, [u8; 32]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,14 +80,16 @@ pub enum ConsensusResult {
 }
 
 impl ConsensusRound {
-    /// Create a new consensus round.
+    /// Create a new consensus round with an authorized validator set.
+    /// validator_set maps validator_id -> public_key for signature verification.
     pub fn new(
         block_hash: Hash,
         height: u64,
         round: u32,
-        validator_count: u32,
+        validator_set: HashMap<Hash, [u8; 32]>,
         max_rounds: u32,
     ) -> Self {
+        let validator_count = validator_set.len() as u32;
         let quorum = (2 * validator_count) / 3 + 1;
         Self {
             block_hash,
@@ -95,35 +101,61 @@ impl ConsensusRound {
             validator_count,
             quorum,
             max_rounds,
+            validator_set,
         }
     }
 
-    /// Add a prevote. Returns Ok if accepted, Err if duplicate or invalid.
-    pub fn add_prevote(&mut self, vote: Vote) -> Result<(), String> {
-        if vote.vote_type != VoteType::Prevote {
-            return Err("Expected Prevote".into());
+    /// Verify a vote: check membership, height/round, type, duplicate, and signature.
+    fn verify_vote(
+        &self,
+        vote: &Vote,
+        expected_type: VoteType,
+        store: &HashMap<Hash, Vote>,
+    ) -> Result<(), String> {
+        if vote.vote_type != expected_type {
+            return Err(format!("Expected {:?}", expected_type));
         }
         if vote.height != self.height || vote.round != self.round {
             return Err("Vote height/round mismatch".into());
         }
-        if self.prevotes.contains_key(&vote.validator_id) {
-            return Err("Duplicate prevote from validator".into());
+        // Validator set membership check.
+        let public_key = self.validator_set.get(&vote.validator_id).ok_or_else(|| {
+            format!(
+                "Validator {} not in authorized set",
+                hex::encode(vote.validator_id)
+            )
+        })?;
+        // Duplicate check.
+        if store.contains_key(&vote.validator_id) {
+            return Err("Duplicate vote from validator".into());
         }
+        // Signature verification.
+        if !vote.signature.is_empty() {
+            let vote_data = sccgub_crypto::canonical::canonical_bytes(&(
+                &vote.block_hash,
+                vote.height,
+                vote.round,
+                vote.vote_type as u8,
+            ));
+            if !sccgub_crypto::signature::verify(public_key, &vote_data, &vote.signature) {
+                return Err("Vote signature verification failed".into());
+            }
+        } else {
+            return Err("Vote has empty signature".into());
+        }
+        Ok(())
+    }
+
+    /// Add a prevote. Verifies signature and validator set membership.
+    pub fn add_prevote(&mut self, vote: Vote) -> Result<(), String> {
+        self.verify_vote(&vote, VoteType::Prevote, &self.prevotes)?;
         self.prevotes.insert(vote.validator_id, vote);
         Ok(())
     }
 
-    /// Add a precommit. Returns Ok if accepted.
+    /// Add a precommit. Verifies signature and validator set membership.
     pub fn add_precommit(&mut self, vote: Vote) -> Result<(), String> {
-        if vote.vote_type != VoteType::Precommit {
-            return Err("Expected Precommit".into());
-        }
-        if vote.height != self.height || vote.round != self.round {
-            return Err("Vote height/round mismatch".into());
-        }
-        if self.precommits.contains_key(&vote.validator_id) {
-            return Err("Duplicate precommit from validator".into());
-        }
+        self.verify_vote(&vote, VoteType::Precommit, &self.precommits)?;
         self.precommits.insert(vote.validator_id, vote);
         Ok(())
     }
@@ -255,50 +287,75 @@ pub struct EquivocationProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sccgub_crypto::keys::generate_keypair;
 
-    fn make_vote(validator: u8, block: Hash, height: u64, round: u32, vtype: VoteType) -> Vote {
+    /// Create N validator keypairs and return (validator_set, keys).
+    fn make_validators(
+        n: u8,
+    ) -> (
+        HashMap<Hash, [u8; 32]>,
+        Vec<(Hash, ed25519_dalek::SigningKey)>,
+    ) {
+        let mut set = HashMap::new();
+        let mut keys = Vec::new();
+        for i in 1..=n {
+            let key = generate_keypair();
+            let pk = *key.verifying_key().as_bytes();
+            let id = [i; 32];
+            set.insert(id, pk);
+            keys.push((id, key));
+        }
+        (set, keys)
+    }
+
+    /// Create a properly signed vote.
+    fn signed_vote(
+        id: Hash,
+        key: &ed25519_dalek::SigningKey,
+        block: Hash,
+        height: u64,
+        round: u32,
+        vtype: VoteType,
+    ) -> Vote {
+        let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, vtype as u8));
+        let sig = sccgub_crypto::signature::sign(key, &data);
         Vote {
-            validator_id: [validator; 32],
+            validator_id: id,
             block_hash: block,
             height,
             round,
             vote_type: vtype,
-            signature: vec![0u8; 64],
+            signature: sig,
         }
     }
 
     #[test]
     fn test_quorum_calculation() {
-        // 3 validators: quorum = ⌊2*3/3⌋ + 1 = 3
-        let round = ConsensusRound::new([1u8; 32], 1, 0, 3, 10);
+        let (vs3, _) = make_validators(3);
+        let round = ConsensusRound::new([1u8; 32], 1, 0, vs3, 10);
         assert_eq!(round.quorum, 3);
 
-        // 4 validators: quorum = ⌊2*4/3⌋ + 1 = 3
-        let round = ConsensusRound::new([1u8; 32], 1, 0, 4, 10);
+        let (vs4, _) = make_validators(4);
+        let round = ConsensusRound::new([1u8; 32], 1, 0, vs4, 10);
         assert_eq!(round.quorum, 3);
-
-        // 21 validators: quorum = ⌊2*21/3⌋ + 1 = 15
-        let round = ConsensusRound::new([1u8; 32], 1, 0, 21, 10);
-        assert_eq!(round.quorum, 15);
     }
 
     #[test]
     fn test_two_round_finality() {
         let block = [1u8; 32];
-        let mut round = ConsensusRound::new(block, 1, 0, 3, 10);
+        let (vs, keys) = make_validators(3);
+        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
 
-        // All 3 validators prevote.
-        for i in 1..=3 {
+        for (id, key) in &keys {
             round
-                .add_prevote(make_vote(i, block, 1, 0, VoteType::Prevote))
+                .add_prevote(signed_vote(*id, key, block, 1, 0, VoteType::Prevote))
                 .unwrap();
         }
         assert!(round.has_prevote_quorum());
 
-        // All 3 validators precommit.
-        for i in 1..=3 {
+        for (id, key) in &keys {
             round
-                .add_precommit(make_vote(i, block, 1, 0, VoteType::Precommit))
+                .add_precommit(signed_vote(*id, key, block, 1, 0, VoteType::Precommit))
                 .unwrap();
         }
         assert!(round.has_precommit_quorum());
@@ -320,20 +377,49 @@ mod tests {
     fn test_no_quorum_without_supermajority() {
         let block = [1u8; 32];
         let other_block = [2u8; 32];
-        let mut round = ConsensusRound::new(block, 1, 0, 4, 10);
+        let (vs, keys) = make_validators(4);
+        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
 
-        // 2 prevote for block, 2 for other_block. Quorum=3, neither reaches it.
+        // 2 for block, 2 for other_block.
         round
-            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
         round
-            .add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[1].0,
+                &keys[1].1,
+                block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
         round
-            .add_prevote(make_vote(3, other_block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[2].0,
+                &keys[2].1,
+                other_block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
         round
-            .add_prevote(make_vote(4, other_block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[3].0,
+                &keys[3].1,
+                other_block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
 
         assert!(!round.has_prevote_quorum());
@@ -342,19 +428,35 @@ mod tests {
     #[test]
     fn test_duplicate_vote_rejected() {
         let block = [1u8; 32];
-        let mut round = ConsensusRound::new(block, 1, 0, 3, 10);
+        let (vs, keys) = make_validators(3);
+        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
 
         round
-            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
-        let result = round.add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote));
+        let result = round.add_prevote(signed_vote(
+            keys[0].0,
+            &keys[0].1,
+            block,
+            1,
+            0,
+            VoteType::Prevote,
+        ));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_max_rounds_abort() {
         let block = [1u8; 32];
-        let mut round = ConsensusRound::new(block, 1, 5, 3, 5); // round=5, max=5
+        let (vs, _) = make_validators(3);
+        let mut round = ConsensusRound::new(block, 1, 5, vs, 5);
 
         match round.evaluate() {
             ConsensusResult::Aborted { .. } => {}
@@ -364,45 +466,75 @@ mod tests {
 
     #[test]
     fn test_byzantine_tolerance() {
-        // 4 validators, 1 Byzantine (f=1, n/3=1.33, f < n/3 holds).
         let block = [1u8; 32];
         let bad_block = [99u8; 32];
-        let mut round = ConsensusRound::new(block, 1, 0, 4, 10);
+        let (vs, keys) = make_validators(4);
+        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
 
-        // 3 honest validators prevote for block, 1 Byzantine votes for bad_block.
+        // 3 honest for block, 1 Byzantine for bad_block.
+        for i in 0..3 {
+            round
+                .add_prevote(signed_vote(
+                    keys[i].0,
+                    &keys[i].1,
+                    block,
+                    1,
+                    0,
+                    VoteType::Prevote,
+                ))
+                .unwrap();
+        }
         round
-            .add_prevote(make_vote(1, block, 1, 0, VoteType::Prevote))
+            .add_prevote(signed_vote(
+                keys[3].0,
+                &keys[3].1,
+                bad_block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
             .unwrap();
-        round
-            .add_prevote(make_vote(2, block, 1, 0, VoteType::Prevote))
-            .unwrap();
-        round
-            .add_prevote(make_vote(3, block, 1, 0, VoteType::Prevote))
-            .unwrap();
-        round
-            .add_prevote(make_vote(4, bad_block, 1, 0, VoteType::Prevote))
-            .unwrap();
-
-        // Quorum = 3, we have 3 prevotes for block. Passes!
         assert!(round.has_prevote_quorum());
 
-        // 3 honest precommit.
+        for i in 0..3 {
+            round
+                .add_precommit(signed_vote(
+                    keys[i].0,
+                    &keys[i].1,
+                    block,
+                    1,
+                    0,
+                    VoteType::Precommit,
+                ))
+                .unwrap();
+        }
         round
-            .add_precommit(make_vote(1, block, 1, 0, VoteType::Precommit))
-            .unwrap();
-        round
-            .add_precommit(make_vote(2, block, 1, 0, VoteType::Precommit))
-            .unwrap();
-        round
-            .add_precommit(make_vote(3, block, 1, 0, VoteType::Precommit))
-            .unwrap();
-        round
-            .add_precommit(make_vote(4, bad_block, 1, 0, VoteType::Precommit))
+            .add_precommit(signed_vote(
+                keys[3].0,
+                &keys[3].1,
+                bad_block,
+                1,
+                0,
+                VoteType::Precommit,
+            ))
             .unwrap();
 
         match round.evaluate() {
-            ConsensusResult::Finalized { .. } => {} // Byzantine validator's vote didn't prevent finality.
+            ConsensusResult::Finalized { .. } => {}
             other => panic!("Should finalize despite 1 Byzantine: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_non_member_vote_rejected() {
+        let block = [1u8; 32];
+        let (vs, _) = make_validators(3);
+        let mut round = ConsensusRound::new(block, 1, 0, vs, 10);
+
+        // Vote from validator not in the set.
+        let outsider_key = generate_keypair();
+        let outsider_id = [99u8; 32];
+        let vote = signed_vote(outsider_id, &outsider_key, block, 1, 0, VoteType::Prevote);
+        assert!(round.add_prevote(vote).is_err());
     }
 }

@@ -10,3 +10,4 @@ hex = { workspace = true }
 thiserror = { workspace = true }
 sccgub-types = { path = "../sccgub-types" }
 sccgub-crypto = { path = "../sccgub-crypto" }
+ed25519-dalek = { workspace = true }
