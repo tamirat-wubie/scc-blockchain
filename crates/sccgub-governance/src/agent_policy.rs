@@ -104,7 +104,7 @@ impl AgentPolicyRegistry {
         self.policies.get(agent_id)
     }
 
-    /// Check if an agent's action is permitted by its policy.
+    /// Check if an agent's action is permitted, including per-block action count.
     pub fn check_action(
         &self,
         agent_id: &AgentId,
@@ -128,6 +128,40 @@ impl AgentPolicyRegistry {
             policy.check_transfer_limit(amount)?;
         }
 
+        Ok(())
+    }
+
+    /// Check if an agent has exceeded its per-block action limit.
+    pub fn check_action_count(
+        &self,
+        agent_id: &AgentId,
+        actions_in_block: u32,
+    ) -> Result<(), String> {
+        if let Some(policy) = self.get(agent_id) {
+            if actions_in_block >= policy.max_actions_per_block {
+                return Err(format!(
+                    "Agent exceeded max actions per block: {} >= {}",
+                    actions_in_block, policy.max_actions_per_block
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Check if a causal chain depth exceeds the agent's policy limit.
+    pub fn check_chain_depth(
+        &self,
+        agent_id: &AgentId,
+        chain_depth: u32,
+    ) -> Result<(), String> {
+        if let Some(policy) = self.get(agent_id) {
+            if chain_depth > policy.max_chain_depth {
+                return Err(format!(
+                    "Causal chain depth {} exceeds agent limit {}",
+                    chain_depth, policy.max_chain_depth
+                ));
+            }
+        }
         Ok(())
     }
 

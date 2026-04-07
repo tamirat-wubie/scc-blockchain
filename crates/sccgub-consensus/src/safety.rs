@@ -57,6 +57,11 @@ pub fn prove_no_fork(
     if cert_a.height != cert_b.height {
         return ForkProofResult::DifferentHeights;
     }
+    if cert_a.validator_count != cert_b.validator_count {
+        return ForkProofResult::ImpossibleFork {
+            reason: "Certificates reference different validator set sizes".into(),
+        };
+    }
     if cert_a.block_hash == cert_b.block_hash {
         return ForkProofResult::SameBlock;
     }

@@ -226,7 +226,8 @@ impl Chain {
         let transitions = accepted_transitions;
         speculative_state.set_height(height);
 
-        let validator_id = blake3_hash(self.validator_key.verifying_key().as_bytes());
+        // Use same canonical derivation as validator_id_for_check (line 178).
+        let validator_id = validator_id_for_check;
 
         // Compute balance root: sort balances by agent_id for determinism, hash each entry.
         let mut bal_entries: Vec<_> = speculative_balances.balances.iter().collect();

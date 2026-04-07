@@ -72,8 +72,9 @@ impl MultiAssetLedger {
         to: &AgentId,
         amount: TensionValue,
     ) -> Result<(), String> {
-        if !self.asset_info.contains_key(asset_id) {
-            return Err("Asset not registered".into());
+        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        if info.frozen {
+            return Err("Asset is frozen — cannot mint".into());
         }
         if amount.raw() <= 0 {
             return Err("Mint amount must be positive".into());
@@ -93,6 +94,11 @@ impl MultiAssetLedger {
         from: &AgentId,
         amount: TensionValue,
     ) -> Result<(), String> {
+        if let Some(info) = self.asset_info.get(asset_id) {
+            if info.frozen {
+                return Err("Asset is frozen — cannot burn".into());
+            }
+        }
         let key = (*from, *asset_id);
         let balance = self.balances.get(&key).copied().unwrap_or(TensionValue::ZERO);
         if balance.raw() < amount.raw() {
@@ -118,7 +124,8 @@ impl MultiAssetLedger {
         if from == to {
             return Err("Cannot transfer to self".into());
         }
-        if let Some(info) = self.asset_info.get(asset_id) {
+        let info = self.asset_info.get(asset_id).ok_or("Asset not registered")?;
+        {
             if info.frozen {
                 return Err("Asset is frozen".into());
             }
