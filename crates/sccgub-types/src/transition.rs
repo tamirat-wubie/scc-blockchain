@@ -154,6 +154,8 @@ pub enum OperationPayload {
         from: crate::AgentId,
         to: crate::AgentId,
         /// Amount as raw fixed-point i128 (TensionValue scale).
+        /// Serialized as string to avoid JSON i128 limitations.
+        #[serde(with = "crate::transition::i128_as_string")]
         amount: i128,
     },
     /// Agent registration data.
@@ -166,4 +168,24 @@ pub enum OperationPayload {
     InvokeContract { contract_id: Hash, method: String, args: Vec<u8> },
     /// No-op (for testing).
     Noop,
+}
+
+/// Custom serialization for i128 as string (JSON doesn't support i128 natively).
+pub mod i128_as_string {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<i128>().map_err(serde::de::Error::custom)
+    }
 }

@@ -5,7 +5,10 @@
       "Bash(gh run:*)",
       "Bash(cargo build:*)",
       "Bash(grep -B2 \"missing \\\\`balance_root\\\\`\")",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(cargo run:*)",
+      "Bash(rm -rf .sccgub)",
+      "Bash(rm chain.json)"
     ]
   }
 }
