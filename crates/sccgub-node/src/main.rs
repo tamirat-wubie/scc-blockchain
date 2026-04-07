@@ -123,6 +123,7 @@ fn cmd_init(data_dir: &std::path::Path) {
 
     store.save_block(genesis).expect("Failed to save genesis block");
     store.save_metadata(&chain.chain_id).expect("Failed to save metadata");
+    store.save_validator_key(&chain.validator_key).expect("Failed to save validator key");
 
     println!("Chain initialized at {:?}", data_dir);
     println!("  Chain ID:      {}", hex::encode(chain.chain_id));
@@ -153,6 +154,14 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
     };
 
     let mut chain = Chain::from_blocks(blocks);
+
+    // Load persisted validator key if available.
+    if store.has_validator_key() {
+        match store.load_validator_key() {
+            Ok(key) => chain.set_validator_key(key),
+            Err(e) => eprintln!("Warning: could not load validator key: {}", e),
+        }
+    }
 
     // Create a test agent with correctly derived agent_id.
     let agent_key = generate_keypair();

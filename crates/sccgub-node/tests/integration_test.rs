@@ -100,6 +100,7 @@ fn create_write_tx(
 }
 
 /// Helper: build a minimal valid block.
+/// Speculatively applies transitions to compute post-transition state_root.
 fn build_test_block(
     height: u64,
     parent_id: [u8; 32],
@@ -116,6 +117,20 @@ fn build_test_block(
     let tx_bytes: Vec<&[u8]> = transitions.iter().map(|tx| tx.tx_id.as_slice()).collect();
     let transition_root = merkle_root_of_bytes(&tx_bytes);
 
+    // Speculatively apply transitions to compute post-state root.
+    let mut spec_state = state.clone();
+    for tx in &transitions {
+        if let OperationPayload::Write { key, value } = &tx.payload {
+            spec_state.apply_delta(&StateDelta {
+                writes: vec![StateWrite {
+                    address: key.clone(),
+                    value: value.clone(),
+                }],
+                deletes: vec![],
+            });
+        }
+    }
+
     let governance = GovernanceSnapshot {
         state_hash: ZERO_HASH,
         active_norm_count: 0,
@@ -124,16 +139,14 @@ fn build_test_block(
     };
 
     let tension_before = state.state.tension_field.total;
-    let header_data = serde_json::to_vec(&(chain_id, height, &parent_id)).unwrap();
-    let block_id = blake3_hash(&header_data);
 
-    let header = BlockHeader {
+    let mut header = BlockHeader {
         chain_id,
-        block_id,
+        block_id: ZERO_HASH,
         parent_id,
         height,
         timestamp,
-        state_root: state.state_root(),
+        state_root: spec_state.state_root(), // Post-transition root.
         transition_root,
         receipt_root: ZERO_HASH,
         causal_root: ZERO_HASH,
@@ -145,6 +158,9 @@ fn build_test_block(
         validator_id,
         version: 1,
     };
+    // Compute block_id from full header (same as chain.rs).
+    let header_bytes = serde_json::to_vec(&header).unwrap();
+    header.block_id = blake3_hash(&header_bytes);
 
     let proof = CausalProof {
         block_height: height,
@@ -155,8 +171,8 @@ fn build_test_block(
         tension_after: tension_before,
         constraint_results: vec![],
         recursion_depth: 0,
-        validator_signature: sign(validator_key, &header_data),
-        causal_hash: blake3_hash(&header_data),
+        validator_signature: sign(validator_key, &header_bytes),
+        causal_hash: blake3_hash(&header_bytes),
     };
 
     Block {

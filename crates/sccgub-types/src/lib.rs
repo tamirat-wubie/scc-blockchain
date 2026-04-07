@@ -2,6 +2,7 @@ pub mod agent;
 pub mod block;
 pub mod causal;
 pub mod contract;
+pub mod domain;
 pub mod economics;
 pub mod governance;
 pub mod mfidel;

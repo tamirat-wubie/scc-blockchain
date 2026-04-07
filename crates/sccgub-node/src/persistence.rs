@@ -151,6 +151,34 @@ impl ChainStore {
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
+
+    /// Save validator key to disk (raw Ed25519 secret key bytes).
+    /// WARNING: This stores the key unencrypted. For production, use encrypted storage.
+    pub fn save_validator_key(&self, key: &ed25519_dalek::SigningKey) -> std::io::Result<()> {
+        let path = self.base_dir.join("validator.key");
+        let tmp_path = self.base_dir.join("validator.key.tmp");
+        fs::write(&tmp_path, hex::encode(key.to_bytes()))?;
+        fs::rename(&tmp_path, &path)
+    }
+
+    /// Load validator key from disk.
+    pub fn load_validator_key(&self) -> std::io::Result<ed25519_dalek::SigningKey> {
+        let path = self.base_dir.join("validator.key");
+        let hex_str = fs::read_to_string(path)?;
+        let bytes = hex::decode(hex_str.trim())
+            .map_err(|e| std::io::Error::other(format!("Invalid key hex: {}", e)))?;
+        if bytes.len() != 32 {
+            return Err(std::io::Error::other("Validator key must be 32 bytes"));
+        }
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&bytes);
+        Ok(ed25519_dalek::SigningKey::from_bytes(&key_bytes))
+    }
+
+    /// Check if a validator key exists on disk.
+    pub fn has_validator_key(&self) -> bool {
+        self.base_dir.join("validator.key").exists()
+    }
 }
 
 #[cfg(test)]

@@ -196,6 +196,11 @@ impl Chain {
         }
     }
 
+    /// Set the validator key (e.g., loaded from disk).
+    pub fn set_validator_key(&mut self, key: ed25519_dalek::SigningKey) {
+        self.validator_key = key;
+    }
+
     /// Get the latest block.
     pub fn latest_block(&self) -> Option<&Block> {
         self.blocks.last()
