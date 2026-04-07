@@ -54,9 +54,11 @@ pub enum ProposalStatus {
 }
 
 /// Proposal registry managing the lifecycle of governance proposals.
+/// Uses a HashMap index for O(1) proposal lookup by ID.
 #[derive(Debug, Clone, Default)]
 pub struct ProposalRegistry {
     pub proposals: Vec<GovernanceProposal>,
+    index: std::collections::HashMap<Hash, usize>,
 }
 
 impl ProposalRegistry {
@@ -102,6 +104,7 @@ impl ProposalRegistry {
             voting_deadline: current_height + voting_period,
             voters: HashSet::new(),
         });
+        self.index.insert(id, self.proposals.len() - 1);
 
         Ok(id)
     }
@@ -115,11 +118,8 @@ impl ProposalRegistry {
         approve: bool,
         current_height: u64,
     ) -> Result<(), String> {
-        let proposal = self
-            .proposals
-            .iter_mut()
-            .find(|p| p.id == *proposal_id)
-            .ok_or("Proposal not found")?;
+        let idx = *self.index.get(proposal_id).ok_or("Proposal not found")?;
+        let proposal = &mut self.proposals[idx];
 
         if proposal.status != ProposalStatus::Voting {
             return Err("Proposal is not in voting state".into());
@@ -172,11 +172,8 @@ impl ProposalRegistry {
 
     /// Activate an accepted proposal. Returns the norm to register (if AddNorm).
     pub fn activate(&mut self, proposal_id: &Hash) -> Result<Option<Norm>, String> {
-        let proposal = self
-            .proposals
-            .iter_mut()
-            .find(|p| p.id == *proposal_id)
-            .ok_or("Proposal not found")?;
+        let idx = *self.index.get(proposal_id).ok_or("Proposal not found")?;
+        let proposal = &mut self.proposals[idx];
 
         if proposal.status != ProposalStatus::Accepted {
             return Err("Proposal must be Accepted before activation".into());

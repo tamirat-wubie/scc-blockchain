@@ -47,29 +47,31 @@ impl CausalGraph {
             .collect();
 
         // Iterative DFS with explicit stack (prevents stack overflow).
+        // Uses index-based neighbor access to avoid cloning neighbor Vecs.
+        let empty: Vec<CausalVertex> = Vec::new();
         for start in &all_vertices {
             if color.get(start) != Some(&Color::White) {
                 continue;
             }
-            // Stack entries: (vertex, neighbor_index, is_entering)
             let mut stack: Vec<(CausalVertex, usize)> = vec![(start.clone(), 0)];
             color.insert(start.clone(), Color::Gray);
 
-            while let Some((v, idx)) = stack.last_mut() {
-                let neighbors = adj.get(v).cloned().unwrap_or_default();
-                if *idx < neighbors.len() {
-                    let neighbor = neighbors[*idx].clone();
-                    *idx += 1;
+            while let Some(stack_top) = stack.last_mut() {
+                let neighbors = adj.get(&stack_top.0).unwrap_or(&empty);
+                if stack_top.1 < neighbors.len() {
+                    let neighbor = neighbors[stack_top.1].clone();
+                    stack_top.1 += 1;
                     match color.get(&neighbor) {
-                        Some(Color::Gray) => return false, // Cycle found.
+                        Some(Color::Gray) => return false,
                         Some(Color::White) => {
                             color.insert(neighbor.clone(), Color::Gray);
                             stack.push((neighbor, 0));
                         }
-                        _ => {} // Black — already fully explored.
+                        _ => {}
                     }
                 } else {
-                    color.insert(v.clone(), Color::Black);
+                    let v = stack_top.0.clone();
+                    color.insert(v, Color::Black);
                     stack.pop();
                 }
             }

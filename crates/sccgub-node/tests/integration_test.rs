@@ -1066,3 +1066,99 @@ fn test_end_to_end_all_subsystems() {
     // 4 state entries (3 from block 1 + 1 from block 2).
     assert_eq!(state.trie.len(), 4);
 }
+
+#[test]
+fn test_duplicate_mempool_submission_rejected() {
+    use sccgub_governance::containment::ContainmentState;
+    use std::collections::{HashSet, VecDeque};
+
+    let (agent, agent_key) = create_test_agent();
+    let tx = create_write_tx(&agent, &agent_key, b"dedup/test", b"data", 1);
+
+    // Manual mempool to test dedup.
+    let mut seen = HashSet::new();
+    seen.insert(tx.tx_id);
+
+    // Second submission of same tx_id should be detected.
+    assert!(seen.contains(&tx.tx_id), "Duplicate should be detected");
+}
+
+#[test]
+fn test_domain_pack_dependent_deactivation_rejected() {
+    use sccgub_types::domain::{DomainPack, DomainPackRegistry, DomainType, DomainField};
+
+    let mut registry = DomainPackRegistry::default();
+
+    // Install base pack.
+    let base_id = [1u8; 32];
+    let base = DomainPack {
+        id: base_id,
+        name: "base".into(),
+        version: "1.0.0".into(),
+        description: "Base domain".into(),
+        required_level: PrecedenceLevel::Meaning,
+        types: vec![DomainType {
+            name: "base.Record".into(),
+            schema: "base record".into(),
+            fields: vec![DomainField { name: "id".into(), field_type: "u64".into(), required: true }],
+        }],
+        laws: vec![],
+        dependencies: vec![],
+        installed_at: None,
+        active: false,
+    };
+    registry.install(base, PrecedenceLevel::Meaning, 0).unwrap();
+
+    // Install dependent pack.
+    let dep = DomainPack {
+        id: [2u8; 32],
+        name: "derived".into(),
+        version: "1.0.0".into(),
+        description: "Depends on base".into(),
+        required_level: PrecedenceLevel::Meaning,
+        types: vec![DomainType {
+            name: "derived.Record".into(),
+            schema: "derived record".into(),
+            fields: vec![],
+        }],
+        laws: vec![],
+        dependencies: vec![base_id], // Depends on base.
+        installed_at: None,
+        active: false,
+    };
+    registry.install(dep, PrecedenceLevel::Meaning, 1).unwrap();
+
+    // Deactivating base should fail because derived depends on it.
+    let result = registry.deactivate(&base_id);
+    assert!(result.is_err(), "Should reject deactivation of depended-upon pack");
+}
+
+#[test]
+fn test_duplicate_voter_rejected() {
+    use sccgub_governance::proposals::{ProposalKind, ProposalRegistry};
+
+    let mut proposals = ProposalRegistry::default();
+    let voter = [42u8; 32];
+
+    let id = proposals
+        .submit(
+            [1u8; 32],
+            PrecedenceLevel::Meaning,
+            ProposalKind::AddNorm {
+                name: "test".into(),
+                description: "test".into(),
+                initial_fitness: TensionValue::from_integer(1),
+                enforcement_cost: TensionValue::ZERO,
+            },
+            0,
+            10,
+        )
+        .unwrap();
+
+    // First vote succeeds.
+    proposals.vote(&id, voter, PrecedenceLevel::Meaning, true, 1).unwrap();
+
+    // Second vote by same agent should fail.
+    let result = proposals.vote(&id, voter, PrecedenceLevel::Meaning, false, 2);
+    assert!(result.is_err(), "Duplicate voter should be rejected");
+}

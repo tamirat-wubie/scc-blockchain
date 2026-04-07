@@ -90,7 +90,7 @@ sccgub info               # Spec, invariants, and architecture reference
 # Build
 cargo build
 
-# Run all 125 tests
+# Run all 130 tests
 cargo test
 
 # Initialize and produce blocks
