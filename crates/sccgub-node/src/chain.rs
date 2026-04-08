@@ -669,3 +669,98 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         governance,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chain_init_produces_genesis() {
+        let chain = Chain::init();
+        assert_eq!(chain.height(), 0);
+        assert!(chain.latest_block().is_some());
+        let genesis = chain.latest_block().unwrap();
+        assert_eq!(genesis.header.height, 0);
+        assert_eq!(genesis.header.parent_id, ZERO_HASH);
+        assert!(chain.balances.total_supply().raw() > 0);
+    }
+
+    #[test]
+    fn test_chain_produce_empty_block() {
+        let mut chain = Chain::init();
+        let result = chain.produce_block();
+        assert!(
+            result.is_ok(),
+            "Empty block should succeed: {:?}",
+            result.err()
+        );
+        assert_eq!(chain.height(), 1);
+    }
+
+    #[test]
+    fn test_chain_produce_multiple_blocks() {
+        let mut chain = Chain::init();
+        // Single-node mode: raise consecutive proposal limit for testing.
+        chain.governance_limits.max_consecutive_proposals = 100;
+        for i in 1..=5 {
+            let result = chain.produce_block();
+            assert!(result.is_ok(), "Block {} failed: {:?}", i, result.err());
+        }
+        assert_eq!(chain.height(), 5);
+        assert_eq!(chain.blocks.len(), 6); // genesis + 5.
+    }
+
+    #[test]
+    fn test_chain_supply_conserved_across_blocks() {
+        let mut chain = Chain::init();
+        let initial_supply = chain.balances.total_supply();
+        for _ in 0..3 {
+            chain.produce_block().unwrap();
+        }
+        // No fees collected for empty blocks → treasury distributes 0 → supply unchanged.
+        assert_eq!(chain.balances.total_supply(), initial_supply);
+    }
+
+    #[test]
+    fn test_chain_snapshot_roundtrip() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain.produce_block().unwrap();
+        chain.produce_block().unwrap();
+
+        let snapshot = chain.create_snapshot();
+        let original_root = chain.state.state_root();
+        let original_supply = chain.balances.total_supply();
+
+        let mut chain2 = Chain::init();
+        chain2.restore_from_snapshot(&snapshot);
+
+        assert_eq!(chain2.state.state_root(), original_root);
+        assert_eq!(chain2.balances.total_supply(), original_supply);
+    }
+
+    #[test]
+    fn test_chain_from_blocks_replay() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain.produce_block().unwrap();
+        chain.produce_block().unwrap();
+
+        let blocks = chain.blocks.clone();
+        let original_root = chain.state.state_root();
+
+        let replayed = Chain::from_blocks(blocks);
+        assert_eq!(replayed.state.state_root(), original_root);
+        assert_eq!(replayed.height(), 2);
+    }
+
+    #[test]
+    fn test_chain_finality_advances() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        for _ in 0..5 {
+            chain.produce_block().unwrap();
+        }
+        assert!(chain.finality.finalized_height >= 3);
+    }
+}
