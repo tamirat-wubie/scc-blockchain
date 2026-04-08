@@ -2,7 +2,7 @@ use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::hash::{blake3_hash, blake3_hash_concat};
 use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
-use sccgub_crypto::signature::{sign, verify as verify_sig};
+use sccgub_crypto::signature::sign;
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
 use sccgub_execution::gas::{self, BlockGasMeter};
 use sccgub_execution::validate::validate_transition_metered;
