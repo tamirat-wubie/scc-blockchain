@@ -624,10 +624,20 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
+/// The canonical signing payload for a block. Both producers and verifiers
+/// MUST construct the payload via this function. Any change to the payload
+/// shape is a hard fork.
+fn block_signing_payload(header: &BlockHeader, proof: &CausalProof) -> [u8; 32] {
+    let mut proof_for_signing = proof.clone();
+    proof_for_signing.validator_signature = Vec::new();
+    let bytes = canonical_bytes(&(header, &proof_for_signing));
+    blake3_hash(&bytes)
+}
+
 /// Verify the producer's Ed25519 signature on a block.
 ///
 /// validator_id = Ed25519 public key directly (Position A).
-/// Signature is over BLAKE3(canonical(header, proof_with_sig_cleared)).
+/// Signature is over block_signing_payload(header, proof).
 /// No registry needed — the public key IS the validator identity.
 fn verify_producer_signature(block: &Block) -> Result<(), String> {
     let sig = &block.proof.validator_signature;
@@ -643,11 +653,7 @@ fn verify_producer_signature(block: &Block) -> Result<(), String> {
         return Err("validator_id (public key) is zero".into());
     }
 
-    // Build signing payload: hash(header, proof_with_sig_cleared).
-    let mut proof_for_signing = block.proof.clone();
-    proof_for_signing.validator_signature = Vec::new();
-    let payload = canonical_bytes(&(&block.header, &proof_for_signing));
-    let payload_hash = blake3_hash(&payload);
+    let payload_hash = block_signing_payload(&block.header, &block.proof);
 
     if !sccgub_crypto::signature::verify(&public_key, &payload_hash, sig) {
         return Err("Ed25519 producer signature verification failed".into());
@@ -706,9 +712,8 @@ fn build_genesis_block(
         validator_signature: vec![],
         causal_hash: blake3_hash(b"genesis-proof"),
     };
-    // Sign over hash(header, proof_with_empty_sig) — matches verify_producer_signature.
-    let signing_payload = canonical_bytes(&(&header, &proof));
-    let signing_hash = blake3_hash(&signing_payload);
+    // Sign via shared helper — matches verify_producer_signature exactly.
+    let signing_hash = block_signing_payload(&header, &proof);
     proof.validator_signature = sign(validator_key, &signing_hash);
 
     Block {
@@ -853,8 +858,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         validator_signature: vec![],
         causal_hash: blake3_hash_concat(&[&parent_id, &transition_root]),
     };
-    let signing_payload = canonical_bytes(&(&header, &proof));
-    let signing_hash = blake3_hash(&signing_payload);
+    let signing_hash = block_signing_payload(&header, &proof);
     proof.validator_signature = sign(validator_key, &signing_hash);
 
     let transition_count = transitions.len() as u32;
