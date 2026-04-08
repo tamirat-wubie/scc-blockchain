@@ -20,7 +20,10 @@
       "Bash(grep -rn \"prefix_iter\" crates/sccgub-*/src/*.rs)",
       "Bash(grep -rn 'starts_with\\\\|\\\\.range\\(' crates/sccgub-state/src/*.rs crates/sccgub-execution/src/*.rs)",
       "Bash(grep -v \"//\")",
-      "Bash(grep -v \"test\\\\|//\")"
+      "Bash(grep -v \"test\\\\|//\")",
+      "Bash(grep -rn \"\\\\.unwrap\\(\\)\" crates/sccgub-*/src/*.rs)",
+      "Bash(grep -rn 'format!\\(\"balance/\\\\|format!\\(\"norms/\\\\|format!\\(\"agents/\\\\|format!\\(\"contract/\\\\|format!\\(\"system/\\\\|format!\\(\"data/\\\\|format!\\(\"escrow/\\\\|format!\\(\"treasury/' crates/sccgub-*/src/*.rs)",
+      "Bash(grep -rn 'b\"balance/\\\\|b\"norms/\\\\|b\"agents/\\\\|b\"contract/\\\\|b\"system/\\\\|b\"data/\\\\|b\"escrow/\\\\|b\"treasury/\\\\|b\"constraints/\\\\|b\"disputes/' crates/sccgub-*/src/*.rs)"
     ]
   }
 }

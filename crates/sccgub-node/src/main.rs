@@ -583,7 +583,7 @@ fn cmd_verify(data_dir: &std::path::Path) {
         let mut replay_balances = sccgub_state::balances::BalanceLedger::new();
         // Reconstruct balances from trie.
         for (key, value) in state.trie.iter() {
-            if key.starts_with(b"balance/") && value.len() == 16 {
+            if key.starts_with(sccgub_types::namespace::NS_BALANCE) && value.len() == 16 {
                 if let Ok(agent_bytes) = hex::decode(&key[8..]) {
                     if agent_bytes.len() == 32 {
                         let mut id = [0u8; 32];
@@ -1463,7 +1463,9 @@ fn create_test_transition(
     index: u32,
     base_height: u64,
 ) -> SymbolicTransition {
-    let key = format!("data/h{}/entry/{}", base_height + 1, index).into_bytes();
+    let key = sccgub_types::namespace::data_key(
+        format!("h{}/entry/{}", base_height + 1, index).as_bytes(),
+    );
     let value = format!("value_{}", index).into_bytes();
 
     let intent = WHBindingIntent {
