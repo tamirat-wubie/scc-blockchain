@@ -178,3 +178,116 @@ pub struct CausalGraphDelta {
     pub new_edges: Vec<CausalEdge>,
     pub causal_root: MerkleRoot,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_graph_is_acyclic() {
+        let graph = CausalGraph::default();
+        assert!(graph.is_acyclic());
+    }
+
+    #[test]
+    fn test_linear_graph_is_acyclic() {
+        let mut graph = CausalGraph::default();
+        let v1 = CausalVertex::Transition([1u8; 32]);
+        let v2 = CausalVertex::Transition([2u8; 32]);
+        let v3 = CausalVertex::Transition([3u8; 32]);
+        graph.add_vertex(v1.clone());
+        graph.add_vertex(v2.clone());
+        graph.add_vertex(v3.clone());
+        graph.add_edge(CausalEdge::CausedBy {
+            source: v2.clone(),
+            target: v1.clone(),
+        });
+        graph.add_edge(CausalEdge::CausedBy {
+            source: v3.clone(),
+            target: v2.clone(),
+        });
+        assert!(graph.is_acyclic());
+    }
+
+    #[test]
+    fn test_cycle_detected() {
+        let mut graph = CausalGraph::default();
+        let v1 = CausalVertex::Transition([1u8; 32]);
+        let v2 = CausalVertex::Transition([2u8; 32]);
+        graph.add_vertex(v1.clone());
+        graph.add_vertex(v2.clone());
+        graph.add_edge(CausalEdge::CausedBy {
+            source: v1.clone(),
+            target: v2.clone(),
+        });
+        graph.add_edge(CausalEdge::CausedBy {
+            source: v2.clone(),
+            target: v1.clone(),
+        });
+        assert!(!graph.is_acyclic());
+    }
+
+    #[test]
+    fn test_self_loop_detected() {
+        let mut graph = CausalGraph::default();
+        let v1 = CausalVertex::Transition([1u8; 32]);
+        graph.add_vertex(v1.clone());
+        graph.add_edge(CausalEdge::CausedBy {
+            source: v1.clone(),
+            target: v1.clone(),
+        });
+        assert!(!graph.is_acyclic());
+    }
+
+    #[test]
+    fn test_edge_endpoints() {
+        let src = CausalVertex::Transition([1u8; 32]);
+        let tgt = CausalVertex::Actor([2u8; 32]);
+        let edge = CausalEdge::AuthorizedBy {
+            source: src.clone(),
+            target: tgt.clone(),
+        };
+        let (s, t) = edge.endpoints();
+        assert_eq!(s, src);
+        assert_eq!(t, tgt);
+    }
+
+    #[test]
+    fn test_diamond_graph_acyclic() {
+        let mut graph = CausalGraph::default();
+        let a = CausalVertex::Transition([1u8; 32]);
+        let b = CausalVertex::Transition([2u8; 32]);
+        let c = CausalVertex::Transition([3u8; 32]);
+        let d = CausalVertex::Transition([4u8; 32]);
+        graph.add_vertex(a.clone());
+        graph.add_vertex(b.clone());
+        graph.add_vertex(c.clone());
+        graph.add_vertex(d.clone());
+        // Diamond: a→b, a→c, b→d, c→d.
+        graph.add_edge(CausalEdge::CausedBy {
+            source: b.clone(),
+            target: a.clone(),
+        });
+        graph.add_edge(CausalEdge::CausedBy {
+            source: c.clone(),
+            target: a.clone(),
+        });
+        graph.add_edge(CausalEdge::CausedBy {
+            source: d.clone(),
+            target: b.clone(),
+        });
+        graph.add_edge(CausalEdge::CausedBy {
+            source: d.clone(),
+            target: c.clone(),
+        });
+        assert!(graph.is_acyclic());
+    }
+
+    #[test]
+    fn test_causal_graph_delta_default() {
+        let delta = CausalGraphDelta::default();
+        assert!(delta.new_vertices.is_empty());
+        assert!(delta.new_edges.is_empty());
+        assert_eq!(delta.causal_root, [0u8; 32]);
+    }
+}

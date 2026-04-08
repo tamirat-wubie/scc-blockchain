@@ -2,7 +2,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Production hardening phase. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 87 source files, ~28K lines Rust, 394 tests, all CI green (Ubuntu + Windows + security audit).
+**Status:** Production hardening phase — v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 87 source files, ~30K lines Rust, 413+ tests, all CI green (Ubuntu + Windows + security audit).
 
 ## Architecture (9 crates)
 
