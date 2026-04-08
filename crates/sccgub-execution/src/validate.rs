@@ -77,10 +77,30 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
             MAX_SYMBOL_ADDRESS_LEN
         ));
     }
-    if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
-        if key.len() > MAX_STATE_ENTRY_SIZE || value.len() > MAX_STATE_ENTRY_SIZE {
-            return Err("Payload key or value exceeds 1MB size limit".into());
+    // Per-variant size checks.
+    match &tx.payload {
+        sccgub_types::transition::OperationPayload::Write { key, value } => {
+            if key.len() > MAX_STATE_ENTRY_SIZE || value.len() > MAX_STATE_ENTRY_SIZE {
+                return Err("Payload key or value exceeds 1MB size limit".into());
+            }
         }
+        sccgub_types::transition::OperationPayload::DeployContract { code, .. } => {
+            if code.len() > MAX_STATE_ENTRY_SIZE {
+                return Err(format!(
+                    "Contract code {} bytes exceeds 1MB limit",
+                    code.len()
+                ));
+            }
+        }
+        sccgub_types::transition::OperationPayload::InvokeContract { args, .. } => {
+            if args.len() > MAX_STATE_ENTRY_SIZE {
+                return Err(format!(
+                    "Contract args {} bytes exceeds 1MB limit",
+                    args.len()
+                ));
+            }
+        }
+        _ => {} // Noop, AssetTransfer, RegisterAgent, ProposeNorm — all bounded by fixed fields.
     }
 
     // 4. WHBinding structural completeness (cheap checks only, no cross-checks).
@@ -252,7 +272,12 @@ pub fn validate_transition_metered(
     let validation_result = validate_transition(tx, state);
 
     // Charge for Phi traversal compute (13 phases).
-    let _ = gas.charge_compute(13);
+    if let Err(e) = gas.charge_compute(13) {
+        return (
+            make_reject_receipt(tx, state_root_before, &format!("{}", e), &gas),
+            gas.used,
+        );
+    }
 
     match validation_result {
         Ok(()) => {

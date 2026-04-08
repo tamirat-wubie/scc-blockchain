@@ -298,6 +298,12 @@ impl Chain {
             {
                 let mut test_bal = filter_balances.clone();
                 if test_bal.transfer(from, to, TensionValue(*amount)).is_err() {
+                    // N-17: produce reject receipt instead of silent continue.
+                    rejected_receipts.push(make_prefilter_reject_receipt(
+                        &tx,
+                        self.state.state_root(),
+                        "Transfer solvency check failed: insufficient balance",
+                    ));
                     continue;
                 }
             }
@@ -306,6 +312,16 @@ impl Chain {
                 .check_nonce(&tx.actor.agent_id, tx.nonce)
                 .is_err()
             {
+                // N-17: produce reject receipt instead of silent continue.
+                rejected_receipts.push(make_prefilter_reject_receipt(
+                    &tx,
+                    self.state.state_root(),
+                    &format!(
+                        "Nonce sequence violation: got {} for agent {}",
+                        tx.nonce,
+                        hex::encode(tx.actor.agent_id)
+                    ),
+                ));
                 continue;
             }
 
@@ -689,6 +705,38 @@ impl std::fmt::Display for ImportError {
 }
 
 impl std::error::Error for ImportError {}
+
+/// Build a lightweight reject receipt for pre-filter rejections (N-17).
+/// These receipts don't go through the gas meter because the pre-filter
+/// runs before metered validation. Gas used is 0.
+fn make_prefilter_reject_receipt(
+    tx: &sccgub_types::transition::SymbolicTransition,
+    state_root: [u8; 32],
+    reason: &str,
+) -> sccgub_types::receipt::CausalReceipt {
+    sccgub_types::receipt::CausalReceipt {
+        tx_id: tx.tx_id,
+        verdict: sccgub_types::receipt::Verdict::Reject {
+            reason: reason.to_string(),
+        },
+        pre_state_root: state_root,
+        post_state_root: state_root,
+        read_set: vec![],
+        write_set: vec![],
+        causes: vec![],
+        resource_used: sccgub_types::receipt::ResourceUsage::default(),
+        emitted_events: vec![],
+        wh_binding: sccgub_types::transition::WHBindingResolved {
+            intent: tx.wh_binding_intent.clone(),
+            what_actual: sccgub_types::transition::StateDelta::default(),
+            whether: sccgub_types::transition::ValidationResult::Invalid {
+                reason: reason.to_string(),
+            },
+        },
+        phi_phase_reached: 0,
+        tension_delta: TensionValue::ZERO,
+    }
+}
 
 /// The canonical signing payload for a block. Both producers and verifiers
 /// MUST construct the payload via this function. Any change to the payload
