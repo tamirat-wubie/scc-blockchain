@@ -59,6 +59,49 @@ pub fn check_transition_wh(tx: &SymbolicTransition) -> Result<(), String> {
         ));
     }
 
+    // G-5.3: WHEN — timestamp must not be in the past (causal ordering).
+    // Lamport 0 is valid for genesis; otherwise depth should be >= 1.
+    if tx.wh_binding_intent.when.lamport_counter == 0 && tx.wh_binding_intent.when.causal_depth > 0
+    {
+        return Err("WHBinding 'when': zero lamport counter with non-zero causal depth".into());
+    }
+
+    // G-5.4: HOW — mechanism must match the payload kind.
+    let how_ok = match (&tx.wh_binding_intent.how, &tx.payload) {
+        (
+            sccgub_types::transition::TransitionMechanism::DirectStateWrite,
+            sccgub_types::transition::OperationPayload::Write { .. },
+        ) => true,
+        (
+            sccgub_types::transition::TransitionMechanism::ContractExecution { .. },
+            sccgub_types::transition::OperationPayload::InvokeContract { .. },
+        ) => true,
+        (_, sccgub_types::transition::OperationPayload::Noop) => true, // Noop always ok.
+        (
+            sccgub_types::transition::TransitionMechanism::GovernanceAction,
+            sccgub_types::transition::OperationPayload::ProposeNorm { .. },
+        ) => true,
+        (
+            sccgub_types::transition::TransitionMechanism::DirectStateWrite,
+            sccgub_types::transition::OperationPayload::AssetTransfer { .. },
+        ) => true, // Transfers are direct state writes on the balance trie.
+        (
+            sccgub_types::transition::TransitionMechanism::DirectStateWrite,
+            sccgub_types::transition::OperationPayload::RegisterAgent { .. },
+        ) => true,
+        (
+            sccgub_types::transition::TransitionMechanism::DirectStateWrite,
+            sccgub_types::transition::OperationPayload::DeployContract { .. },
+        ) => true,
+        _ => false,
+    };
+    if !how_ok {
+        return Err(format!(
+            "WHBinding 'how' ({:?}) does not match payload variant",
+            tx.wh_binding_intent.how
+        ));
+    }
+
     Ok(())
 }
 

@@ -22,6 +22,19 @@ impl PayloadConsistency {
     }
 }
 
+/// Human-readable name for a payload variant (for error messages).
+fn payload_variant_name(payload: &OperationPayload) -> &'static str {
+    match payload {
+        OperationPayload::Write { .. } => "Write",
+        OperationPayload::AssetTransfer { .. } => "AssetTransfer",
+        OperationPayload::RegisterAgent { .. } => "RegisterAgent",
+        OperationPayload::ProposeNorm { .. } => "ProposeNorm",
+        OperationPayload::DeployContract { .. } => "DeployContract",
+        OperationPayload::InvokeContract { .. } => "InvokeContract",
+        OperationPayload::Noop => "Noop",
+    }
+}
+
 /// Verify the transition's payload is consistent with its declared intent.
 pub fn check_payload_consistency(tx: &SymbolicTransition) -> PayloadConsistency {
     let target = &tx.intent.target;
@@ -118,8 +131,12 @@ pub fn check_payload_consistency(tx: &SymbolicTransition) -> PayloadConsistency 
         (OperationPayload::Noop, _) => PayloadConsistency::Consistent,
 
         // Mismatch: payload variant doesn't match kind.
-        (_payload, kind) => PayloadConsistency::Inconsistent {
-            reason: format!("Payload variant does not match TransitionKind {:?}", kind,),
+        (payload, kind) => PayloadConsistency::Inconsistent {
+            reason: format!(
+                "Payload {} is not valid for TransitionKind {:?}",
+                payload_variant_name(payload),
+                kind,
+            ),
         },
     }
 }

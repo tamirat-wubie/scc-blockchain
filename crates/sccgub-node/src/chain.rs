@@ -1252,4 +1252,85 @@ mod tests {
             "Activated norm must be in governance state"
         );
     }
+
+    #[test]
+    fn test_phase8_rejects_payload_target_mismatch() {
+        // End-to-end witness: proves Phase 8 payload consistency check
+        // is wired into the production path. If check_payload_consistency
+        // were replaced with `return Consistent`, this test would fail.
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Build a properly signed tx with a MISMATCHED payload:
+        // kind=StateWrite, target=data/foo, but payload writes to balance/victim.
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            blake3_hash_concat(&[&pk, &sccgub_crypto::canonical::canonical_bytes(&seal)]);
+
+        let target = b"data/legitimate".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key: pk,
+                mfidel_seal: seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "Phase 8 e2e test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            // THE ATTACK: payload key differs from intent.target.
+            payload: OperationPayload::Write {
+                key: b"balance/victim".to_vec(),
+                value: b"stolen_funds".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "Phase 8 e2e test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+        chain.submit_transition(tx).expect("submit should succeed");
+        let block = chain.produce_block().expect("block should succeed");
+
+        // The tx must be FILTERED by Phase 8 payload consistency check.
+        assert_eq!(
+            block.body.transitions.len(),
+            0,
+            "Payload-mismatched tx must be filtered by Phase 8. \
+             If this fails, the payload consistency check is not wired."
+        );
+    }
 }
