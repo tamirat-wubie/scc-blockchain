@@ -38,15 +38,17 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 - **Artifacts:** External artifact governance layer (provenance, attestations, lineage, rights, sessions, disputes)
 - **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
-## REST API (7 endpoints)
+## REST API (8 versioned endpoints)
 
 ```
-GET  /api/v1/status          Chain summary (height, finality, tension, governance)
-GET  /api/v1/health          System health + finality SLA
-GET  /api/v1/block/:height   Block detail with transaction list
-GET  /api/v1/state           Paginated world state (?offset=&limit=)
-GET  /api/v1/tx/:tx_id       Transaction detail by hex ID
-POST /api/v1/tx/submit       Submit signed transaction (hex-encoded canonical bytes)
+GET  /api/v1/status                  Chain summary (height, finality, tension, governance)
+GET  /api/v1/health                  System health + finality SLA
+GET  /api/v1/block/:height           Block detail with transaction list
+GET  /api/v1/block/:height/receipts  Block receipts with gas breakdown
+GET  /api/v1/state                   Paginated world state (?offset=&limit=)
+GET  /api/v1/tx/:tx_id               Transaction detail by hex ID
+GET  /api/v1/receipt/:tx_id          Receipt with verdict + resource usage
+POST /api/v1/tx/submit               Submit signed transaction (hex-encoded)
 ```
 
 Structured error codes (12 machine-readable `ErrorCode` variants). CORS enabled. Legacy routes at `/api/*`.

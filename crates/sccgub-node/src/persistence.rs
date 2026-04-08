@@ -240,6 +240,7 @@ fn decrypt_key(encrypted: &[u8; 32], passphrase: &str) -> [u8; 32] {
 }
 
 /// State snapshot for fast chain loading.
+/// Captures all consensus-critical state needed to resume without replay.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StateSnapshot {
     pub height: u64,
@@ -250,6 +251,18 @@ pub struct StateSnapshot {
     pub agent_nonces: Vec<(sccgub_types::AgentId, u128)>,
     /// Balance ledger entries.
     pub balances: Vec<(sccgub_types::AgentId, i128)>,
+    /// Treasury pending fees (raw i128).
+    pub treasury_pending_raw: i128,
+    /// Treasury total fees collected (raw i128).
+    pub treasury_collected_raw: i128,
+    /// Treasury total rewards distributed (raw i128).
+    pub treasury_distributed_raw: i128,
+    /// Treasury total burned (raw i128).
+    pub treasury_burned_raw: i128,
+    /// Treasury epoch number.
+    pub treasury_epoch: u64,
+    /// Finalized block height.
+    pub finalized_height: u64,
 }
 
 #[cfg(test)]

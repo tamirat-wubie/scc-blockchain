@@ -393,6 +393,7 @@ impl Chain {
     }
 
     /// Create a state snapshot at the current height.
+    /// Captures all consensus-critical state including treasury and finality.
     pub fn create_snapshot(&self) -> crate::persistence::StateSnapshot {
         crate::persistence::StateSnapshot {
             height: self.state.state.height,
@@ -415,6 +416,12 @@ impl Chain {
                 .iter()
                 .map(|(k, v)| (*k, v.raw()))
                 .collect(),
+            treasury_pending_raw: self.treasury.pending_fees.raw(),
+            treasury_collected_raw: self.treasury.total_fees_collected.raw(),
+            treasury_distributed_raw: self.treasury.total_rewards_distributed.raw(),
+            treasury_burned_raw: self.treasury.total_burned.raw(),
+            treasury_epoch: self.treasury.epoch,
+            finalized_height: self.finality.finalized_height,
         }
     }
 
@@ -439,6 +446,16 @@ impl Chain {
         for (agent_id, raw_balance) in &snapshot.balances {
             self.balances.credit(agent_id, TensionValue(*raw_balance));
         }
+
+        // Restore treasury.
+        self.treasury.pending_fees = TensionValue(snapshot.treasury_pending_raw);
+        self.treasury.total_fees_collected = TensionValue(snapshot.treasury_collected_raw);
+        self.treasury.total_rewards_distributed = TensionValue(snapshot.treasury_distributed_raw);
+        self.treasury.total_burned = TensionValue(snapshot.treasury_burned_raw);
+        self.treasury.epoch = snapshot.treasury_epoch;
+
+        // Restore finality.
+        self.finality.finalized_height = snapshot.finalized_height;
     }
 
     /// Get the latest block.
