@@ -3,6 +3,9 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::NormId;
 use std::collections::HashMap;
 
+/// Maximum norms in the registry.
+pub const MAX_NORMS: usize = 10_000;
+
 /// Norm registry managing norm evolution via discrete-time replicator dynamics.
 /// Per v2.1 FIX B-11: uses discrete-time (not continuous ODE).
 #[derive(Debug, Clone)]
@@ -17,10 +20,12 @@ impl NormRegistry {
         }
     }
 
-    /// Register a norm. Rejects duplicates.
+    /// Register a norm. Updates existing norms (replicator dynamics).
+    /// Rejects new norms if registry is full.
     pub fn register(&mut self, norm: Norm) {
-        // Allow re-registration (update) for existing norms — this is intentional
-        // for norm evolution via replicator dynamics.
+        if !self.norms.contains_key(&norm.id) && self.norms.len() >= MAX_NORMS {
+            return; // Silently reject — governance can clean up old norms.
+        }
         self.norms.insert(norm.id, norm);
     }
 

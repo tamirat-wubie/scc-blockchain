@@ -97,6 +97,9 @@ impl SettlementFinality {
     }
 }
 
+/// Maximum proposals in the registry (prevents proposal-flooding DoS).
+pub const MAX_PROPOSALS: usize = 10_000;
+
 /// Proposal registry managing the lifecycle of governance proposals.
 /// Uses a HashMap index for O(1) proposal lookup by ID.
 #[derive(Debug, Clone, Default)]
@@ -115,6 +118,10 @@ impl ProposalRegistry {
         current_height: u64,
         voting_period: u64,
     ) -> Result<Hash, String> {
+        // Capacity check.
+        if self.proposals.len() >= MAX_PROPOSALS {
+            return Err("Proposal registry full".into());
+        }
         // Check proposer has sufficient authority.
         let required = match &kind {
             ProposalKind::AddNorm { .. } | ProposalKind::DeactivateNorm { .. } => {

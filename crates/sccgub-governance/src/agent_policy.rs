@@ -86,6 +86,9 @@ impl AgentPolicy {
     }
 }
 
+/// Maximum agent policies (prevents memory DoS).
+pub const MAX_AGENT_POLICIES: usize = 50_000;
+
 /// Registry of AI agent policies.
 #[derive(Debug, Clone, Default)]
 pub struct AgentPolicyRegistry {
@@ -97,6 +100,9 @@ impl AgentPolicyRegistry {
     pub fn register(&mut self, policy: AgentPolicy) -> Result<(), String> {
         if self.policies.contains_key(&policy.agent_id) {
             return Err("Agent policy already registered".into());
+        }
+        if self.policies.len() >= MAX_AGENT_POLICIES {
+            return Err("Agent policy registry full".into());
         }
         self.policies.insert(policy.agent_id, policy);
         Ok(())

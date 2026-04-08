@@ -10,17 +10,6 @@ use sccgub_types::transition::{SymbolicTransition, TransitionKind};
 /// Namespace prefix type.
 pub type Namespace = &'static [u8];
 
-pub const NS_SYSTEM: Namespace = b"system/";
-pub const NS_BALANCE: Namespace = b"balance/";
-pub const NS_ESCROW: Namespace = b"escrow/";
-pub const NS_TREASURY: Namespace = b"treasury/";
-pub const NS_AGENTS: Namespace = b"agents/";
-pub const NS_NORMS: Namespace = b"norms/";
-pub const NS_CONSTRAINTS: Namespace = b"constraints/";
-pub const NS_CONTRACT: Namespace = b"contract/";
-pub const NS_DISPUTES: Namespace = b"disputes/";
-pub const NS_DATA: Namespace = b"data/";
-
 /// Allowed namespace prefixes for each TransitionKind.
 ///
 /// This table is consensus-critical. Changing it is a hard fork.
@@ -74,9 +63,15 @@ impl OntologyResult {
     }
 }
 
-// Namespace key builders live in sccgub_types::namespace (shared across crates).
-// Re-export for convenience within the execution crate.
+// Namespace key builders and constants live in sccgub_types::namespace.
+// Re-export for convenience.
 pub use sccgub_types::namespace::{balance_key, contract_key, data_key, norm_key};
+
+// Import NS_ constants from the single source of truth.
+// NS_SYSTEM and NS_DISPUTES are not imported — no kind maps to them.
+use sccgub_types::namespace::{
+    NS_AGENTS, NS_BALANCE, NS_CONSTRAINTS, NS_CONTRACT, NS_DATA, NS_ESCROW, NS_NORMS, NS_TREASURY,
+};
 
 /// Phi Phase 3: verify the transition's target falls within the
 /// namespaces allowed for its declared kind. Default-deny.

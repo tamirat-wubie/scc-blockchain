@@ -8,6 +8,9 @@ use std::collections::HashMap;
 /// Prevents identity rotation attacks on the containment system.
 pub const REGISTRATION_COST: i128 = 100 * sccgub_types::tension::TensionValue::SCALE;
 
+/// Maximum registered agents (prevents Sybil memory DoS).
+pub const MAX_AGENTS: usize = 100_000;
+
 /// Agent registration service.
 /// Manages the lifecycle of agent identities on-chain.
 /// Requires a minimum registration cost to prevent sybil attacks.
@@ -34,6 +37,9 @@ impl AgentRegistry {
         governance_level: PrecedenceLevel,
         block_height: u64,
     ) -> Result<AgentId, String> {
+        if self.agents.len() >= MAX_AGENTS {
+            return Err("Agent registry full".into());
+        }
         // Compute canonical agent_id.
         let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
             &public_key,

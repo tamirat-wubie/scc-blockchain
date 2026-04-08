@@ -82,9 +82,16 @@ pub enum ContainmentLevel {
     Quarantine { blocks_remaining: u64 },
 }
 
+/// Maximum tracked nodes in containment state (prevents Sybil memory DoS).
+pub const MAX_TRACKED_NODES: usize = 10_000;
+
 impl ContainmentState {
     /// Record a valid transition from a node.
     pub fn record_valid(&mut self, node_id: NodeId, delta: TensionValue) {
+        // Cap: reject tracking new nodes if at capacity (updates to existing nodes always allowed).
+        if !self.nodes.contains_key(&node_id) && self.nodes.len() >= MAX_TRACKED_NODES {
+            return;
+        }
         let profile = self
             .nodes
             .entry(node_id)
@@ -95,6 +102,9 @@ impl ContainmentState {
 
     /// Record an invalid/destabilizing transition from a node.
     pub fn record_invalid(&mut self, node_id: NodeId, delta: TensionValue) {
+        if !self.nodes.contains_key(&node_id) && self.nodes.len() >= MAX_TRACKED_NODES {
+            return;
+        }
         let profile = self
             .nodes
             .entry(node_id)

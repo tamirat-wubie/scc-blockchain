@@ -1,6 +1,14 @@
-// Namespace prefix constants (shared with ontology table in sccgub-execution).
+// Namespace prefix constants — single source of truth for all crates.
+// The ontology table in sccgub-execution MUST import these, not redefine them.
+pub const NS_SYSTEM: &[u8] = b"system/";
+pub const NS_BALANCE: &[u8] = b"balance/";
+pub const NS_ESCROW: &[u8] = b"escrow/";
+pub const NS_TREASURY: &[u8] = b"treasury/";
+pub const NS_AGENTS: &[u8] = b"agents/";
 pub const NS_NORMS: &[u8] = b"norms/";
+pub const NS_CONSTRAINTS: &[u8] = b"constraints/";
 pub const NS_CONTRACT: &[u8] = b"contract/";
+pub const NS_DISPUTES: &[u8] = b"disputes/";
 pub const NS_DATA: &[u8] = b"data/";
 
 // Namespace key builders — canonical constructors for trie keys.
