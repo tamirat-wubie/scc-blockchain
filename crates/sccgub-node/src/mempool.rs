@@ -99,6 +99,13 @@ impl Mempool {
         }
 
         self.containment.evaluate();
+
+        // Deterministic fair ordering: sort by (nonce, tx_id hash).
+        // This prevents MEV/front-running by making transaction ordering
+        // deterministic and verifiable — no priority gas auctions.
+        // All validators produce the same block given the same mempool.
+        validated.sort_by(|a, b| a.nonce.cmp(&b.nonce).then_with(|| a.tx_id.cmp(&b.tx_id)));
+
         validated
     }
 

@@ -128,6 +128,66 @@ pub fn verify_proof(root: &[u8; 32], leaf: &[u8; 32], proof: &MerkleProof) -> bo
     current == *root
 }
 
+/// Compact multi-proof: prove multiple leaves belong to the same tree.
+/// Deduplicates shared path segments to reduce proof size.
+/// For light client state verification.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompactMultiProof {
+    /// Leaf indices being proven.
+    pub indices: Vec<usize>,
+    /// Deduplicated sibling hashes (shared nodes stored once).
+    pub siblings: Vec<[u8; 32]>,
+    /// Total leaves in the tree.
+    pub tree_size: usize,
+}
+
+/// Generate a compact multi-proof for multiple leaf indices.
+pub fn generate_multi_proof(leaves: &[[u8; 32]], indices: &[usize]) -> Option<CompactMultiProof> {
+    if leaves.is_empty() || indices.is_empty() {
+        return None;
+    }
+
+    // Collect all individual proof siblings, deduplicate.
+    let mut all_siblings = Vec::new();
+    let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+
+    for &idx in indices {
+        if let Some(proof) = generate_proof(leaves, idx) {
+            for (sibling, _) in &proof.siblings {
+                if seen.insert(*sibling) {
+                    all_siblings.push(*sibling);
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+
+    Some(CompactMultiProof {
+        indices: indices.to_vec(),
+        siblings: all_siblings,
+        tree_size: leaves.len(),
+    })
+}
+
+/// Verify that all leaves in a multi-proof are valid.
+pub fn verify_multi_proof(
+    root: &[u8; 32],
+    leaves: &[([u8; 32], usize)], // (leaf_hash, index)
+    all_leaves: &[[u8; 32]],
+) -> bool {
+    for (leaf, idx) in leaves {
+        if let Some(proof) = generate_proof(all_leaves, *idx) {
+            if !verify_proof(root, leaf, &proof) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

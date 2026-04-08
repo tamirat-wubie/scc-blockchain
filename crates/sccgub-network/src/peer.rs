@@ -35,6 +35,14 @@ pub enum PeerState {
     Banned,
 }
 
+/// Minimum peer diversity requirements (eclipse attack defense).
+pub mod diversity {
+    /// Minimum number of distinct connected peers before accepting blocks.
+    pub const MIN_CONNECTED_PEERS: usize = 3;
+    /// Maximum fraction of peers from the same /16 subnet (0-100%).
+    pub const MAX_SAME_SUBNET_PCT: u32 = 50;
+}
+
 impl PeerRegistry {
     /// Register or update a peer.
     pub fn upsert(&mut self, info: PeerInfo) {
@@ -69,6 +77,52 @@ impl PeerRegistry {
         self.peers
             .values()
             .any(|p| p.state == PeerState::Connected && p.current_height > our_height)
+    }
+
+    /// Check if peer diversity requirements are met (eclipse attack defense).
+    /// Returns Ok if sufficient distinct peers from diverse network locations.
+    pub fn check_diversity(&self) -> Result<(), String> {
+        let connected = self.active_count();
+        if connected < diversity::MIN_CONNECTED_PEERS {
+            return Err(format!(
+                "Insufficient peer diversity: {} connected, need >= {}",
+                connected,
+                diversity::MIN_CONNECTED_PEERS
+            ));
+        }
+
+        // Check subnet diversity: count peers per /16 prefix.
+        let mut subnet_counts: HashMap<String, usize> = HashMap::new();
+        for peer in self.peers.values() {
+            if peer.state != PeerState::Connected {
+                continue;
+            }
+            // Extract /16 subnet from address (first two octets).
+            let subnet = peer
+                .address
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .split('.')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(".");
+            *subnet_counts.entry(subnet).or_insert(0) += 1;
+        }
+
+        for (subnet, count) in &subnet_counts {
+            let pct = (*count as u32) * 100 / connected as u32;
+            if pct > diversity::MAX_SAME_SUBNET_PCT {
+                return Err(format!(
+                    "Subnet {} has {}% of peers (max {}%)",
+                    subnet,
+                    pct,
+                    diversity::MAX_SAME_SUBNET_PCT
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Get peers sorted by height descending (for sync source selection).

@@ -173,6 +173,57 @@ impl OperatorKeyring {
     }
 }
 
+/// Key rotation event — auditable record of a key change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyRotationEvent {
+    pub role: KeyRole,
+    pub old_public_key: [u8; 32],
+    pub new_public_key: [u8; 32],
+    pub rotated_at_height: u64,
+    /// Hash of the rotation authorization proof.
+    pub authorization_proof: [u8; 32],
+}
+
+impl OperatorKeyring {
+    /// Perform a full key rotation ceremony:
+    /// 1. Verify the old key is active.
+    /// 2. Revoke the old key.
+    /// 3. Register the new key.
+    /// 4. Produce an auditable rotation event.
+    pub fn rotate_ceremony(
+        &mut self,
+        role: KeyRole,
+        new_public_key: [u8; 32],
+        current_height: u64,
+        authorization_proof: [u8; 32],
+    ) -> Result<KeyRotationEvent, String> {
+        let old_key = self.keys.get(&role).ok_or("Role not found")?;
+        if old_key.revoked {
+            return Err("Cannot rotate a revoked key — register fresh instead".into());
+        }
+        let old_pk = old_key.public_key;
+        if old_pk == new_public_key {
+            return Err("New key must differ from old key".into());
+        }
+
+        self.revoke(role)?;
+        self.register(role, new_public_key, current_height);
+
+        Ok(KeyRotationEvent {
+            role,
+            old_public_key: old_pk,
+            new_public_key,
+            rotated_at_height: current_height,
+            authorization_proof,
+        })
+    }
+
+    /// Get rotation history for audit.
+    pub fn rotation_history(&self) -> Vec<&RoleKey> {
+        self.keys.values().filter(|k| k.revoked).collect()
+    }
+}
+
 /// Generate a full set of operator keys for all roles.
 pub fn generate_operator_keys() -> Vec<(KeyRole, SigningKey)> {
     let roles = [

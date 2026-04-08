@@ -6,12 +6,29 @@ use sccgub_types::transition::{OperationPayload, StateDelta, StateWrite, Symboli
 /// Apply a block's transitions to state + balances, then write balances to trie.
 /// This is the SINGLE SOURCE OF TRUTH for state application.
 /// Used by: chain.rs produce_block, cpog.rs validation, cmd_verify, cmd_import, from_blocks.
+///
+///
+/// Safety: follows checks-effects-interactions pattern —
+/// all transfers computed, then state writes applied, then balance trie commitment.
+/// No external calls between state reads and writes.
 pub fn apply_block_transitions(
     state: &mut ManagedWorldState,
     balances: &mut BalanceLedger,
     transitions: &[SymbolicTransition],
 ) {
+    // Guard: reject duplicate tx_ids within a single block apply.
+    // This prevents reentrancy-style double-apply of the same transition.
+    let mut applied_ids = std::collections::HashSet::new();
+
     for tx in transitions {
+        if !applied_ids.insert(tx.tx_id) {
+            eprintln!(
+                "INVARIANT VIOLATION: duplicate tx_id {} in block apply",
+                hex::encode(tx.tx_id)
+            );
+            continue;
+        }
+
         match &tx.payload {
             OperationPayload::Write { key, value } => {
                 state.apply_delta(&StateDelta {
