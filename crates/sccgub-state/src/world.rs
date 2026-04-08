@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use sccgub_types::consensus_params::ConsensusParams;
 use sccgub_types::state::{SymbolState, WorldState};
 use sccgub_types::transition::StateDelta;
 use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
@@ -7,6 +8,9 @@ use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
 use crate::trie::StateTrie;
 
 /// Maximum allowed key or value size (1 MB).
+///
+/// Patch 03 migration: this constant is preserved for backward compatibility.
+/// New code should prefer `state.consensus_params.max_state_entry_size`.
 pub const MAX_STATE_ENTRY_SIZE: usize = 1_048_576;
 
 /// Managed world state with an underlying Merkle trie and nonce tracking.
@@ -16,6 +20,9 @@ pub struct ManagedWorldState {
     pub trie: StateTrie,
     /// Per-agent nonce tracking for replay protection.
     pub agent_nonces: HashMap<AgentId, u128>,
+    /// Consensus-critical parameters loaded from the genesis state root.
+    /// Patch 03: replaces compile-time constants with chain-bound values.
+    pub consensus_params: ConsensusParams,
 }
 
 impl ManagedWorldState {
@@ -24,6 +31,17 @@ impl ManagedWorldState {
             state: WorldState::default(),
             trie: StateTrie::new(),
             agent_nonces: HashMap::new(),
+            consensus_params: ConsensusParams::default(),
+        }
+    }
+
+    /// Construct with explicit consensus parameters (for migration / testing).
+    pub fn with_consensus_params(params: ConsensusParams) -> Self {
+        Self {
+            state: WorldState::default(),
+            trie: StateTrie::new(),
+            agent_nonces: HashMap::new(),
+            consensus_params: params,
         }
     }
 

@@ -6,6 +6,7 @@ pub mod bridge;
 pub mod builder;
 pub mod causal;
 pub mod compliance;
+pub mod consensus_params;
 pub mod contract;
 pub mod delegation;
 pub mod dispute;
