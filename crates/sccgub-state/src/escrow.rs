@@ -82,6 +82,9 @@ impl EscrowRegistry {
         if sender == recipient {
             return Err("Cannot escrow to self".into());
         }
+        if timeout_blocks == 0 {
+            return Err("Escrow timeout must be > 0 blocks".into());
+        }
 
         // Lock funds by debiting sender.
         balances.debit(&sender, amount)?;

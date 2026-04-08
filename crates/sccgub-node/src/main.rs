@@ -162,7 +162,9 @@ fn replay_chain_state(
             &block.body.transitions,
         );
         for tx in &block.body.transitions {
-            let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+            if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                tracing::warn!("Nonce error during replay: {}", e);
+            }
         }
         state.set_height(block.header.height);
     }

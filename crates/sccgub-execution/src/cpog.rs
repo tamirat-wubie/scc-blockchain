@@ -127,7 +127,9 @@ pub fn validate_cpog(
             &block.body.transitions,
         );
         for tx in &block.body.transitions {
-            let _ = speculative.check_nonce(&tx.actor.agent_id, tx.nonce);
+            if let Err(e) = speculative.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                errors.push(format!("Nonce violation during replay: {}", e));
+            }
         }
 
         let computed_state_root = speculative.state_root();

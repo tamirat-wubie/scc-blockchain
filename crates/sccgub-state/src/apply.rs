@@ -23,7 +23,14 @@ pub fn apply_block_transitions(
                 });
             }
             OperationPayload::AssetTransfer { from, to, amount } => {
-                let _ = balances.transfer(from, to, TensionValue(*amount));
+                // Transfer must not fail during apply — validation should have caught it.
+                // If it does fail, log it (indicates a consensus bug).
+                if let Err(e) = balances.transfer(from, to, TensionValue(*amount)) {
+                    eprintln!(
+                        "INVARIANT VIOLATION: transfer failed during state apply: {}",
+                        e
+                    );
+                }
             }
             _ => {}
         }

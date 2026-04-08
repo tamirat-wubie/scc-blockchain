@@ -146,7 +146,13 @@ impl Chain {
                 &block.body.transitions,
             );
             for tx in &block.body.transitions {
-                let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
+                if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                    tracing::warn!(
+                        "Nonce error during replay at height {}: {}",
+                        block.header.height,
+                        e
+                    );
+                }
             }
             state.set_height(block.header.height);
         }
@@ -282,7 +288,9 @@ impl Chain {
             &transitions,
         );
         for tx in &transitions {
-            let _ = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce);
+            if let Err(e) = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                tracing::error!("Nonce invariant violation in block production: {}", e);
+            }
         }
         speculative_state.set_height(height);
 

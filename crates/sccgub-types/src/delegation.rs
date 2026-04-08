@@ -74,9 +74,9 @@ impl CapabilityLease {
             && (self.valid_until == 0 || current_height <= self.valid_until)
     }
 
-    /// Check if this lease has remaining budget.
+    /// Check if this lease has remaining budget (saturating to prevent overflow).
     pub fn has_budget(&self, amount: TensionValue) -> bool {
-        self.spent.raw() + amount.raw() <= self.budget.raw()
+        self.spent.raw().saturating_add(amount.raw()) <= self.budget.raw()
     }
 
     /// Check if this lease has remaining actions.
@@ -100,8 +100,19 @@ impl CapabilityLease {
             .any(|p| target.starts_with(p))
     }
 
-    /// Record a spend against this lease. Returns error if over budget.
-    pub fn record_spend(&mut self, amount: TensionValue) -> Result<(), String> {
+    /// Record a spend against this lease.
+    /// Checks validity (revoked/expired) AND budget before allowing the spend.
+    pub fn record_spend(
+        &mut self,
+        current_height: u64,
+        amount: TensionValue,
+    ) -> Result<(), String> {
+        if !self.is_valid(current_height) {
+            return Err("Lease is revoked or expired".into());
+        }
+        if !self.has_actions() {
+            return Err("Lease action limit reached".into());
+        }
         if !self.has_budget(amount) {
             return Err(format!(
                 "Lease budget exceeded: spent {} + {} > budget {}",
@@ -251,7 +262,7 @@ pub struct AutonomyBudget {
 impl AutonomyBudget {
     /// Check if the agent can take an action without chain confirmation.
     pub fn can_act_locally(&self, spend: TensionValue) -> bool {
-        self.pending_spend.raw() + spend.raw() <= self.max_unconfirmed_spend.raw()
+        self.pending_spend.raw().saturating_add(spend.raw()) <= self.max_unconfirmed_spend.raw()
             && (self.max_unconfirmed_actions == 0
                 || self.pending_actions < self.max_unconfirmed_actions)
     }
@@ -373,8 +384,12 @@ mod tests {
             require_cosign: false,
         };
 
-        assert!(lease.record_spend(TensionValue::from_integer(60)).is_ok());
-        assert!(lease.record_spend(TensionValue::from_integer(60)).is_err()); // Over budget.
+        assert!(lease
+            .record_spend(50, TensionValue::from_integer(60))
+            .is_ok());
+        assert!(lease
+            .record_spend(50, TensionValue::from_integer(60))
+            .is_err()); // Over budget.
         assert_eq!(lease.actions_taken, 1);
     }
 
