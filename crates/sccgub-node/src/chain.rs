@@ -1126,7 +1126,7 @@ mod tests {
         // `return consistent: true`, this test would fail.
         //
         // Flow: admit_check (mempool) → gas loop → validate_transition_metered
-        //       → validate_transition → phi_traversal_tx → phase_constraint
+        //       → validate_transition → phi_check_single_tx → phase_constraint
         //       → scce_validate → propagate_constraints → UNSAT → reject receipt
         use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
         use sccgub_types::governance::PrecedenceLevel;
@@ -1202,7 +1202,7 @@ mod tests {
 
         // 4. Produce a block. The tx passes admit_check (lightweight) but is
         //    REJECTED by the gas loop: validate_transition_metered →
-        //    validate_transition → phi_traversal_tx → phase_constraint →
+        //    validate_transition → phi_check_single_tx → phase_constraint →
         //    scce_validate → propagate_constraints → UNSAT → reject receipt.
         let block = chain
             .produce_block()

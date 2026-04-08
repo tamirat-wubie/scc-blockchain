@@ -8,7 +8,7 @@ use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
 use sccgub_crypto::signature::{sign, verify};
 use sccgub_execution::cpog::validate_cpog;
-use sccgub_execution::phi::{phi_traversal_block, phi_traversal_tx};
+use sccgub_execution::phi::{is_per_tx_phase, phi_check_single_tx, phi_traversal_block};
 use sccgub_execution::wh_check::check_wh_binding_intent;
 use sccgub_governance::norms::NormRegistry;
 use sccgub_governance::precedence::{check_governance_change, GovernanceChangeType};
@@ -230,14 +230,18 @@ fn test_full_chain_lifecycle() {
     let tx2 = create_write_tx(&agent, &agent_key, b"data/account/bob/balance", b"500", 2);
     let tx3 = create_write_tx(&agent, &agent_key, b"data/config/max_supply", b"1000000", 3);
 
-    // 5. Validate each transition individually.
+    // 5. Validate each transition individually via the shared per-tx checker.
     for tx in [&tx1, &tx2, &tx3] {
-        let phi_log = phi_traversal_tx(tx, &state);
-        assert!(
-            phi_log.all_phases_passed,
-            "Per-tx Phi failed for {:?}",
-            tx.tx_id
-        );
+        for phase in sccgub_types::proof::PhiPhase::ALL {
+            if is_per_tx_phase(phase) {
+                let result = phi_check_single_tx(phase, tx, &state);
+                assert!(
+                    result.passed,
+                    "Per-tx Phi phase {:?} failed for {:?}: {}",
+                    phase, tx.tx_id, result.details
+                );
+            }
+        }
     }
 
     // 6. Build block #1 with the transitions.

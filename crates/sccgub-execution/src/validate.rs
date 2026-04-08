@@ -7,7 +7,7 @@ use sccgub_types::transition::{
 use sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
 
 use crate::gas::GasMeter;
-use crate::phi::phi_traversal_tx;
+use crate::phi::{is_per_tx_phase, phi_check_single_tx};
 use crate::wh_check::check_transition_wh;
 
 /// Sentinel value for an unsealed receipt (post_state_root not yet committed).
@@ -185,10 +185,12 @@ pub fn validate_transition(
         }
     }
 
-    // 8. Per-tx Phi traversal (13 phases).
-    let phi_log = phi_traversal_tx(tx, state);
-    if !phi_log.is_all_passed() {
-        for result in &phi_log.phases_completed {
+    // 8. Per-tx Phi phases — calls phi_check_single_tx directly.
+    // No wrapper function, no intermediary. The shared checker is the
+    // single source of truth for per-tx semantics.
+    for phase in sccgub_types::proof::PhiPhase::ALL {
+        if is_per_tx_phase(phase) {
+            let result = phi_check_single_tx(phase, tx, state);
             if !result.passed {
                 errors.push(format!("Phi {:?}: {}", result.phase, result.details));
             }

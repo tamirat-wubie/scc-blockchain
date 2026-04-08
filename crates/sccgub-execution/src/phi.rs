@@ -1,26 +1,23 @@
 // PHI TRAVERSAL — SINGLE SOURCE OF TRUTH (N-11 structural)
 //
 // Per-tx semantic checks live in ONE place: `phi_check_single_tx()`.
-// Two traversal entry-points call this shared function:
+// Two callers use this shared function:
 //
 //   phi_traversal_block  — runs at CPoG validation time (per-block).
 //                          For per-tx phases: iterates all txs through
 //                          the shared function. For block-only phases:
 //                          runs block-level logic.
 //
-//   phi_traversal_tx     — runs inside the gas loop (per-transaction).
-//                          Called by validate_transition → validate_transition_metered
-//                          → produce_block's gas loop. Every rejection here produces
-//                          a CausalReceipt (closing N-3-mempool).
-//                          Block-only phases auto-pass.
+//   validate_transition  — runs in the gas loop (per-transaction).
+//                          Iterates per-tx phases calling the shared
+//                          function directly. Every rejection produces
+//                          a CausalReceipt via validate_transition_metered.
 //
-// IMPORTANT: The mempool does NOT call phi_traversal_tx. Mempool admission
-// uses admit_check() (lightweight: sig length, nonce, size, WHBinding structure).
-// All Phi-phase semantic checks run in the gas loop where rejections produce
-// receipts. This ensures no transition is silently dropped for semantic reasons.
+// Mempool admission uses admit_check() (lightweight: sig length, nonce,
+// size, WHBinding structure). No Phi-phase checks at mempool time.
 //
 // Adding a semantic check to a per-tx phase means editing ONLY
-// `phi_check_single_tx()`. Both paths pick it up automatically.
+// `phi_check_single_tx()`. Both callers pick it up automatically.
 //
 // Block-only phases: Topology(4), Body(9), Architecture(10),
 // Performance(11), Feedback(12), Evolution(13).
@@ -43,10 +40,13 @@ use crate::wh_check::check_transition_wh;
 
 /// Check a single transaction against a per-tx Phi phase.
 ///
-/// This is the canonical implementation of per-tx semantics. Both
-/// `phi_traversal_block` and `phi_traversal_tx` call this function.
+/// This is the canonical implementation of per-tx semantics. Called by:
+/// - `phi_traversal_block` (iterates all txs per phase at CPoG time)
+/// - `validate_transition` (iterates phases per tx in the gas loop)
+///
 /// Block-only phases panic — callers must not pass them here.
-fn phi_check_single_tx(
+/// Use `is_per_tx_phase()` to filter before calling.
+pub fn phi_check_single_tx(
     phase: PhiPhase,
     tx: &SymbolicTransition,
     state: &ManagedWorldState,
@@ -209,7 +209,7 @@ fn phi_check_single_tx(
 }
 
 /// Returns true if this phase has per-tx semantics (runs in both paths).
-fn is_per_tx_phase(phase: PhiPhase) -> bool {
+pub fn is_per_tx_phase(phase: PhiPhase) -> bool {
     matches!(
         phase,
         PhiPhase::Distinction
@@ -510,38 +510,6 @@ fn phase_evolution(block: &Block) -> PhiPhaseResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Per-transaction traversal
-// ---------------------------------------------------------------------------
-
-/// Execute per-transaction Phi phases (subset of full 13).
-/// Block-only phases auto-pass. Per-tx phases call the shared checker.
-pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> PhiTraversalLog {
-    let mut log = PhiTraversalLog::new();
-
-    for phase in PhiPhase::ALL {
-        if is_per_tx_phase(phase) {
-            let result = phi_check_single_tx(phase, tx, state);
-            let passed = result.passed;
-            log.phases_completed.push(result);
-            if !passed {
-                log.finalize();
-                return log;
-            }
-        } else {
-            // Block-only phase: auto-pass at tx level.
-            log.phases_completed.push(PhiPhaseResult {
-                phase,
-                passed: true,
-                details: "Block-only phase, auto-pass at tx level".into(),
-            });
-        }
-    }
-
-    log.finalize();
-    log
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phi_tx_produces_13_phase_entries() {
+    fn test_phi_check_single_tx_all_per_tx_phases_pass() {
         use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
         use sccgub_types::governance::PrecedenceLevel;
         use sccgub_types::mfidel::MfidelAtomicSeal;
@@ -809,16 +777,16 @@ mod tests {
             signature: vec![0u8; 64],
         };
 
-        let log = phi_traversal_tx(&tx, &state);
-        // Must produce exactly 13 entries (all phases, including auto-pass block-only).
-        assert_eq!(log.phases_completed.len(), 13);
-        assert!(
-            log.is_all_passed(),
-            "Valid tx should pass all per-tx phases: {:?}",
-            log.phases_completed
-                .iter()
-                .filter(|p| !p.passed)
-                .collect::<Vec<_>>()
-        );
+        // Call phi_check_single_tx directly for each per-tx phase.
+        for phase in PhiPhase::ALL {
+            if is_per_tx_phase(phase) {
+                let result = phi_check_single_tx(phase, &tx, &state);
+                assert!(
+                    result.passed,
+                    "Per-tx phase {:?} failed: {}",
+                    phase, result.details
+                );
+            }
+        }
     }
 }

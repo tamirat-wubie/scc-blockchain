@@ -92,19 +92,20 @@ Auditors should focus on these files first:
 
 ## 5. Phi Traversal Architecture
 
-The 13-phase Phi traversal runs in two contexts:
+There is one per-tx phase check function: `phi_check_single_tx()`. It is called
+from two contexts:
 
-- **Block-level** (`phi_traversal_block`): Called during CPoG validation at block import/production time. Runs all 13 phases.
-- **Transaction-level** (`phi_traversal_tx`): Called inside the gas loop via `validate_transition_metered` → `validate_transition`. Runs per-tx phases; block-only phases auto-pass. Every rejection here produces a `CausalReceipt`.
+- **Block-level** (`phi_traversal_block`): CPoG validation at block import/production
+  time. Iterates all txs through the shared function for per-tx phases. Runs
+  block-only phases (Topology, Body, Architecture, Performance, Feedback, Evolution)
+  with block-level logic.
 
-**N-11 structural enforcement**: Both paths call `phi_check_single_tx()` for
-per-tx phases (Distinction, Constraint, Ontology, Form, Organization, Module,
-Execution). This shared function is the single source of truth for per-tx
-semantics. Adding a check to a per-tx phase means editing one function; both
-paths pick it up automatically.
+- **Gas loop** (`validate_transition`): Per-transaction validation in `produce_block`.
+  Iterates per-tx phases calling `phi_check_single_tx` directly. Every rejection
+  produces a `CausalReceipt` via `validate_transition_metered`.
 
-Block-only phases (Topology, Body, Architecture, Performance, Feedback,
-Evolution) run only in `phi_traversal_block`.
+`phi_traversal_tx` has been deleted. There is no wrapper function between
+`validate_transition` and the shared checker. Drift is structurally impossible.
 
 **Mempool admission** uses `admit_check()` (lightweight: signature length,
 nonce sequence, size limits, WHBinding structural completeness). It does NOT
@@ -136,19 +137,20 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 ## 7. Audit Findings Summary
 
 An 11-session internal audit cycle identified 38 findings:
-- **37 closed** (code fixes applied and verified, including N-3-mempool)
-- **1 false positive** (F-5: see below)
+- **38 closed** (all code fixes applied and verified)
 - **1 deferred** (Patch 03: ConsensusParams in genesis — architectural, ~1 day effort)
 
-### F-5 false positive (worth noting for credibility)
+### F-5 lifecycle (worth noting for credibility)
 
-F-5 alleged `phi_traversal_tx` was dead code across three audit sessions.
-The implementer traced the call chain: `phi_traversal_tx` is called by
-`validate_transition` (validate.rs:123), which is called by
-`validate_transition_metered`, which is called by `mempool::drain_validated`,
-which is called by `produce_block`. Reclassified as live code, not dead.
-This is documented because external reviewers should know the internal
-audit process caught and corrected its own errors.
+F-5 originally alleged `phi_traversal_tx` was dead code. The implementer
+traced the call chain and reclassified it as live code (false positive).
+Later, `validate_transition` was refactored to call `phi_check_single_tx`
+directly, removing the only caller of `phi_traversal_tx`. The function was
+then safely deleted after a workspace-wide grep confirmed zero callers.
+F-5 went from false positive → reclassified live → genuinely deleted.
+This lifecycle is documented because external reviewers should know the
+internal audit process caught its own errors and the eventual deletion
+was verified, not assumed.
 
 ### N-13: panic-free consensus property
 
