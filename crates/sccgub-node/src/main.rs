@@ -241,7 +241,10 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32, passphrase: &str) {
         }
     };
 
-    let mut chain = Chain::from_blocks(blocks);
+    let mut chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
 
     // Try to restore from snapshot for faster loading.
     if let Ok(Some(snapshot)) = store.load_latest_snapshot() {
@@ -899,7 +902,10 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
         }
     };
 
-    let mut chain = Chain::from_blocks(blocks);
+    let mut chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
 
     // Load validator key (sender).
     if store.has_validator_key() {
@@ -1524,7 +1530,10 @@ fn cmd_treasury(data_dir: &std::path::Path) {
         }
     };
 
-    let chain = Chain::from_blocks(blocks);
+    let chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
 
     println!("=== Treasury Status ===\n");
     println!("  Epoch:              {}", chain.treasury.epoch);
@@ -1572,7 +1581,10 @@ fn cmd_escrow(data_dir: &std::path::Path) {
         }
     };
 
-    let chain = Chain::from_blocks(blocks);
+    let chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
 
     println!("=== Escrow Status ===\n");
     println!("  Chain height:       {}", chain.height());

@@ -149,6 +149,11 @@ pub fn execute_contract(
     }
 }
 
+/// Public re-export for SCCE constraint walker.
+pub fn parse_constraint_expression_pub(expr: &str) -> crate::constraints::Predicate {
+    parse_constraint_expression(expr)
+}
+
 /// Parse a constraint expression string into a Predicate.
 /// Supports simple forms: "exists:<key>", "equals:<key>=<value>",
 /// "governance:<level>", or "true" / "false".

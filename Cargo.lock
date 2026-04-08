@@ -1122,6 +1122,7 @@ dependencies = [
 name = "sccgub-types"
 version = "0.3.0"
 dependencies = [
+ "blake3",
  "hex",
  "serde",
  "serde_json",

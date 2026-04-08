@@ -39,6 +39,33 @@ impl MfidelAtomicSeal {
         Self { row, column }
     }
 
+    /// Content-bound Mfidel seal. The 34x8 grid is preserved (atomicity,
+    /// no decomposition, no Unicode roots) but the row/column selection is
+    /// now a function of the block's commitments rather than its height alone.
+    /// This makes the seal load-bearing: it authenticates the block's identity
+    /// within the symbolic substrate.
+    pub fn from_block(
+        height: u64,
+        state_root: &[u8; 32],
+        transition_root: &[u8; 32],
+        validator_id: &[u8; 32],
+    ) -> Self {
+        let mut data = Vec::with_capacity(8 + 32 + 32 + 32 + 21);
+        data.extend_from_slice(b"sccgub-mfidel-seal-v1");
+        data.extend_from_slice(&height.to_le_bytes());
+        data.extend_from_slice(state_root);
+        data.extend_from_slice(transition_root);
+        data.extend_from_slice(validator_id);
+        let hash = blake3::hash(&data);
+        let bytes = hash.as_bytes();
+        let row = (bytes[0] as u32 % 34) + 1;
+        let column = (bytes[1] as u32 % 8) + 1;
+        Self {
+            row: row as u8,
+            column: column as u8,
+        }
+    }
+
     /// Check if this seal is valid (within grid bounds).
     pub fn is_valid(&self) -> bool {
         self.row >= 1

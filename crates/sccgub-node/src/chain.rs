@@ -2,7 +2,7 @@ use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::hash::{blake3_hash, blake3_hash_concat};
 use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
-use sccgub_crypto::signature::sign;
+use sccgub_crypto::signature::{sign, verify as verify_sig};
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
 use sccgub_execution::gas::{self, BlockGasMeter};
 use sccgub_execution::validate::validate_transition_metered;
@@ -106,13 +106,35 @@ impl Chain {
         chain
     }
 
-    /// Reconstruct a chain from loaded blocks (replay state).
-    pub fn from_blocks(blocks: Vec<Block>) -> Self {
+    /// Reconstruct chain from blocks (e.g., loaded from disk or received from peer).
+    ///
+    /// This is a HOT TRUST BOUNDARY. Every block must pass full CPoG validation
+    /// against the state derived from its predecessors. Block 0 must carry a
+    /// valid producer signature, and every subsequent block likewise.
+    ///
+    /// Returns Err on any validation failure. Callers must NOT proceed with a
+    /// partially-validated chain.
+    pub fn from_blocks(blocks: Vec<Block>) -> Result<Self, ImportError> {
+        if blocks.is_empty() {
+            return Err(ImportError::Empty);
+        }
+
         let validator_key = generate_keypair();
-        let chain_id = blocks
-            .first()
-            .map(|b| b.header.chain_id)
-            .unwrap_or(blake3_hash(b"sccgub-genesis-chain"));
+        let chain_id = blocks[0].header.chain_id;
+
+        // --- Genesis block (height 0) validation ---
+        let genesis = &blocks[0];
+        if genesis.header.height != 0 {
+            return Err(ImportError::FirstBlockNotGenesis);
+        }
+        verify_producer_signature(genesis).map_err(ImportError::GenesisSignature)?;
+
+        // CPoG on genesis against empty state.
+        let empty_state = ManagedWorldState::new();
+        match validate_cpog(genesis, &empty_state, &sccgub_types::ZERO_HASH) {
+            CpogResult::Valid => {}
+            CpogResult::Invalid { errors } => return Err(ImportError::Cpog { height: 0, errors }),
+        }
 
         let mut state = ManagedWorldState::new();
         state.state.governance_state = GovernanceState {
@@ -120,29 +142,55 @@ impl Chain {
             ..GovernanceState::default()
         };
 
-        // Replay genesis mint + write to trie.
+        // Replay genesis mint.
         let mut balances = BalanceLedger::new();
-        if let Some(genesis) = blocks.first() {
-            balances.credit(
-                &genesis.header.validator_id,
-                TensionValue::from_integer(1_000_000),
-            );
-            let balance_key =
-                format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
-            state.apply_delta(&sccgub_types::transition::StateDelta {
-                writes: vec![sccgub_types::transition::StateWrite {
-                    address: balance_key,
-                    value: TensionValue::from_integer(1_000_000)
-                        .raw()
-                        .to_le_bytes()
-                        .to_vec(),
-                }],
-                deletes: vec![],
-            });
-        }
+        balances.credit(
+            &genesis.header.validator_id,
+            TensionValue::from_integer(1_000_000),
+        );
+        let balance_key =
+            format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+        state.apply_delta(&sccgub_types::transition::StateDelta {
+            writes: vec![sccgub_types::transition::StateWrite {
+                address: balance_key,
+                value: TensionValue::from_integer(1_000_000)
+                    .raw()
+                    .to_le_bytes()
+                    .to_vec(),
+            }],
+            deletes: vec![],
+        });
+        state.set_height(0);
 
-        // Replay all block transitions using shared apply function (single source of truth).
-        for block in &blocks {
+        // --- Subsequent blocks: full CPoG validation against running state ---
+        for (i, block) in blocks.iter().enumerate().skip(1) {
+            // 1. Producer signature.
+            verify_producer_signature(block).map_err(|e| ImportError::ProducerSignature {
+                height: block.header.height,
+                reason: e,
+            })?;
+
+            // 2. Chain ID consistency.
+            if block.header.chain_id != chain_id {
+                return Err(ImportError::ChainIdMismatch {
+                    height: block.header.height,
+                });
+            }
+
+            // 3. CPoG: parent linkage, Mfidel seal, tension, all roots, state replay,
+            //    13-phase Phi traversal. This is the integrity gate.
+            let parent_id = blocks[i - 1].header.block_id;
+            match validate_cpog(block, &state, &parent_id) {
+                CpogResult::Valid => {}
+                CpogResult::Invalid { errors } => {
+                    return Err(ImportError::Cpog {
+                        height: block.header.height,
+                        errors,
+                    });
+                }
+            }
+
+            // 4. Apply transitions to running state (after validation succeeded).
             sccgub_state::apply::apply_block_transitions(
                 &mut state,
                 &mut balances,
@@ -150,17 +198,16 @@ impl Chain {
             );
             for tx in &block.body.transitions {
                 if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                    tracing::warn!(
-                        "Nonce error during replay at height {}: {}",
-                        block.header.height,
-                        e
-                    );
+                    return Err(ImportError::NonceViolation {
+                        height: block.header.height,
+                        detail: e,
+                    });
                 }
             }
             state.set_height(block.header.height);
         }
 
-        // Rebuild finality tracker from chain history.
+        // Rebuild finality tracker.
         let mut finality = FinalityTracker::default();
         let finality_config = FinalityConfig::default();
         if let Some(last) = blocks.last() {
@@ -170,7 +217,7 @@ impl Chain {
             });
         }
 
-        Chain {
+        Ok(Chain {
             blocks,
             state,
             mempool: Mempool::new(10_000),
@@ -185,7 +232,7 @@ impl Chain {
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
             latest_events: sccgub_types::events::BlockEventLog::new(),
-        }
+        })
     }
 
     /// Submit a transition to the mempool.
@@ -541,6 +588,65 @@ impl Chain {
     }
 }
 
+/// Errors that can occur during chain import. Every variant is fatal —
+/// there is no "partial import" mode.
+#[derive(Debug)]
+pub enum ImportError {
+    Empty,
+    FirstBlockNotGenesis,
+    GenesisSignature(String),
+    ProducerSignature { height: u64, reason: String },
+    ChainIdMismatch { height: u64 },
+    Cpog { height: u64, errors: Vec<String> },
+    NonceViolation { height: u64, detail: String },
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "cannot import an empty block list"),
+            Self::FirstBlockNotGenesis => write!(f, "first block is not genesis"),
+            Self::GenesisSignature(e) => write!(f, "genesis signature invalid: {}", e),
+            Self::ProducerSignature { height, reason } => {
+                write!(f, "producer sig invalid at height {}: {}", height, reason)
+            }
+            Self::ChainIdMismatch { height } => {
+                write!(f, "chain_id mismatch at height {}", height)
+            }
+            Self::Cpog { height, errors } => {
+                write!(f, "CPoG failed at height {}: {}", height, errors.join("; "))
+            }
+            Self::NonceViolation { height, detail } => {
+                write!(f, "nonce violation at height {}: {}", height, detail)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+/// Verify the producer signature on a block.
+///
+/// Checks: signature present (>= 64 bytes), validator_id is non-zero.
+/// CPoG state-root replay provides the deeper integrity gate.
+/// Full Ed25519 verification requires a validator_id → public_key
+/// registry (future: multi-validator mode).
+fn verify_producer_signature(block: &Block) -> Result<(), String> {
+    let sig = &block.proof.validator_signature;
+    if sig.len() < 64 {
+        return Err(format!(
+            "producer signature missing or too short ({} bytes)",
+            sig.len()
+        ));
+    }
+
+    if block.header.validator_id == [0u8; 32] {
+        return Err("validator_id is zero".into());
+    }
+
+    Ok(())
+}
+
 fn build_genesis_block(
     chain_id: Hash,
     validator_id: Hash,
@@ -832,7 +938,8 @@ mod tests {
         let blocks = chain.blocks.clone();
         let original_root = chain.state.state_root();
 
-        let replayed = Chain::from_blocks(blocks);
+        let replayed =
+            Chain::from_blocks(blocks).expect("from_blocks should succeed for valid chain");
         assert_eq!(replayed.state.state_root(), original_root);
         assert_eq!(replayed.height(), 2);
     }

@@ -192,19 +192,110 @@ struct PropagationResult {
     conflict_detail: String,
 }
 
+/// Maximum constraints evaluated per symbol before the walker advances.
+const MAX_CONSTRAINTS_PER_SYMBOL: u64 = 64;
+
+/// Constraint storage prefix: constraints attached to symbol "foo/bar"
+/// live under "constraints/foo/bar/" in the trie.
+const CONSTRAINT_PREFIX: &[u8] = b"constraints/";
+
+/// Bounded constraint propagation walker.
+///
+/// Replaces the previous no-op with a real symbol-mesh walk:
+/// - Worklist seeded from active_symbols.
+/// - For each (symbol, depth): query constraints under "constraints/<symbol>/".
+/// - Evaluate each via the predicate engine against current state.
+/// - On UNSAT → return first conflict, halt.
+/// - On SAT → accumulate tension, expand to child symbols.
+/// - Halts on max_steps or empty worklist.
+///
+/// Determinism: BTreeMap iteration in StateTrie is stable across nodes.
 fn propagate_constraints(
-    _active_symbols: &[Vec<u8>],
-    _state: &ManagedWorldState,
-    _max_depth: u32,
+    active_symbols: &[Vec<u8>],
+    state: &ManagedWorldState,
+    max_depth: u32,
     max_steps: u64,
 ) -> PropagationResult {
-    // MVP: constraint propagation is a no-op that always succeeds.
-    // In a full implementation, this would walk the constraint graph
-    // and check each constraint at each depth level.
-    let steps = 1u64.min(max_steps);
+    let mut worklist: std::collections::VecDeque<(Vec<u8>, u32)> =
+        active_symbols.iter().map(|s| (s.clone(), 0u32)).collect();
+    let mut visited: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
+    let mut steps: u64 = 0;
+    let mut tension = TensionValue::ZERO;
+
+    while let Some((symbol, depth)) = worklist.pop_front() {
+        if steps >= max_steps {
+            return PropagationResult {
+                consistent: true,
+                tension_delta: tension,
+                steps,
+                conflict_detail: String::new(),
+            };
+        }
+        if !visited.insert(symbol.clone()) {
+            continue;
+        }
+        if depth > max_depth {
+            continue;
+        }
+
+        // Build constraint prefix: "constraints/" + symbol + "/"
+        let mut prefix = Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1);
+        prefix.extend_from_slice(CONSTRAINT_PREFIX);
+        prefix.extend_from_slice(&symbol);
+        prefix.push(b'/');
+
+        let mut per_symbol = 0u64;
+        for (key, value) in state.trie.prefix_iter(&prefix) {
+            steps = steps.saturating_add(1);
+            per_symbol = per_symbol.saturating_add(1);
+            if per_symbol > MAX_CONSTRAINTS_PER_SYMBOL || steps >= max_steps {
+                break;
+            }
+
+            // Decode stored predicate (UTF-8 expression string).
+            let expr = match std::str::from_utf8(value) {
+                Ok(s) => s,
+                Err(_) => {
+                    return PropagationResult {
+                        consistent: false,
+                        tension_delta: tension,
+                        steps,
+                        conflict_detail: format!("non-utf8 constraint at {}", hex::encode(key)),
+                    };
+                }
+            };
+            let predicate = crate::contract::parse_constraint_expression_pub(expr);
+            let result = crate::constraints::evaluate(&predicate, state, u8::MAX);
+            if !result.satisfied {
+                return PropagationResult {
+                    consistent: false,
+                    tension_delta: tension,
+                    steps,
+                    conflict_detail: format!(
+                        "constraint at {} unsat: {}",
+                        hex::encode(key),
+                        result.details
+                    ),
+                };
+            }
+            tension = tension + TensionValue::from_integer(1 + depth as i64);
+        }
+
+        // Expand: walk one path-step toward children.
+        let mut child_prefix = symbol.clone();
+        child_prefix.push(b'/');
+        for (child_key, _) in state.trie.prefix_iter(&child_prefix) {
+            if let Some(rest) = child_key.strip_prefix(child_prefix.as_slice()) {
+                if !rest.contains(&b'/') {
+                    worklist.push_back((child_key.clone(), depth + 1));
+                }
+            }
+        }
+    }
+
     PropagationResult {
         consistent: true,
-        tension_delta: TensionValue::ZERO,
+        tension_delta: tension,
         steps,
         conflict_detail: String::new(),
     }
