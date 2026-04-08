@@ -18,7 +18,8 @@
       "Bash(grep \"    ///\" crates/sccgub-node/src/main.rs)",
       "Bash(cargo clean:*)",
       "Bash(grep -rn \"prefix_iter\" crates/sccgub-*/src/*.rs)",
-      "Bash(grep -rn 'starts_with\\\\|\\\\.range\\(' crates/sccgub-state/src/*.rs crates/sccgub-execution/src/*.rs)"
+      "Bash(grep -rn 'starts_with\\\\|\\\\.range\\(' crates/sccgub-state/src/*.rs crates/sccgub-execution/src/*.rs)",
+      "Bash(grep -v \"//\")"
     ]
   }
 }

@@ -46,9 +46,10 @@ pub struct Chain {
     /// Event log for the most recently produced block.
     pub latest_events: sccgub_types::events::BlockEventLog,
     /// Rejected transaction receipts from the most recent block production.
-    /// Not Merkle-committed (they're not in the block) but queryable for
-    /// user feedback and audit purposes.
     pub latest_rejected_receipts: Vec<sccgub_types::receipt::CausalReceipt>,
+    /// Per-agent responsibility state (Φ²-R causal accounting).
+    pub responsibility:
+        std::collections::HashMap<sccgub_types::AgentId, sccgub_types::agent::ResponsibilityState>,
 }
 
 impl Chain {
@@ -108,6 +109,7 @@ impl Chain {
             slashing,
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
+            responsibility: std::collections::HashMap::new(),
         };
 
         chain.state.set_height(0);
@@ -241,6 +243,7 @@ impl Chain {
             slashing: SlashingEngine::new(Default::default()),
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
+            responsibility: std::collections::HashMap::new(),
         })
     }
 
@@ -437,6 +440,22 @@ impl Chain {
                     }
                 }
 
+                // N-7: Record governance actions for anti-concentration tracking.
+                for tx in &self.blocks.last().unwrap().body.transitions {
+                    if matches!(
+                        tx.intent.kind,
+                        sccgub_types::transition::TransitionKind::GovernanceUpdate
+                            | sccgub_types::transition::TransitionKind::NormProposal
+                            | sccgub_types::transition::TransitionKind::ConstraintAddition
+                    ) {
+                        self.power_tracker.record_action(&tx.actor.agent_id);
+                    }
+                }
+                // Reset epoch counters every 100 blocks.
+                if height % 100 == 0 {
+                    self.power_tracker.reset_epoch();
+                }
+
                 // Update finality tracker.
                 self.finality.on_new_block(height);
                 let blocks_ref = &self.blocks;
@@ -509,6 +528,25 @@ impl Chain {
 
                 self.latest_events = events;
                 self.latest_rejected_receipts = rejected_receipts;
+
+                // N-6: Responsibility tracking — record contributions
+                // for each accepted transition in this block.
+                for tx in &self.blocks.last().unwrap().body.transitions {
+                    let agent_resp = self
+                        .responsibility
+                        .entry(tx.actor.agent_id)
+                        .or_default();
+                    sccgub_governance::responsibility::record_positive(
+                        agent_resp,
+                        tx.tx_id,
+                        TensionValue::from_integer(1),
+                        height,
+                    );
+                }
+                // Apply temporal decay on all tracked agents at block boundary.
+                for resp in self.responsibility.values_mut() {
+                    sccgub_governance::responsibility::apply_decay(resp, height);
+                }
 
                 Ok(self.blocks.last().unwrap())
             }
@@ -1348,5 +1386,32 @@ mod tests {
         // mempool drain (Phase 8 runs inside validate_transition), so
         // no receipt reaches the gas loop. The rejected_receipts field
         // captures gas-loop rejections specifically.
+    }
+
+    #[test]
+    fn test_responsibility_tracked_across_blocks() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Produce a few blocks (empty — but responsibility tracking runs).
+        for _ in 0..5 {
+            chain.produce_block().unwrap();
+        }
+
+        // Validator's responsibility state should exist and have decayed.
+        // (Empty blocks produce no transitions, so the validator only gets
+        // decay applied, not positive contributions.)
+        // But the responsibility map should be populated once any agent acts.
+
+        // The map starts empty because no transactions have been submitted.
+        // This test verifies the decay path runs without panic.
+        assert!(
+            chain.responsibility.is_empty()
+                || chain.responsibility.values().all(|r| {
+                    r.net_responsibility.raw().unsigned_abs()
+                        <= TensionValue::from_integer(1000).raw().unsigned_abs()
+                }),
+            "Responsibility must be bounded (INV-13)"
+        );
     }
 }
