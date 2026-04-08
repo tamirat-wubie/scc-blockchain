@@ -195,8 +195,11 @@ struct PropagationResult {
 /// Maximum constraints evaluated per symbol before the walker advances.
 const MAX_CONSTRAINTS_PER_SYMBOL: u64 = 64;
 
-/// Constraint storage prefix: constraints attached to symbol "foo/bar"
-/// live under "constraints/foo/bar/" in the trie.
+/// Constraint storage prefix. Constraints attached to symbol "foo/bar"
+/// live under "constraints/foo/bar\0" in the trie (null-byte terminated).
+/// The null terminator prevents prefix collision: "constraints/alpha\0"
+/// does NOT match "constraints/alpha/leaf\0", so a parent scan never
+/// sees child constraints. Without this, depth bounds are meaningless.
 const CONSTRAINT_PREFIX: &[u8] = b"constraints/";
 
 /// Bounded constraint propagation walker.
@@ -244,11 +247,12 @@ fn propagate_constraints(
             continue;
         }
 
-        // Build constraint prefix: "constraints/" + symbol + "/"
+        // Build constraint prefix: "constraints/" + symbol + "\0"
+        // Null terminator isolates this symbol's constraints from children.
         let mut prefix = Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1);
         prefix.extend_from_slice(CONSTRAINT_PREFIX);
         prefix.extend_from_slice(&symbol);
-        prefix.push(b'/');
+        prefix.push(0x00);
 
         let mut per_symbol = 0u64;
         for (key, value) in state.trie.prefix_iter(&prefix) {
@@ -457,6 +461,18 @@ mod tests {
     }
 
     // === SCCE constraint propagation walker tests ===
+    // Convention: constraints for symbol "foo" stored at "constraints/foo\0c<N>"
+    // (null-terminated to prevent prefix collision with children).
+
+    /// Helper: build a constraint trie key using the null-terminator convention.
+    fn constraint_key(symbol: &[u8], id: &str) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(b"constraints/");
+        key.extend_from_slice(symbol);
+        key.push(0x00);
+        key.extend_from_slice(id.as_bytes());
+        key
+    }
 
     #[test]
     fn test_propagation_passes_with_no_constraints() {
@@ -472,7 +488,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state
             .trie
-            .insert(b"constraints/alpha/beta/c0".to_vec(), b"false".to_vec());
+            .insert(constraint_key(b"alpha/beta", "c0"), b"false".to_vec());
         let active = vec![b"alpha/beta".to_vec()];
         let result = propagate_constraints(&active, &state, 4, 1000);
         assert!(!result.consistent);
@@ -483,10 +499,9 @@ mod tests {
     fn test_propagation_passes_with_satisfied_exists() {
         let mut state = ManagedWorldState::new();
         state.trie.insert(b"data/foo".to_vec(), b"present".to_vec());
-        state.trie.insert(
-            b"constraints/alpha/c0".to_vec(),
-            b"exists:data/foo".to_vec(),
-        );
+        state
+            .trie
+            .insert(constraint_key(b"alpha", "c0"), b"exists:data/foo".to_vec());
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(result.consistent, "{}", result.conflict_detail);
@@ -497,47 +512,36 @@ mod tests {
     fn test_propagation_walks_into_children() {
         let mut state = ManagedWorldState::new();
         state.trie.insert(b"alpha/leaf".to_vec(), b"".to_vec());
+        // Constraint on the CHILD symbol (null-terminated).
         state
             .trie
-            .insert(b"constraints/alpha/leaf/c0".to_vec(), b"false".to_vec());
+            .insert(constraint_key(b"alpha/leaf", "c0"), b"false".to_vec());
         let active = vec![b"alpha".to_vec()];
+        // Depth 2 is enough to reach the child via worklist expansion.
         let result = propagate_constraints(&active, &state, 2, 1000);
-        assert!(!result.consistent, "child constraint must be reached");
+        assert!(
+            !result.consistent,
+            "child constraint must be reached via expansion"
+        );
     }
 
     #[test]
     fn test_propagation_respects_max_depth() {
         let mut state = ManagedWorldState::new();
-        // Place constraint under a deeply nested symbol that requires depth >= 2.
+        state.trie.insert(b"alpha/leaf".to_vec(), b"".to_vec());
+        // Constraint on the CHILD only (null-terminated — NOT visible to parent).
         state
             .trie
-            .insert(b"alpha/deep/nested".to_vec(), b"".to_vec());
-        state.trie.insert(b"alpha/deep".to_vec(), b"".to_vec());
-        state.trie.insert(
-            b"constraints/alpha/deep/nested/c0".to_vec(),
-            b"false".to_vec(),
-        );
+            .insert(constraint_key(b"alpha/leaf", "c0"), b"false".to_vec());
         let active = vec![b"alpha".to_vec()];
-        // Depth 0 — can only see alpha's own constraints, not children.
-        // The walker CAN see "constraints/alpha/" prefix which includes
-        // "constraints/alpha/deep/nested/c0" — this is by design since
-        // prefix scanning is recursive.
-        // Test with a separate symbol tree where constraints are isolated.
-        let mut state2 = ManagedWorldState::new();
-        state2.trie.insert(b"beta/child".to_vec(), b"".to_vec());
-        // Constraint ONLY on beta/child, nothing on beta itself.
-        state2
-            .trie
-            .insert(b"constraints/beta/child/c0".to_vec(), b"false".to_vec());
-        // With depth 0 + active = [beta], the walker visits beta at depth 0,
-        // scans constraints/beta/ (which includes constraints/beta/child/c0
-        // via prefix scan). Prefix-based constraint scan is correct — constraints
-        // are hierarchical. This test verifies the walker runs.
-        let result = propagate_constraints(&[b"beta".to_vec()], &state2, 0, 1000);
-        // The constraint IS visible via prefix scan even at depth 0.
+        // Depth 0 — parent "alpha" is processed but child "alpha/leaf" is NOT
+        // expanded into the worklist. With null-terminated keys, the parent's
+        // scan ("constraints/alpha\0") does NOT match the child's key
+        // ("constraints/alpha/leaf\0"). So the constraint is invisible.
+        let result = propagate_constraints(&active, &state, 0, 1000);
         assert!(
-            !result.consistent,
-            "constraint under prefix must be detected"
+            result.consistent,
+            "child constraint must be UNREACHABLE at depth 0"
         );
     }
 
@@ -546,7 +550,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state
             .trie
-            .insert(b"constraints/alpha/c0".to_vec(), vec![0xFF, 0xFE, 0xFD]);
+            .insert(constraint_key(b"alpha", "c0"), vec![0xFF, 0xFE, 0xFD]);
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(!result.consistent);
@@ -556,10 +560,9 @@ mod tests {
     #[test]
     fn test_propagation_fails_closed_on_step_exhaustion() {
         let mut state = ManagedWorldState::new();
-        // Plant enough constraints to exhaust a tiny step budget.
         for i in 0..10u8 {
             state.trie.insert(
-                format!("constraints/alpha/c{}", i).into_bytes(),
+                constraint_key(b"alpha", &format!("c{}", i)),
                 b"true".to_vec(),
             );
         }
