@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-07
-**Repo:** 106 commits, 319 tests, 9 crates, ~22.5K lines Rust
+**Repo:** 108 commits, 488 tests, 9 crates, ~22.5K lines Rust
 
 ---
 
@@ -95,11 +95,27 @@ Auditors should focus on these files first:
 The 13-phase Phi traversal runs in two contexts:
 
 - **Block-level** (`phi_traversal_block`): Called during CPoG validation at block import/production time. Runs all 13 phases.
-- **Transaction-level** (`phi_traversal_tx`): Called during mempool admission via `validate_transition()`. Runs phases 1-3, 5-8.
+- **Transaction-level** (`phi_traversal_tx`): Called during mempool admission via `validate_transition()`. Runs per-tx phases; block-only phases auto-pass.
 
-**N-11 invariant**: Both paths MUST carry identical semantic checks for overlapping phases. Currently verified: both call `check_ontology()` (phase 3) and `check_payload_consistency()` (phase 8).
+**N-11 structural enforcement**: Both paths call `phi_check_single_tx()` for
+per-tx phases (Distinction, Constraint, Ontology, Form, Organization, Module,
+Execution). This shared function is the single source of truth for per-tx
+semantics. Adding a check to a per-tx phase means editing one function; both
+paths pick it up automatically.
 
-**Recommended audit action**: Verify that any new semantic check added to one path is also added to the other, or document why the asymmetry is intentional.
+Block-only phases (Topology, Body, Architecture, Performance, Feedback,
+Evolution) run only in `phi_traversal_block`.
+
+**Open architectural item**: The dual-path *structure* still exists — two
+entry points, two callers (mempool vs CPoG). The per-tx *content* is unified
+but the execution paths are separate. N-3-mempool (mempool-rejected
+transitions produce no receipt) remains open and requires an architectural
+decision about whether to make mempool admission lightweight or to refactor
+`drain_validated` to return rejected receipts.
+
+**Recommended audit action**: Verify that `phi_check_single_tx` covers all
+per-tx-relevant checks, and that block-only phase functions don't duplicate
+per-tx logic that should be in the shared function.
 
 ## 6. Ontology Table (Consensus-Critical)
 
@@ -120,10 +136,28 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 
 ## 7. Audit Findings Summary
 
-An 11-session internal audit cycle identified 35 findings:
-- **33 closed** (code fixes applied and verified)
-- **1 false positive** (F-5: phi_traversal_tx alleged dead code — actually live via validate_transition → mempool::drain_validated → produce_block)
+An 11-session internal audit cycle identified 38 findings:
+- **36 closed** (code fixes applied and verified)
+- **1 false positive** (F-5: see below)
 - **1 deferred** (Patch 03: ConsensusParams in genesis — architectural, ~1 day effort)
+
+### F-5 false positive (worth noting for credibility)
+
+F-5 alleged `phi_traversal_tx` was dead code across three audit sessions.
+The implementer traced the call chain: `phi_traversal_tx` is called by
+`validate_transition` (validate.rs:123), which is called by
+`validate_transition_metered`, which is called by `mempool::drain_validated`,
+which is called by `produce_block`. Reclassified as live code, not dead.
+This is documented because external reviewers should know the internal
+audit process caught and corrected its own errors.
+
+### N-13: panic-free consensus property
+
+Zero `unwrap()` calls in any consensus-critical crate. All production
+`expect()` calls (16 total) are either infallible serialization
+(canonical.rs, 2 sites) or CLI I/O (main.rs, 14 sites). No crate in
+the validation pipeline (sccgub-execution, sccgub-state, sccgub-consensus,
+sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 
 ### Critical fixes applied:
 - F-1: CPoG validation on block import (was: infallible `from_blocks()`)
@@ -133,13 +167,37 @@ An 11-session internal audit cycle identified 35 findings:
 - N-1: Null-byte constraint key convention (was: prefix collision vulnerability)
 - N-8: Namespace literal elimination (was: inline b"balance/" strings)
 - N-12: Zero unwrap() in consensus (was: 2 sites with potential panic)
+- N-14: Phase 5 (Form) drift — block path checked sig length only, tx path checked addr length only. Unified.
+- N-15: Phase 6 (Organization) drift — governance precedence enforcement missing from tx path. Medium severity: DoS surface where governance-kind txs with insufficient authority were accepted into the mempool unchecked. Fixed.
+- N-16: Phase 8 (Execution) drift — inconsistent completeness checks between paths. Unified.
+
+### Open items:
+- N-3-mempool: Mempool-rejected transitions produce no receipt. Requires architectural decision on whether mempool admission is lightweight or heavyweight.
+- N-9: `what_actual` capture not implemented (StateDelta recording during apply).
+- Patch 03: ConsensusParams embedded in genesis block for fork-safe parameter evolution.
 
 ## 8. Test Coverage Strategy
 
-- **Unit tests**: Every module has tests. Key coverage areas: ontology (14 tests), payload check (12 tests), SCCE (8+ tests), CPoG (8 tests), Phi phases (7 failure tests), chain import (7 error variant tests)
+- **Unit tests**: Every module has tests. Key coverage areas: ontology (14 tests), payload check (12 tests), SCCE (8+ tests), CPoG (8 tests), Phi phases (9 tests), chain import (7 error variant tests)
 - **Integration test**: `test_end_to_end_block_validation` in chain.rs — genesis → submit → produce → validate → verify state roots
 - **Negative tests**: Each validation gate has at least one test that triggers rejection
 - **Exhaustive tests**: `no_kind_can_write_to_system` iterates all 10 TransitionKind variants
+
+## 8.1 Recommended Reading Order
+
+For external reviewers unfamiliar with the codebase, this reading order
+builds understanding incrementally:
+
+1. `sccgub-types/src/namespace.rs` — namespace constants (small, sets vocabulary)
+2. `sccgub-types/src/transition.rs` — SymbolicTransition, WHBindingIntent, OperationPayload
+3. `sccgub-execution/src/ontology.rs` — default-deny namespace table (consensus-critical)
+4. `sccgub-execution/src/wh_check.rs` — WHBinding completeness + cross-checks
+5. `sccgub-execution/src/payload_check.rs` — payload-intent consistency
+6. `sccgub-execution/src/phi.rs` — Phi traversal engine (shared per-tx checker + block-only phases)
+7. `sccgub-execution/src/validate.rs` — transaction validation pipeline
+8. `sccgub-execution/src/cpog.rs` — CPoG 11-check block validation
+9. `sccgub-state/src/apply.rs` — state application (checks-effects-interactions)
+10. `sccgub-node/src/chain.rs` — chain lifecycle, block production, import validation
 
 ## 9. Build and Run
 
@@ -163,7 +221,7 @@ cargo run --bin sccgub-node -- show-chain
 ## 10. Recommended Audit Focus Areas
 
 1. **Ontology table completeness** — Are all TransitionKind variants correctly restricted?
-2. **Phi dual-path consistency** — Do both paths enforce identical semantic checks?
+2. **Phi shared checker completeness** — Does `phi_check_single_tx` cover all per-tx checks? Do block-only phases avoid duplicating per-tx logic?
 3. **Nonce enforcement** — Is sequential nonce checked in all three sites?
 4. **State application ordering** — Does checks-effects-interactions hold under all payload types?
 5. **SCCE termination** — Can the constraint walker be induced to loop or exceed bounds?
