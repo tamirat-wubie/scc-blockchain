@@ -102,6 +102,27 @@ pub fn check_transition_wh(tx: &SymbolicTransition) -> Result<(), String> {
         ));
     }
 
+    // G-5.5: WHICH — declared constraint scope must match actual carried constraints.
+    // `which` is the set of ConstraintIds the tx declares it depends on.
+    // `preconditions ∪ postconditions` is the set of constraints actually carried.
+    // Strict equality: every declared constraint must be carried, and every carried
+    // constraint must be declared. Subset would allow undeclared constraints to slip in.
+    let carried: std::collections::HashSet<sccgub_types::ConstraintId> = tx
+        .preconditions
+        .iter()
+        .chain(tx.postconditions.iter())
+        .map(|c| c.id)
+        .collect();
+    let declared = &tx.wh_binding_intent.which;
+    if &carried != declared {
+        let undeclared: Vec<_> = carried.difference(declared).map(hex::encode).collect();
+        let unsupported: Vec<_> = declared.difference(&carried).map(hex::encode).collect();
+        return Err(format!(
+            "WHBinding 'which' does not match carried constraints: undeclared={:?} unsupported={:?}",
+            undeclared, unsupported
+        ));
+    }
+
     Ok(())
 }
 
@@ -207,5 +228,83 @@ mod tests {
         tx.actor.governance_level = PrecedenceLevel::Optimization; // Low authority.
         tx.wh_binding_intent.why.precedence_level = PrecedenceLevel::Safety; // Claims high.
         assert!(check_transition_wh(&tx).is_err());
+    }
+
+    // G-5.5: WHICH cross-check tests.
+
+    #[test]
+    fn test_g55_empty_which_empty_constraints_passes() {
+        let tx = valid_tx();
+        assert!(tx.wh_binding_intent.which.is_empty());
+        assert!(tx.preconditions.is_empty());
+        assert!(tx.postconditions.is_empty());
+        assert!(check_transition_wh(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_g55_carried_constraint_undeclared_rejected() {
+        let mut tx = valid_tx();
+        tx.preconditions.push(Constraint {
+            id: [42u8; 32],
+            expression: "true".into(),
+        });
+        // which is still empty — violation.
+        let result = check_transition_wh(&tx);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("which"));
+    }
+
+    #[test]
+    fn test_g55_declared_constraint_uncarried_rejected() {
+        let mut tx = valid_tx();
+        tx.wh_binding_intent.which.insert([99u8; 32]);
+        // preconditions/postconditions still empty — violation.
+        let result = check_transition_wh(&tx);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("which"));
+    }
+
+    #[test]
+    fn test_g55_matched_which_and_constraints_passes() {
+        let mut tx = valid_tx();
+        let cid = [7u8; 32];
+        tx.preconditions.push(Constraint {
+            id: cid,
+            expression: "true".into(),
+        });
+        tx.wh_binding_intent.which.insert(cid);
+        assert!(check_transition_wh(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_g55_postcondition_must_also_be_declared() {
+        let mut tx = valid_tx();
+        let cid = [11u8; 32];
+        tx.postconditions.push(Constraint {
+            id: cid,
+            expression: "true".into(),
+        });
+        // which is empty — violation.
+        let result = check_transition_wh(&tx);
+        assert!(result.is_err());
+        // Now declare it.
+        tx.wh_binding_intent.which.insert(cid);
+        assert!(check_transition_wh(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_g55_duplicate_constraint_ids_treated_as_set() {
+        let mut tx = valid_tx();
+        let cid = [13u8; 32];
+        tx.preconditions.push(Constraint {
+            id: cid,
+            expression: "true".into(),
+        });
+        tx.preconditions.push(Constraint {
+            id: cid,
+            expression: "also true".into(),
+        });
+        tx.wh_binding_intent.which.insert(cid);
+        assert!(check_transition_wh(&tx).is_ok());
     }
 }
