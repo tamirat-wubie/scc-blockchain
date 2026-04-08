@@ -42,6 +42,8 @@ pub struct Chain {
     pub finality: FinalityTracker,
     pub finality_config: FinalityConfig,
     pub slashing: SlashingEngine,
+    /// Event log for the most recently produced block.
+    pub latest_events: sccgub_types::events::BlockEventLog,
 }
 
 impl Chain {
@@ -97,6 +99,7 @@ impl Chain {
             finality: FinalityTracker::default(),
             finality_config: FinalityConfig::default(),
             slashing,
+            latest_events: sccgub_types::events::BlockEventLog::new(),
         };
 
         chain.state.set_height(0);
@@ -181,6 +184,7 @@ impl Chain {
             finality,
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
+            latest_events: sccgub_types::events::BlockEventLog::new(),
         }
     }
 
@@ -366,6 +370,68 @@ impl Chain {
 
                 // Record validator presence (resets absence counter).
                 self.slashing.record_presence(&validator_id_for_check);
+
+                // Emit chain events for this block.
+                let mut events = sccgub_types::events::BlockEventLog::new();
+
+                // Emit events for each accepted transition.
+                for tx in &self.blocks.last().unwrap().body.transitions {
+                    match &tx.payload {
+                        sccgub_types::transition::OperationPayload::Write { key, .. } => {
+                            events.emit(sccgub_types::events::ChainEvent::StateWrite {
+                                tx_id: tx.tx_id,
+                                key: key.clone(),
+                                actor: tx.actor.agent_id,
+                            });
+                        }
+                        sccgub_types::transition::OperationPayload::AssetTransfer {
+                            from,
+                            to,
+                            amount,
+                        } => {
+                            events.emit(sccgub_types::events::ChainEvent::Transfer {
+                                tx_id: tx.tx_id,
+                                from: *from,
+                                to: *to,
+                                amount: TensionValue(*amount),
+                                purpose: tx.intent.declared_purpose.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Emit fee and reward events.
+                if self.treasury.epoch_fees.raw() > 0 {
+                    events.emit(sccgub_types::events::ChainEvent::FeeCharged {
+                        tx_id: [0u8; 32], // Block-level aggregate.
+                        payer: validator_id_for_check,
+                        amount: self.treasury.epoch_fees,
+                        gas_used: block_gas.used,
+                    });
+                }
+                if actual_reward.raw() > 0 {
+                    events.emit(sccgub_types::events::ChainEvent::RewardDistributed {
+                        block_height: height,
+                        validator: validator_id_for_check,
+                        amount: actual_reward,
+                    });
+                }
+
+                // Emit finality event if new blocks were finalized.
+                if self.finality.finalized_height > 0 {
+                    events.emit(sccgub_types::events::ChainEvent::BlockFinalized {
+                        block_height: self.finality.finalized_height,
+                        block_hash: self
+                            .blocks
+                            .get(self.finality.finalized_height as usize)
+                            .map(|b| b.header.block_id)
+                            .unwrap_or([0u8; 32]),
+                        finality_class: "economic".into(),
+                    });
+                }
+
+                self.latest_events = events;
 
                 Ok(self.blocks.last().unwrap())
             }
@@ -779,5 +845,64 @@ mod tests {
             chain.produce_block().unwrap();
         }
         assert!(chain.finality.finalized_height >= 3);
+    }
+
+    #[test]
+    fn test_chain_emits_events_after_finality() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Produce enough blocks for finality to advance (default depth=2).
+        for _ in 0..4 {
+            chain.produce_block().unwrap();
+        }
+
+        // After 4 blocks, finality should have advanced, producing BlockFinalized events.
+        let events = &chain.latest_events;
+        assert!(
+            events.event_count() > 0,
+            "Block production with finality must emit events, got 0"
+        );
+
+        let finality_events: Vec<_> = events
+            .events
+            .iter()
+            .filter(|e| matches!(e, sccgub_types::events::ChainEvent::BlockFinalized { .. }))
+            .collect();
+        assert!(
+            !finality_events.is_empty(),
+            "Must have at least one BlockFinalized event"
+        );
+    }
+
+    #[test]
+    fn test_chain_treasury_snapshot_roundtrip() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Produce blocks to accumulate some treasury state.
+        for _ in 0..3 {
+            chain.produce_block().unwrap();
+        }
+
+        let snapshot = chain.create_snapshot();
+
+        // Verify treasury fields are captured.
+        // Treasury starts at zero and may have epoch data.
+        assert_eq!(snapshot.treasury_epoch, chain.treasury.epoch);
+        assert_eq!(snapshot.finalized_height, chain.finality.finalized_height);
+
+        // Restore and verify.
+        let mut chain2 = Chain::init();
+        chain2.restore_from_snapshot(&snapshot);
+        assert_eq!(chain2.treasury.epoch, chain.treasury.epoch);
+        assert_eq!(
+            chain2.treasury.pending_fees.raw(),
+            chain.treasury.pending_fees.raw()
+        );
+        assert_eq!(
+            chain2.finality.finalized_height,
+            chain.finality.finalized_height
+        );
     }
 }
