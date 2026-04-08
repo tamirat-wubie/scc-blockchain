@@ -72,14 +72,18 @@ pub fn validate_transition(
         errors.push("Nonce must be >= 1".into());
     }
 
-    // 6. Nonce replay protection (strictly increasing).
+    // 6. Nonce must be strictly sequential (exactly last + 1, no gaps).
     let last_nonce = state
         .agent_nonces
         .get(&tx.actor.agent_id)
         .copied()
         .unwrap_or(0);
-    if tx.nonce <= last_nonce {
-        errors.push(format!("Nonce replay: {} <= last {}", tx.nonce, last_nonce));
+    if tx.nonce != last_nonce + 1 {
+        errors.push(format!(
+            "Nonce must be sequential: expected {}, got {}",
+            last_nonce + 1,
+            tx.nonce
+        ));
     }
 
     // 7. Size limits on target address and payload.
