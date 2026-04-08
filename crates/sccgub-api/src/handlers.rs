@@ -6,15 +6,20 @@ use sccgub_types::block::Block;
 
 use crate::responses::*;
 
+/// Maximum pending transactions before rejecting new submissions.
+pub const MAX_PENDING_TXS: usize = 10_000;
+/// Maximum tracked seen IDs (LRU-style: oldest evicted when full).
+pub const MAX_SEEN_TX_IDS: usize = 100_000;
+
 /// Shared application state for the API server.
 pub struct AppState {
     pub blocks: Vec<Block>,
     pub state: ManagedWorldState,
     pub chain_id: [u8; 32],
     pub finalized_height: u64,
-    /// Pending transactions submitted via API (not yet included in a block).
+    /// Pending transactions submitted via API (bounded by MAX_PENDING_TXS).
     pub pending_txs: Vec<sccgub_types::transition::SymbolicTransition>,
-    /// Transaction IDs already seen (deduplication).
+    /// Transaction IDs already seen (bounded by MAX_SEEN_TX_IDS).
     pub seen_tx_ids: std::collections::HashSet<[u8; 32]>,
 }
 
@@ -226,6 +231,22 @@ pub async fn submit_tx(
                 format!("Validation failed: {}", errors.join("; ")),
             )),
         );
+    }
+
+    // Capacity check — reject if pending pool is full (prevents memory DoS).
+    if app.pending_txs.len() >= MAX_PENDING_TXS {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(ApiResponse::err(
+                ErrorCode::RateLimited,
+                "Pending transaction pool is full",
+            )),
+        );
+    }
+
+    // Evict oldest seen IDs if the dedup set is full.
+    if app.seen_tx_ids.len() >= MAX_SEEN_TX_IDS {
+        app.seen_tx_ids.clear(); // Simple eviction; production would use LRU.
     }
 
     // Admit to pending pool.

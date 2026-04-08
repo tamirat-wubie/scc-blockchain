@@ -298,7 +298,14 @@ impl Chain {
         // This is the ONLY place where post_state_root is set — after state is committed.
         let post_root = speculative_state.state_root();
         for receipt in &mut metered_receipts {
-            let _ = sccgub_execution::validate::seal_receipt_post_state(receipt, post_root);
+            if let Err(e) = sccgub_execution::validate::seal_receipt_post_state(receipt, post_root)
+            {
+                tracing::error!(
+                    "Failed to seal receipt {}: {}",
+                    hex::encode(receipt.tx_id),
+                    e
+                );
+            }
         }
 
         // Use same canonical derivation as validator_id_for_check (line 178).

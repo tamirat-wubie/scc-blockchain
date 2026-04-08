@@ -43,10 +43,23 @@ pub mod diversity {
     pub const MAX_SAME_SUBNET_PCT: u32 = 50;
 }
 
+/// Maximum peers tracked (prevents memory DoS from peer flooding).
+pub const MAX_PEERS: usize = 1_000;
+
 impl PeerRegistry {
-    /// Register or update a peer.
-    pub fn upsert(&mut self, info: PeerInfo) {
+    /// Register or update a peer. Rejects new peers if registry is full.
+    pub fn upsert(&mut self, info: PeerInfo) -> Result<(), String> {
+        // Check capacity before insert for new peers.
+        let is_update = self.peers.contains_key(&info.validator_id);
+        if !is_update && self.peers.len() >= MAX_PEERS {
+            return Err(format!(
+                "Peer registry full ({}/{})",
+                self.peers.len(),
+                MAX_PEERS
+            ));
+        }
         self.peers.insert(info.validator_id, info);
+        Ok(())
     }
 
     /// Get active (connected) peer count.
@@ -156,9 +169,9 @@ mod tests {
     #[test]
     fn test_peer_registry() {
         let mut registry = PeerRegistry::default();
-        registry.upsert(test_peer(1, 100));
-        registry.upsert(test_peer(2, 200));
-        registry.upsert(test_peer(3, 150));
+        registry.upsert(test_peer(1, 100)).unwrap();
+        registry.upsert(test_peer(2, 200)).unwrap();
+        registry.upsert(test_peer(3, 150)).unwrap();
 
         assert_eq!(registry.active_count(), 3);
         assert_eq!(registry.highest_peer().unwrap().current_height, 200);
@@ -167,8 +180,8 @@ mod tests {
     #[test]
     fn test_needs_sync() {
         let mut registry = PeerRegistry::default();
-        registry.upsert(test_peer(1, 100));
-        registry.upsert(test_peer(2, 200));
+        registry.upsert(test_peer(1, 100)).unwrap();
+        registry.upsert(test_peer(2, 200)).unwrap();
 
         assert!(registry.needs_sync(50));
         assert!(!registry.needs_sync(300));
@@ -177,9 +190,9 @@ mod tests {
     #[test]
     fn test_sync_candidates() {
         let mut registry = PeerRegistry::default();
-        registry.upsert(test_peer(1, 100));
-        registry.upsert(test_peer(2, 200));
-        registry.upsert(test_peer(3, 150));
+        registry.upsert(test_peer(1, 100)).unwrap();
+        registry.upsert(test_peer(2, 200)).unwrap();
+        registry.upsert(test_peer(3, 150)).unwrap();
 
         let candidates = registry.sync_candidates(120);
         assert_eq!(candidates.len(), 2); // Peers at 200 and 150, not 100.
@@ -189,7 +202,7 @@ mod tests {
     #[test]
     fn test_ban_peer() {
         let mut registry = PeerRegistry::default();
-        registry.upsert(test_peer(1, 100));
+        registry.upsert(test_peer(1, 100)).unwrap();
         assert_eq!(registry.active_count(), 1);
 
         registry.ban(&[1u8; 32]);

@@ -274,7 +274,9 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32, passphrase: &str) {
     let current_height = chain.height();
     for i in 0..num_txs {
         let tx = create_test_transition(&agent, &agent_key, i, current_height);
-        let _ = chain.submit_transition(tx);
+        if let Err(e) = chain.submit_transition(tx) {
+            tracing::warn!("Transaction rejected: {}", e);
+        }
     }
     println!("Submitted {} transitions to mempool.", num_txs);
 
@@ -601,11 +603,13 @@ fn cmd_verify(data_dir: &std::path::Path) {
                     });
                 }
                 OperationPayload::AssetTransfer { from, to, amount } => {
-                    let _ = replay_balances.transfer(
+                    if let Err(e) = replay_balances.transfer(
                         from,
                         to,
                         sccgub_types::tension::TensionValue(*amount),
-                    );
+                    ) {
+                        tracing::warn!("Transfer failed during stats replay: {}", e);
+                    }
                 }
                 _ => {}
             }
@@ -977,7 +981,9 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
     tx.tx_id = blake3_hash(&canonical);
     tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
 
-    let _ = chain.submit_transition(tx);
+    if let Err(e) = chain.submit_transition(tx) {
+        tracing::warn!("Transaction rejected: {}", e);
+    }
 
     let produced_height = match chain.produce_block() {
         Ok(block) => {
@@ -1034,7 +1040,11 @@ fn cmd_balance(data_dir: &std::path::Path, agent_prefix: &str) {
             if let sccgub_types::transition::OperationPayload::AssetTransfer { from, to, amount } =
                 &tx.payload
             {
-                let _ = balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount));
+                if let Err(e) =
+                    balances.transfer(from, to, sccgub_types::tension::TensionValue(*amount))
+                {
+                    tracing::warn!("Transfer failed during balance replay: {}", e);
+                }
             }
         }
     }
@@ -1351,7 +1361,9 @@ fn cmd_demo() {
     for i in 0..3 {
         let tx = create_test_transition(&agent, &agent_key, i, 0);
         println!("[Submit] Tx #{}: {}", i, hex::encode(tx.tx_id));
-        let _ = chain.submit_transition(tx);
+        if let Err(e) = chain.submit_transition(tx) {
+            tracing::warn!("Transaction rejected: {}", e);
+        }
     }
     println!();
 
