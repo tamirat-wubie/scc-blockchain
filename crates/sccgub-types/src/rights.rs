@@ -82,6 +82,27 @@ pub struct UsageLicense {
     pub revoked: bool,
 }
 
+impl UsageLicense {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.artifact_id == [0u8; 32] {
+            return Err("artifact_id is required".into());
+        }
+        if self.licensor == [0u8; 32] {
+            return Err("licensor is required".into());
+        }
+        if self.licensee == [0u8; 32] {
+            return Err("licensee is required".into());
+        }
+        if self.licensor == self.licensee {
+            return Err("cannot license to self".into());
+        }
+        if self.terms_hash == [0u8; 32] {
+            return Err("terms_hash is required".into());
+        }
+        Ok(())
+    }
+}
+
 /// Policy verdict on an artifact — governance bridge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyVerdict {

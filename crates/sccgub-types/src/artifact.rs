@@ -71,6 +71,9 @@ pub struct ArtifactRef {
 impl ArtifactRef {
     /// Validate that required fields are present (fail-closed).
     pub fn validate(&self) -> Result<(), String> {
+        if self.artifact_id == [0u8; 32] {
+            return Err("artifact_id is required".into());
+        }
         if self.content_hash == [0u8; 32] {
             return Err("content_hash is required".into());
         }
@@ -85,6 +88,12 @@ impl ArtifactRef {
         }
         if self.created_by == [0u8; 32] {
             return Err("created_by (producer identity) is required".into());
+        }
+        if self.locator.is_empty() {
+            return Err("locator is required".into());
+        }
+        if self.byte_length == 0 {
+            return Err("byte_length must be > 0".into());
         }
         Ok(())
     }
@@ -103,6 +112,21 @@ pub struct SchemaEntry {
     pub compatibility_parent: Option<(String, String)>,
     /// Block height at which this entry was registered.
     pub registered_at_block: u64,
+}
+
+impl SchemaEntry {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_name.is_empty() {
+            return Err("schema_name is required".into());
+        }
+        if self.schema_version.is_empty() {
+            return Err("schema_version is required".into());
+        }
+        if self.spec_hash == [0u8; 32] {
+            return Err("spec_hash is required".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

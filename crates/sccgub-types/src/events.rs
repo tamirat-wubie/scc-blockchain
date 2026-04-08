@@ -95,6 +95,56 @@ pub enum ChainEvent {
         details: String,
         block_height: u64,
     },
+
+    // === Artifact layer events ===
+    /// An external artifact was registered on-chain.
+    ArtifactRegistered {
+        artifact_id: Hash,
+        created_by: Hash,
+        content_hash: Hash,
+        schema_name: String,
+    },
+
+    /// An attestation was created for an artifact.
+    AttestationCreated {
+        attestation_id: Hash,
+        artifact_id: Hash,
+        authority: Hash,
+        kind: String,
+    },
+
+    /// A lineage edge was recorded (derivation graph).
+    LineageEdgeRecorded {
+        parent: Hash,
+        child: Hash,
+        transform: String,
+        actor: Hash,
+    },
+
+    /// An access grant was created for an artifact.
+    AccessGrantCreated {
+        grant_id: Hash,
+        artifact_id: Hash,
+        grantee: Hash,
+    },
+
+    /// An access grant was revoked.
+    AccessGrantRevoked { grant_id: Hash, revoked_by: Hash },
+
+    /// A session was opened or closed.
+    SessionLifecycle {
+        session_id: Hash,
+        action: String,
+        block_height: u64,
+    },
+
+    /// A dispute was filed or resolved.
+    DisputeLifecycle {
+        dispute_id: Hash,
+        target_artifact: Hash,
+        action: String,
+        block_height: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

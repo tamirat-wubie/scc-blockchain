@@ -14,7 +14,7 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 | 4 | `sccgub-consensus` | Two-round BFT voting, bounded finality, slashing, partition recovery, safety proofs |
 | 3 | `sccgub-execution` | 13-phase Phi traversal (all real), CPoG, gas metering, runtime invariant monitor |
 | 2 | `sccgub-state` | Merkle trie (lazy cache), balance ledger, treasury, escrow/DvP, multi-asset |
-| 1 | `sccgub-types` | 20 modules: blocks, transitions, causal graph, events, economics, compliance |
+| 1 | `sccgub-types` | 25 modules: blocks, transitions, causal graph, events, economics, compliance, artifacts, attestations, lineage, rights, sessions, disputes |
 | 0 | `sccgub-crypto` | BLAKE3, Ed25519, Merkle proofs, Argon2id+ChaCha20-Poly1305 keystore, role keys |
 | - | `sccgub-network` | Peer protocol, 9 message types, peer registry |
 
@@ -34,7 +34,8 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 - **Compliance:** GDPR erasure proofs, off-chain data references, audit trails
 - **AI Agents:** OWASP-compliant policy enforcement (default-deny, write/read prefixes)
 - **Assets:** Multi-asset ledger (Native, Stablecoin, Bond, RealEstate, Commodity, Custom)
-- **Events:** 11 typed chain events for full audit trail
+- **Events:** 18 typed chain events (economics + governance + artifact lifecycle)
+- **Artifacts:** External artifact governance layer (provenance, attestations, lineage, rights, sessions, disputes)
 - **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
 ## REST API (7 endpoints)

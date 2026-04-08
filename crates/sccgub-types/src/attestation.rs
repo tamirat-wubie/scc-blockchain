@@ -48,6 +48,12 @@ pub struct ArtifactAttestation {
 
 impl ArtifactAttestation {
     pub fn validate(&self) -> Result<(), String> {
+        if self.attestation_id == [0u8; 32] {
+            return Err("attestation_id is required".into());
+        }
+        if self.artifact_id == [0u8; 32] {
+            return Err("artifact_id is required".into());
+        }
         if self.claims_hash == [0u8; 32] {
             return Err("claims_hash is required".into());
         }
@@ -59,6 +65,14 @@ impl ArtifactAttestation {
         }
         if self.signature.is_empty() {
             return Err("signature is required".into());
+        }
+        if self.signature.len() < 64 {
+            return Err("signature must be at least 64 bytes (Ed25519)".into());
+        }
+        if let Some(end) = self.valid_to_block {
+            if end < self.valid_from_block {
+                return Err("valid_to_block must be >= valid_from_block".into());
+            }
         }
         Ok(())
     }

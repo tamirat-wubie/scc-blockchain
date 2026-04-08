@@ -73,6 +73,24 @@ pub struct ArbitrationVerdict {
     pub resolved_at_block: u64,
 }
 
+impl ArbitrationVerdict {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.dispute_id == [0u8; 32] {
+            return Err("dispute_id is required".into());
+        }
+        if self.arbiter == [0u8; 32] {
+            return Err("arbiter is required".into());
+        }
+        if self.verdict_hash == [0u8; 32] {
+            return Err("verdict_hash is required".into());
+        }
+        if self.in_favor_of == [0u8; 32] {
+            return Err("in_favor_of is required".into());
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
