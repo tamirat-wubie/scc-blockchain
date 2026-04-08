@@ -2,7 +2,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Production hardening phase. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 78 source files, ~20K lines Rust, 315 tests, all CI green (Ubuntu + Windows + security audit).
+**Status:** Production hardening phase. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 79 source files, ~22K lines Rust, 336+ tests, all CI green (Ubuntu + Windows + security audit).
 
 ## Architecture (9 crates)
 
@@ -84,7 +84,7 @@ sccgub info               # Spec + invariants reference
 
 ```bash
 cargo build                    # Build all 9 crates
-cargo test                     # Run all 315 tests
+cargo test                     # Run all tests
 cargo run -- init              # Initialize chain
 cargo run -- produce --txs 5   # Produce a block
 cargo run -- transfer 10000    # Transfer tokens

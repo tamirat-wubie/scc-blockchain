@@ -174,3 +174,140 @@ impl CpogResult {
         matches!(self, CpogResult::Valid)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sccgub_types::block::{Block, BlockBody, BlockHeader};
+    use sccgub_types::causal::CausalGraphDelta;
+    use sccgub_types::governance::{FinalityMode, GovernanceSnapshot};
+    use sccgub_types::proof::{CausalProof, PhiTraversalLog};
+    use sccgub_types::tension::TensionValue;
+    use sccgub_types::timestamp::CausalTimestamp;
+
+    fn genesis_block(chain_id: [u8; 32]) -> Block {
+        let gov = GovernanceSnapshot {
+            state_hash: ZERO_HASH,
+            active_norm_count: 0,
+            emergency_mode: false,
+            finality_mode: FinalityMode::Deterministic,
+        };
+        Block {
+            header: BlockHeader {
+                chain_id,
+                block_id: ZERO_HASH,
+                parent_id: ZERO_HASH,
+                height: 0,
+                timestamp: CausalTimestamp::genesis(),
+                state_root: ZERO_HASH,
+                transition_root: ZERO_HASH,
+                receipt_root: ZERO_HASH,
+                causal_root: ZERO_HASH,
+                proof_root: ZERO_HASH,
+                governance_hash: canonical_hash(&gov),
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                balance_root: ZERO_HASH,
+                validator_id: [1u8; 32],
+                version: 1,
+            },
+            body: BlockBody {
+                transitions: vec![],
+                transition_count: 0,
+                total_tension_delta: TensionValue::ZERO,
+                constraint_satisfaction: vec![],
+            },
+            receipts: vec![],
+            causal_delta: CausalGraphDelta::default(),
+            proof: CausalProof {
+                block_height: 0,
+                transitions_proven: vec![],
+                phi_traversal_log: PhiTraversalLog::default(),
+                governance_snapshot_hash: ZERO_HASH,
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                constraint_results: vec![],
+                recursion_depth: 0,
+                validator_signature: vec![],
+                causal_hash: ZERO_HASH,
+            },
+            governance: gov,
+        }
+    }
+
+    #[test]
+    fn test_valid_genesis_passes_cpog() {
+        let state = ManagedWorldState::new();
+        let block = genesis_block([1u8; 32]);
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(
+            result.is_valid(),
+            "Valid genesis must pass CPoG: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_genesis_with_wrong_parent_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.parent_id = [0xFFu8; 32]; // Not ZERO_HASH.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_wrong_mfidel_seal_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.mfidel_seal = MfidelAtomicSeal::from_height(999); // Wrong.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_excessive_proof_depth_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.proof.recursion_depth = MAX_PROOF_DEPTH + 1;
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_transition_count_mismatch_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.body.transition_count = 5; // Claims 5 but has 0.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_wrong_governance_hash_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.governance_hash = [0xABu8; 32]; // Tampered.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_non_zero_receipt_root_for_empty_receipts_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.receipt_root = [0xFFu8; 32]; // Should be ZERO for empty.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_non_zero_causal_root_for_empty_edges_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.causal_root = [0xFFu8; 32]; // Should be ZERO for empty.
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+    }
+}
