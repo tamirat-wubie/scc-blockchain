@@ -24,10 +24,10 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 
 - **Consensus:** Causal Proof-of-Governance (CPoG) with two-round BFT voting (Ed25519-verified votes)
 - **Finality:** Bounded k-block confirmation with 3 settlement classes (Soft/Economic/Legal)
-- **Validation:** 13-phase Phi traversal — all 13 phases have real enforcement
+- **Validation:** 13-phase Phi traversal (11 phases enforce real invariants; Phase 3 Ontology and Phase 8 Execution are structural-only, semantic enforcement in progress)
 - **Contracts:** Decidable step-bounded symbolic programs with gas metering
 - **Identity:** Mfidel 34x8 Ge'ez atomic seal + cryptographic agent binding
-- **Governance:** Precedence hierarchy with timelocks (ordinary 50 / constitutional 200 blocks)
+- **Governance:** Precedence hierarchy enforced at validation time. Proposal registry implemented but not yet wired into chain lifecycle. Timelocks defined (ordinary 50 / constitutional 200 blocks) but activate only when proposal wiring lands
 - **Economics:** Gas metering, treasury (fee/reward/burn lifecycle), escrow/DvP
 - **Custody:** 6 operator key roles (Genesis/Governance/Treasury/Validator/Operator/Auditor)
 - **Keystore:** Argon2id KDF + ChaCha20-Poly1305 AEAD (finance-grade)
@@ -129,7 +129,7 @@ cargo run -- serve             # Start API server
 | INV-4: No fork | `consensus/safety.rs` | `adversarial_test.rs` | Equivocators identified + slashed |
 | INV-5: Tension budget | `execution/phi.rs` (phase 9) | `integration_test.rs` | Block rejected |
 | INV-6: Identity immutable | `execution/validate.rs` | `integration_test.rs` | agent_id mismatch rejected |
-| INV-7: WHBinding complete | `execution/wh_check.rs` | `integration_test.rs` | Transition rejected |
+| INV-7: WHBinding complete | `execution/wh_check.rs` | `integration_test.rs` | WHO+WHERE cross-checked, WHAT/WHEN/HOW/WHICH structural only |
 | INV-8: Contract decidability | `execution/contract.rs` | `execution` unit tests | Step limit exceeded → reject |
 | INV-13: Responsibility bound | `governance/responsibility.rs` | `integration_test.rs` | Contribution capped |
 | INV-17: Causal acyclicity | `execution/phi.rs` (phase 4) | `integration_test.rs` | Cycle detected → reject |
@@ -162,9 +162,9 @@ cargo run -- serve             # Start API server
 | INV-4 | No fork (deterministic finality) |
 | INV-5 | No unbounded tension growth |
 | INV-6 | No identity mutation post-genesis |
-| INV-7 | No transition without complete WHBinding (7 fields) |
+| INV-7 | No transition without WHBinding (7 fields present; WHO+WHERE cross-checked, others structural) |
 | INV-8 | No contract beyond decidability bound |
-| INV-13 | Responsibility bounded |
+| INV-13 | Responsibility bounded (lifecycle implemented, not yet wired into chain) |
 | INV-17 | Causal graph acyclicity |
 
 ## Specification

@@ -39,6 +39,7 @@ pub struct Chain {
     pub treasury: Treasury,
     pub governance_limits: GovernanceLimits,
     pub power_tracker: GovernancePowerTracker,
+    pub proposals: sccgub_governance::proposals::ProposalRegistry,
     pub finality: FinalityTracker,
     pub finality_config: FinalityConfig,
     pub slashing: SlashingEngine,
@@ -97,6 +98,7 @@ impl Chain {
             treasury: Treasury::new(),
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
+            proposals: sccgub_governance::proposals::ProposalRegistry::default(),
             finality: FinalityTracker::default(),
             finality_config: FinalityConfig::default(),
             slashing,
@@ -229,6 +231,7 @@ impl Chain {
             treasury: Treasury::new(),
             governance_limits: GovernanceLimits::default(),
             power_tracker: GovernancePowerTracker::default(),
+            proposals: sccgub_governance::proposals::ProposalRegistry::default(),
             finality,
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
@@ -406,6 +409,25 @@ impl Chain {
                 self.state = speculative_state;
                 self.balances = speculative_balances;
                 self.blocks.push(block);
+
+                // Finalize governance proposals whose voting period has ended.
+                // Accepted proposals enter timelock, then activate after the delay.
+                let _accepted = self.proposals.finalize(height);
+                // Activate proposals whose timelock has expired.
+                for proposal in self.proposals.proposals.clone() {
+                    if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
+                        && height >= proposal.timelock_until
+                    {
+                        if let Ok(Some(norm)) = self.proposals.activate(&proposal.id, height) {
+                            // Register the activated norm in governance state.
+                            self.state
+                                .state
+                                .governance_state
+                                .active_norms
+                                .insert(norm.id, norm);
+                        }
+                    }
+                }
 
                 // Update finality tracker.
                 self.finality.on_new_block(height);
@@ -1160,6 +1182,75 @@ mod tests {
                 || chain.state.trie.get(&b"test/constrained".to_vec())
                     != Some(&b"should_be_rejected".to_vec()),
             "Rejected tx must not mutate state"
+        );
+    }
+
+    #[test]
+    fn test_proposal_wired_into_chain_lifecycle() {
+        use sccgub_governance::proposals::{ProposalKind, ProposalStatus};
+        use sccgub_types::governance::PrecedenceLevel;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 200;
+
+        let proposer = chain.latest_block().unwrap().header.validator_id;
+
+        // Submit a norm proposal.
+        let proposal_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Meaning,
+                ProposalKind::AddNorm {
+                    name: "test-norm".into(),
+                    description: "A test norm".into(),
+                    initial_fitness: TensionValue::from_integer(5),
+                    enforcement_cost: TensionValue::from_integer(1),
+                },
+                chain.height(),
+                5, // 5-block voting period
+            )
+            .unwrap();
+
+        // Vote for it.
+        chain
+            .proposals
+            .vote(
+                &proposal_id,
+                proposer,
+                PrecedenceLevel::Meaning,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        // Produce blocks through voting period (5 blocks) + timelock (50 blocks).
+        for _ in 0..60 {
+            chain.produce_block().unwrap();
+        }
+
+        // The proposal should have been finalized, timelocked, and activated.
+        let proposal = chain
+            .proposals
+            .proposals
+            .iter()
+            .find(|p| p.id == proposal_id)
+            .unwrap();
+        assert_eq!(
+            proposal.status,
+            ProposalStatus::Activated,
+            "Proposal should be activated after voting + timelock"
+        );
+
+        // The norm should be in the governance state.
+        assert!(
+            chain
+                .state
+                .state
+                .governance_state
+                .active_norms
+                .contains_key(&proposal_id),
+            "Activated norm must be in governance state"
         );
     }
 }
