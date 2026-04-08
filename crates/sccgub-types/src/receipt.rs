@@ -72,3 +72,55 @@ pub struct Event {
     pub data: Vec<u8>,
     pub source_tx: TransitionId,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verdict_is_accepted() {
+        assert!(Verdict::Accept.is_accepted());
+        assert!(!Verdict::Reject {
+            reason: "bad".into()
+        }
+        .is_accepted());
+        assert!(!Verdict::Defer {
+            condition: "wait".into()
+        }
+        .is_accepted());
+        assert!(!Verdict::Compensate { plan: "fix".into() }.is_accepted());
+        assert!(!Verdict::Escalate { level: 1 }.is_accepted());
+    }
+
+    #[test]
+    fn test_verdict_display() {
+        assert_eq!(format!("{}", Verdict::Accept), "Accept");
+        assert!(format!(
+            "{}",
+            Verdict::Reject {
+                reason: "nonce".into()
+            }
+        )
+        .contains("nonce"));
+        assert!(format!("{}", Verdict::Escalate { level: 2 }).contains("2"));
+    }
+
+    #[test]
+    fn test_resource_usage_default() {
+        let r = ResourceUsage::default();
+        assert_eq!(r.compute_steps, 0);
+        assert_eq!(r.state_reads, 0);
+        assert_eq!(r.state_writes, 0);
+        assert_eq!(r.proof_size_bytes, 0);
+    }
+
+    #[test]
+    fn test_verdict_serialization_roundtrip() {
+        let v = Verdict::Reject {
+            reason: "test failure".into(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let recovered: Verdict = serde_json::from_str(&json).unwrap();
+        assert!(!recovered.is_accepted());
+    }
+}

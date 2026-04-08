@@ -545,3 +545,196 @@ fn phase_evolution(block: &Block) -> PhiPhaseResult {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sccgub_types::block::{BlockBody, BlockHeader};
+    use sccgub_types::causal::CausalGraphDelta;
+    use sccgub_types::governance::{FinalityMode, GovernanceSnapshot};
+    use sccgub_types::mfidel::MfidelAtomicSeal;
+    use sccgub_types::proof::CausalProof;
+    use sccgub_types::timestamp::CausalTimestamp;
+    use sccgub_types::ZERO_HASH;
+
+    fn empty_genesis() -> Block {
+        let gov = GovernanceSnapshot {
+            state_hash: ZERO_HASH,
+            active_norm_count: 0,
+            emergency_mode: false,
+            finality_mode: FinalityMode::Deterministic,
+        };
+        Block {
+            header: BlockHeader {
+                chain_id: [0u8; 32],
+                block_id: [0u8; 32],
+                parent_id: ZERO_HASH,
+                height: 0,
+                timestamp: CausalTimestamp::genesis(),
+                state_root: ZERO_HASH,
+                transition_root: ZERO_HASH,
+                receipt_root: ZERO_HASH,
+                causal_root: ZERO_HASH,
+                proof_root: ZERO_HASH,
+                governance_hash: ZERO_HASH,
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                balance_root: ZERO_HASH,
+                validator_id: [1u8; 32],
+                version: 1,
+            },
+            body: BlockBody {
+                transitions: vec![],
+                transition_count: 0,
+                total_tension_delta: TensionValue::ZERO,
+                constraint_satisfaction: vec![],
+            },
+            receipts: vec![],
+            causal_delta: CausalGraphDelta::default(),
+            proof: CausalProof {
+                block_height: 0,
+                transitions_proven: vec![],
+                phi_traversal_log: sccgub_types::proof::PhiTraversalLog::default(),
+                governance_snapshot_hash: ZERO_HASH,
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                constraint_results: vec![],
+                recursion_depth: 0,
+                validator_signature: vec![],
+                causal_hash: ZERO_HASH,
+            },
+            governance: gov,
+        }
+    }
+
+    #[test]
+    fn test_empty_genesis_passes_all_phases() {
+        let state = ManagedWorldState::new();
+        let block = empty_genesis();
+        let log = phi_traversal_block(&block, &state);
+        assert!(
+            log.is_all_passed(),
+            "Empty genesis should pass all 13 phases: {:?}",
+            log.phases_completed
+                .iter()
+                .filter(|p| !p.passed)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(log.phases_completed.len(), 13);
+    }
+
+    #[test]
+    fn test_wrong_mfidel_seal_fails_performance() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        block.header.mfidel_seal = MfidelAtomicSeal::from_height(999);
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        // Performance phase (11) should fail.
+        let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
+        assert_eq!(failed.phase, PhiPhase::Performance);
+    }
+
+    #[test]
+    fn test_transition_count_mismatch_fails_execution() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        block.body.transition_count = 5; // Claims 5, has 0.
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
+        assert_eq!(failed.phase, PhiPhase::Execution);
+    }
+
+    #[test]
+    fn test_zero_validator_fails_architecture() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        block.header.validator_id = [0u8; 32];
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
+        assert_eq!(failed.phase, PhiPhase::Architecture);
+    }
+
+    #[test]
+    fn test_bad_version_fails_architecture() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        block.header.version = 99;
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
+        assert_eq!(failed.phase, PhiPhase::Architecture);
+    }
+
+    #[test]
+    fn test_proof_height_mismatch_fails_evolution() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        block.header.height = 5;
+        block.header.mfidel_seal = MfidelAtomicSeal::from_height(5);
+        block.proof.block_height = 3; // Mismatch.
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
+        assert_eq!(failed.phase, PhiPhase::Evolution);
+    }
+
+    #[test]
+    fn test_rejected_receipt_fails_feedback() {
+        let state = ManagedWorldState::new();
+        let mut block = empty_genesis();
+        // Add a rejected receipt to a committed block.
+        block.receipts.push(sccgub_types::receipt::CausalReceipt {
+            tx_id: [1u8; 32],
+            verdict: sccgub_types::receipt::Verdict::Reject {
+                reason: "bad".into(),
+            },
+            pre_state_root: ZERO_HASH,
+            post_state_root: ZERO_HASH,
+            read_set: vec![],
+            write_set: vec![],
+            causes: vec![],
+            resource_used: sccgub_types::receipt::ResourceUsage::default(),
+            emitted_events: vec![],
+            wh_binding: sccgub_types::transition::WHBindingResolved {
+                intent: sccgub_types::transition::WHBindingIntent {
+                    who: [0u8; 32],
+                    when: CausalTimestamp::genesis(),
+                    r#where: vec![],
+                    why: sccgub_types::transition::CausalJustification {
+                        invoking_rule: [0u8; 32],
+                        precedence_level: sccgub_types::governance::PrecedenceLevel::Optimization,
+                        causal_ancestors: vec![],
+                        constraint_proof: vec![],
+                    },
+                    how: sccgub_types::transition::TransitionMechanism::DirectStateWrite,
+                    which: std::collections::HashSet::new(),
+                    what_declared: String::new(),
+                },
+                what_actual: sccgub_types::transition::StateDelta::default(),
+                whether: sccgub_types::transition::ValidationResult::Valid,
+            },
+            phi_phase_reached: 0,
+            tension_delta: TensionValue::ZERO,
+        });
+        // Also need matching transition count for Module phase to pass.
+        block.body.transition_count = 1;
+
+        let log = phi_traversal_block(&block, &state);
+        assert!(!log.is_all_passed());
+        // Feedback phase (12) should catch the rejected receipt.
+        let feedback = log
+            .phases_completed
+            .iter()
+            .find(|p| p.phase == PhiPhase::Feedback);
+        if let Some(fb) = feedback {
+            assert!(
+                !fb.passed,
+                "Rejected receipt in committed block must fail Feedback"
+            );
+        }
+    }
+}

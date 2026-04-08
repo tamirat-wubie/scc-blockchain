@@ -191,3 +191,72 @@ pub mod i128_as_string {
         s.parse::<i128>().map_err(serde::de::Error::custom)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::governance::PrecedenceLevel;
+    use crate::timestamp::CausalTimestamp;
+    use std::collections::HashSet;
+
+    fn valid_wh_intent() -> WHBindingIntent {
+        WHBindingIntent {
+            who: [1u8; 32],
+            when: CausalTimestamp::genesis(),
+            r#where: b"state/key".to_vec(),
+            why: CausalJustification {
+                invoking_rule: [2u8; 32],
+                precedence_level: PrecedenceLevel::Meaning,
+                causal_ancestors: vec![],
+                constraint_proof: vec![],
+            },
+            how: TransitionMechanism::DirectStateWrite,
+            which: HashSet::new(),
+            what_declared: "test operation".into(),
+        }
+    }
+
+    #[test]
+    fn test_wh_binding_complete() {
+        assert!(valid_wh_intent().is_complete());
+    }
+
+    #[test]
+    fn test_wh_binding_missing_who() {
+        let mut wh = valid_wh_intent();
+        wh.who = [0u8; 32];
+        assert!(!wh.is_complete());
+    }
+
+    #[test]
+    fn test_wh_binding_missing_where() {
+        let mut wh = valid_wh_intent();
+        wh.r#where = vec![];
+        assert!(!wh.is_complete());
+    }
+
+    #[test]
+    fn test_wh_binding_missing_what() {
+        let mut wh = valid_wh_intent();
+        wh.what_declared = String::new();
+        assert!(!wh.is_complete());
+    }
+
+    #[test]
+    fn test_state_delta_default_empty() {
+        let delta = StateDelta::default();
+        assert!(delta.writes.is_empty());
+        assert!(delta.deletes.is_empty());
+    }
+
+    #[test]
+    fn test_validation_result_variants() {
+        let valid = ValidationResult::Valid;
+        assert!(matches!(valid, ValidationResult::Valid));
+
+        let invalid = ValidationResult::Invalid {
+            reason: "test".into(),
+        };
+        assert!(matches!(invalid, ValidationResult::Invalid { .. }));
+    }
+}
