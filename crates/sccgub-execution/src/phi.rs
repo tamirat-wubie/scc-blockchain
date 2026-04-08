@@ -143,18 +143,20 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         details: "Module boundaries respected".into(),
     });
 
-    // Phase 8: Execution — verify transaction structural completeness.
-    // NOTE: Ed25519 signature verification is done by validate_transition()
-    // BEFORE phi_traversal_tx is called. Duplicating it here would be dead code.
-    // Phase 8 checks structural completeness: non-empty target, non-zero nonce.
-    let exec_ok = !tx.intent.target.is_empty() && tx.nonce > 0;
+    // Phase 8: Execution — payload consistency check.
+    let payload_result = crate::payload_check::check_payload_consistency(tx);
+    let exec_ok = payload_result.is_consistent() && !tx.intent.target.is_empty() && tx.nonce > 0;
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Execution,
         passed: exec_ok,
-        details: if exec_ok {
-            "Execution structurally complete".into()
-        } else {
-            "Missing target or zero nonce".into()
+        details: match &payload_result {
+            crate::payload_check::PayloadConsistency::Consistent if exec_ok => {
+                "Execution verified: payload consistent".into()
+            }
+            crate::payload_check::PayloadConsistency::Inconsistent { reason } => {
+                format!("Payload inconsistent: {}", reason)
+            }
+            _ => "Missing target or zero nonce".into(),
         },
     });
     if !exec_ok {
@@ -401,10 +403,27 @@ fn phase_execution(block: &Block) -> PhiPhaseResult {
             ),
         };
     }
+
+    // Payload consistency: verify each transition's payload matches its intent.
+    for (i, tx) in block.body.transitions.iter().enumerate() {
+        if let crate::payload_check::PayloadConsistency::Inconsistent { reason } =
+            crate::payload_check::check_payload_consistency(tx)
+        {
+            return PhiPhaseResult {
+                phase: PhiPhase::Execution,
+                passed: false,
+                details: format!("Tx {}: payload inconsistent: {}", i, reason),
+            };
+        }
+    }
+
     PhiPhaseResult {
         phase: PhiPhase::Execution,
         passed: true,
-        details: "Execution verified".into(),
+        details: format!(
+            "Execution verified: {} transitions, all payloads consistent",
+            block.body.transitions.len()
+        ),
     }
 }
 

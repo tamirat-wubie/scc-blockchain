@@ -24,7 +24,7 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 
 - **Consensus:** Causal Proof-of-Governance (CPoG) with two-round BFT voting (Ed25519-verified votes)
 - **Finality:** Bounded k-block confirmation with 3 settlement classes (Soft/Economic/Legal)
-- **Validation:** 13-phase Phi traversal (11 phases enforce real invariants; Phase 3 Ontology and Phase 8 Execution are structural-only, semantic enforcement in progress)
+- **Validation:** 13-phase Phi traversal — all 13 phases enforce real invariants (Phase 3: namespace ontology, Phase 8: payload consistency)
 - **Contracts:** Decidable step-bounded symbolic programs with gas metering
 - **Identity:** Mfidel 34x8 Ge'ez atomic seal + cryptographic agent binding
 - **Governance:** Precedence hierarchy enforced at validation time. Proposal registry implemented but not yet wired into chain lifecycle. Timelocks defined (ordinary 50 / constitutional 200 blocks) but activate only when proposal wiring lands

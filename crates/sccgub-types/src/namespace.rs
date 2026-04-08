@@ -1,3 +1,8 @@
+// Namespace prefix constants (shared with ontology table in sccgub-execution).
+pub const NS_NORMS: &[u8] = b"norms/";
+pub const NS_CONTRACT: &[u8] = b"contract/";
+pub const NS_DATA: &[u8] = b"data/";
+
 // Namespace key builders — canonical constructors for trie keys.
 //
 // The ONLY correct way to build keys for each namespace. Using
@@ -20,6 +25,11 @@ pub fn data_key(path: &[u8]) -> Vec<u8> {
 /// Build a norm registry key: `norms/<hex(norm_id)>`
 pub fn norm_key(norm_id: &[u8; 32]) -> Vec<u8> {
     format!("norms/{}", hex::encode(norm_id)).into_bytes()
+}
+
+/// Build an agent registry key: `agents/<hex(public_key)>`
+pub fn agent_key(public_key: &[u8; 32]) -> Vec<u8> {
+    format!("agents/{}", hex::encode(public_key)).into_bytes()
 }
 
 /// Build a contract key: `contract/<path>`
