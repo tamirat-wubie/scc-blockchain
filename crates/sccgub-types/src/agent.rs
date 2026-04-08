@@ -87,3 +87,59 @@ pub struct ValidatorAuthority {
     pub causal_reliability: TensionValue,
     pub active: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_responsibility_state_default() {
+        let state = ResponsibilityState::default();
+        assert_eq!(state.net_responsibility, TensionValue::ZERO);
+        assert_eq!(state.reliability_score, TensionValue::from_integer(1));
+        assert!(state.positive_contributions.is_empty());
+        assert!(state.negative_contributions.is_empty());
+    }
+
+    #[test]
+    fn test_agent_identity_serialization() {
+        let agent = AgentIdentity {
+            agent_id: [1u8; 32],
+            public_key: [2u8; 32],
+            mfidel_seal: MfidelAtomicSeal::from_height(0),
+            registration_block: 100,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: HashSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+        let json = serde_json::to_string(&agent).unwrap();
+        let recovered: AgentIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered.agent_id, [1u8; 32]);
+        assert_eq!(recovered.registration_block, 100);
+    }
+
+    #[test]
+    fn test_node_type_variants() {
+        let types = [
+            NodeType::Validator,
+            NodeType::Observer,
+            NodeType::Agent,
+            NodeType::Governance,
+            NodeType::Archive,
+        ];
+        assert_eq!(types.len(), 5);
+        assert_ne!(NodeType::Validator, NodeType::Observer);
+    }
+
+    #[test]
+    fn test_validator_authority_active() {
+        let auth = ValidatorAuthority {
+            node_id: [1u8; 32],
+            governance_level: PrecedenceLevel::Safety,
+            norm_compliance: TensionValue::from_integer(1),
+            causal_reliability: TensionValue::from_integer(1),
+            active: true,
+        };
+        assert!(auth.active);
+    }
+}

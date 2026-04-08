@@ -102,3 +102,103 @@ impl Block {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::governance::FinalityMode;
+    use crate::proof::PhiTraversalLog;
+
+    fn genesis_block() -> Block {
+        let gov = GovernanceSnapshot {
+            state_hash: ZERO_HASH,
+            active_norm_count: 0,
+            emergency_mode: false,
+            finality_mode: FinalityMode::Deterministic,
+        };
+        Block {
+            header: BlockHeader {
+                chain_id: [1u8; 32],
+                block_id: [2u8; 32],
+                parent_id: ZERO_HASH,
+                height: 0,
+                timestamp: CausalTimestamp::genesis(),
+                state_root: ZERO_HASH,
+                transition_root: ZERO_HASH,
+                receipt_root: ZERO_HASH,
+                causal_root: ZERO_HASH,
+                proof_root: ZERO_HASH,
+                governance_hash: ZERO_HASH,
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                balance_root: ZERO_HASH,
+                validator_id: [3u8; 32],
+                version: 1,
+            },
+            body: BlockBody {
+                transitions: vec![],
+                transition_count: 0,
+                total_tension_delta: TensionValue::ZERO,
+                constraint_satisfaction: vec![],
+            },
+            receipts: vec![],
+            causal_delta: CausalGraphDelta::default(),
+            proof: CausalProof {
+                block_height: 0,
+                transitions_proven: vec![],
+                phi_traversal_log: PhiTraversalLog::default(),
+                governance_snapshot_hash: ZERO_HASH,
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                constraint_results: vec![],
+                recursion_depth: 0,
+                validator_signature: vec![],
+                causal_hash: ZERO_HASH,
+            },
+            governance: gov,
+        }
+    }
+
+    #[test]
+    fn test_valid_genesis_is_structurally_valid() {
+        assert!(genesis_block().is_structurally_valid());
+    }
+
+    #[test]
+    fn test_genesis_with_wrong_parent_invalid() {
+        let mut b = genesis_block();
+        b.header.parent_id = [0xFFu8; 32];
+        assert!(!b.is_structurally_valid());
+    }
+
+    #[test]
+    fn test_non_genesis_with_zero_parent_invalid() {
+        let mut b = genesis_block();
+        b.header.height = 5;
+        b.header.mfidel_seal = MfidelAtomicSeal::from_height(5);
+        b.header.parent_id = ZERO_HASH;
+        assert!(!b.is_structurally_valid());
+    }
+
+    #[test]
+    fn test_wrong_mfidel_seal_invalid() {
+        let mut b = genesis_block();
+        b.header.mfidel_seal = MfidelAtomicSeal::from_height(999);
+        assert!(!b.is_structurally_valid());
+    }
+
+    #[test]
+    fn test_transition_count_mismatch_invalid() {
+        let mut b = genesis_block();
+        b.body.transition_count = 5;
+        assert!(!b.is_structurally_valid());
+    }
+
+    #[test]
+    fn test_wrong_version_invalid() {
+        let mut b = genesis_block();
+        b.header.version = 0;
+        assert!(!b.is_structurally_valid());
+    }
+}

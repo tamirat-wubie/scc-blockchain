@@ -146,3 +146,82 @@ impl PhiPhase {
         !self.is_block_only()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_phi_phase_all_13() {
+        assert_eq!(PhiPhase::ALL.len(), 13);
+    }
+
+    #[test]
+    fn test_phi_phase_display() {
+        assert_eq!(format!("{}", PhiPhase::Distinction), "Distinction");
+        assert_eq!(format!("{}", PhiPhase::Evolution), "Evolution");
+    }
+
+    #[test]
+    fn test_phi_phase_block_only() {
+        assert!(PhiPhase::Topology.is_block_only());
+        assert!(PhiPhase::Body.is_block_only());
+        assert!(PhiPhase::Architecture.is_block_only());
+        assert!(PhiPhase::Performance.is_block_only());
+        assert!(!PhiPhase::Distinction.is_block_only());
+        assert!(!PhiPhase::Constraint.is_block_only());
+    }
+
+    #[test]
+    fn test_phi_traversal_log_empty() {
+        let log = PhiTraversalLog::new();
+        assert!(!log.is_all_passed()); // No phases completed.
+        assert_eq!(log.total_phases, 13);
+    }
+
+    #[test]
+    fn test_phi_traversal_log_all_passed() {
+        let mut log = PhiTraversalLog::new();
+        for phase in PhiPhase::ALL {
+            log.phases_completed.push(PhiPhaseResult {
+                phase,
+                passed: true,
+                details: "ok".into(),
+            });
+        }
+        assert!(log.is_all_passed());
+        log.finalize();
+        assert!(log.all_phases_passed);
+    }
+
+    #[test]
+    fn test_phi_traversal_log_one_failed() {
+        let mut log = PhiTraversalLog::new();
+        for (i, phase) in PhiPhase::ALL.iter().enumerate() {
+            log.phases_completed.push(PhiPhaseResult {
+                phase: *phase,
+                passed: i != 5, // Phase 6 (Organization) fails.
+                details: "test".into(),
+            });
+        }
+        assert!(!log.is_all_passed());
+    }
+
+    #[test]
+    fn test_causal_proof_default_fields() {
+        let proof = CausalProof {
+            block_height: 0,
+            transitions_proven: vec![],
+            phi_traversal_log: PhiTraversalLog::default(),
+            governance_snapshot_hash: [0u8; 32],
+            tension_before: TensionValue::ZERO,
+            tension_after: TensionValue::ZERO,
+            constraint_results: vec![],
+            recursion_depth: 0,
+            validator_signature: vec![],
+            causal_hash: [0u8; 32],
+        };
+        assert_eq!(proof.recursion_depth, 0);
+        assert!(proof.transitions_proven.is_empty());
+    }
+}
