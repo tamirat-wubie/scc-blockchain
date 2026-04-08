@@ -521,8 +521,7 @@ fn cmd_verify(data_dir: &std::path::Path) {
 
     // Write genesis balance into trie (mirrors chain.rs init).
     if let Some(genesis) = blocks.first() {
-        let balance_key =
-            format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+        let balance_key = sccgub_types::namespace::balance_key(&genesis.header.validator_id);
         state.apply_delta(&sccgub_types::transition::StateDelta {
             writes: vec![sccgub_types::transition::StateWrite {
                 address: balance_key,
@@ -635,7 +634,7 @@ fn cmd_verify(data_dir: &std::path::Path) {
 
         // Write updated balances into trie (mirrors chain.rs produce_block).
         for (agent_id, balance) in &replay_balances.balances {
-            let key = format!("balance/{}", hex::encode(agent_id)).into_bytes();
+            let key = sccgub_types::namespace::balance_key(agent_id);
             state.apply_delta(&StateDelta {
                 writes: vec![StateWrite {
                     address: key,

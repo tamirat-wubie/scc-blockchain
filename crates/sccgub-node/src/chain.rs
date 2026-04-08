@@ -71,7 +71,7 @@ impl Chain {
         balances.credit(&validator_id, TensionValue::from_integer(1_000_000));
 
         // Write genesis balances into state trie for unified commitment.
-        let balance_key = format!("balance/{}", hex::encode(validator_id)).into_bytes();
+        let balance_key = sccgub_types::namespace::balance_key(&validator_id);
         state.apply_delta(&sccgub_types::transition::StateDelta {
             writes: vec![sccgub_types::transition::StateWrite {
                 address: balance_key,
@@ -151,8 +151,7 @@ impl Chain {
             &genesis.header.validator_id,
             TensionValue::from_integer(1_000_000),
         );
-        let balance_key =
-            format!("balance/{}", hex::encode(genesis.header.validator_id)).into_bytes();
+        let balance_key = sccgub_types::namespace::balance_key(&genesis.header.validator_id);
         state.apply_delta(&sccgub_types::transition::StateDelta {
             writes: vec![sccgub_types::transition::StateWrite {
                 address: balance_key,

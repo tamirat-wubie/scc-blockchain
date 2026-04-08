@@ -49,8 +49,10 @@ fn allowed_namespaces(kind: TransitionKind) -> &'static [Namespace] {
         TransitionKind::ContractInvoke => &[NS_CONTRACT, NS_DATA],
 
         // Dispute resolution — deny everything until dispute machinery exists.
-        // When dispute governance lands, add NS_DISPUTES (and possibly NS_BALANCE
-        // for resolution-triggered transfers, gated on judicial precedence).
+        // Empty allowlist is an INTENTIONAL GATE: any TransitionKind variant
+        // without an implementation should map to &[] here. This forces the
+        // kind to be wired through the table when the implementation lands,
+        // preventing "unimplemented kind silently accepted" bugs.
         TransitionKind::DisputeResolution => &[],
     }
 }
@@ -71,6 +73,10 @@ impl OntologyResult {
         matches!(self, OntologyResult::Allowed)
     }
 }
+
+// Namespace key builders live in sccgub_types::namespace (shared across crates).
+// Re-export for convenience within the execution crate.
+pub use sccgub_types::namespace::{balance_key, contract_key, data_key, norm_key};
 
 /// Phi Phase 3: verify the transition's target falls within the
 /// namespaces allowed for its declared kind. Default-deny.

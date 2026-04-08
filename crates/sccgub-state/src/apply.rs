@@ -58,7 +58,7 @@ pub fn apply_block_transitions(
     let mut sorted_balances: Vec<_> = balances.balances.iter().collect();
     sorted_balances.sort_by_key(|(k, _)| *k);
     for (agent_id, balance) in sorted_balances {
-        let key = format!("balance/{}", hex::encode(agent_id)).into_bytes();
+        let key = sccgub_types::namespace::balance_key(agent_id);
         state.apply_delta(&StateDelta {
             writes: vec![StateWrite {
                 address: key,
@@ -77,7 +77,7 @@ pub fn apply_genesis_mint(
 ) {
     let amount = TensionValue::from_integer(1_000_000);
     balances.credit(validator_id, amount);
-    let key = format!("balance/{}", hex::encode(validator_id)).into_bytes();
+    let key = sccgub_types::namespace::balance_key(validator_id);
     state.apply_delta(&StateDelta {
         writes: vec![StateWrite {
             address: key,
@@ -260,7 +260,7 @@ mod tests {
         apply_block_transitions(&mut state, &mut balances, &[]);
 
         // Balance should be in the trie.
-        let key = format!("balance/{}", hex::encode(validator)).into_bytes();
+        let key = sccgub_types::namespace::balance_key(&validator);
         assert!(state.trie.get(&key).is_some());
     }
 
@@ -295,7 +295,7 @@ mod tests {
             TensionValue::from_integer(1_000_000)
         );
         // Balance in trie.
-        let key = format!("balance/{}", hex::encode(validator)).into_bytes();
+        let key = sccgub_types::namespace::balance_key(&validator);
         assert!(state.trie.get(&key).is_some());
     }
 

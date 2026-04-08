@@ -88,7 +88,7 @@ pub fn evaluate(
             }
         }
         Predicate::BalanceAtLeast { agent, min_balance } => {
-            let balance_key = format!("balance/{}", hex::encode(agent)).into_bytes();
+            let balance_key = sccgub_types::namespace::balance_key(agent);
             let actual = state
                 .trie
                 .get(&balance_key)

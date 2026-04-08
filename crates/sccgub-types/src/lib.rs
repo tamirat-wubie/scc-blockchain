@@ -16,6 +16,7 @@ pub mod future;
 pub mod governance;
 pub mod lineage;
 pub mod mfidel;
+pub mod namespace;
 pub mod proof;
 pub mod receipt;
 pub mod rights;
