@@ -120,7 +120,13 @@ pub fn validate_cpog(
     if block.header.height > 0 {
         // Speculative replay using shared apply function (single source of truth).
         let mut speculative = state.clone();
-        let mut spec_balances = balances_from_trie(&speculative);
+        let mut spec_balances = match balances_from_trie(&speculative) {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(format!("Malformed balance trie: {}", e));
+                return CpogResult::Invalid { errors };
+            }
+        };
         apply_block_transitions(
             &mut speculative,
             &mut spec_balances,

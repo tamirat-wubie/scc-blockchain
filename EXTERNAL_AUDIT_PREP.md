@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
 **Version:** 0.3.0
-**Date:** 2026-04-07
-**Repo:** 111 commits, 496 tests, 9 crates, ~22.5K lines Rust
+**Date:** 2026-04-08
+**Repo:** 115 commits, 498 tests, 9 crates, ~22.5K lines Rust
 
 ---
 
@@ -136,8 +136,8 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 
 ## 7. Audit Findings Summary
 
-An 11-session internal audit cycle identified 38 findings:
-- **38 closed** (all code fixes applied and verified)
+Internal audit cycle plus 4 hardening passes identified 42 findings:
+- **42 closed** (all code fixes applied and verified)
 - **1 deferred** (Patch 03: ConsensusParams in genesis — architectural, ~1 day effort)
 
 ### F-5 lifecycle (worth noting for credibility)
@@ -182,6 +182,25 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 ### Open items:
 - N-9: `what_actual` capture not implemented (StateDelta recording during apply).
 - Patch 03: ConsensusParams embedded in genesis block for fork-safe parameter evolution.
+
+### Known MVP scaling limitation (N-20):
+`apply_block_transitions` rewrites ALL balance entries to the trie at the end
+of each block, regardless of which entries changed. This is O(n) per block
+where n is the total number of accounts. Becomes a bottleneck above ~10,000
+accounts or ~100 transactions per second. Closing requires delta-only writes
+that propagate only modified entries. ~100 LOC change to apply.rs, ~3 hours.
+
+### Dismissed false positives (6):
+Aggressive automated tooling flagged 6 items that were verified as non-issues:
+
+| Claim | Why dismissed |
+|---|---|
+| TOCTOU in nonce check | `check_nonce` mutates `filter_state` (a clone), not real state. Intentional for same-block ordering. |
+| Transfer failure corrupts state | `transfer()` returns `Err`; ledger unchanged. The `eprintln` is a consensus-bug detector. |
+| TensionValue overflow | All ops use saturating arithmetic (Add, Sub, mul_fp). Verified in type definition. |
+| Hex injection via balance/ keys | Ontology table maps `StateWrite => [data/]` only. Any Write targeting `balance/` rejected at Phase 3. |
+| Module phase 7 auto-passes | By design; per-tx module checks are a future item for richer contract semantics. |
+| `unreachable!` can panic | Both callers filter via `is_per_tx_phase()` before calling. Structurally guarded. |
 
 ## 8. Test Coverage Strategy
 

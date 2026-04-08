@@ -1203,7 +1203,7 @@ fn test_chain_init_produce_verify_roundtrip() {
     );
 
     // Phase 6: Balance reconstruction from trie.
-    let recovered = balances_from_trie(&state);
+    let recovered = balances_from_trie(&state).expect("balance trie should be well-formed");
     assert_eq!(
         recovered.total_supply(),
         genesis_supply,

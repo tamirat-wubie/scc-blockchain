@@ -91,24 +91,47 @@ pub fn apply_genesis_mint(
 ///
 /// Reads all keys starting with "balance/" and deserializes
 /// i128 values from little-endian bytes.
-pub fn balances_from_trie(state: &ManagedWorldState) -> BalanceLedger {
+///
+/// Fails on any malformed entry under the balance namespace (N-21).
+/// A malformed entry means the trie was produced by a buggy or malicious
+/// validator, and importing it silently would cause balance drift between
+/// nodes that parse the entries differently.
+pub fn balances_from_trie(state: &ManagedWorldState) -> Result<BalanceLedger, String> {
     let mut balances = BalanceLedger::new();
     for (key, value) in state.trie.iter() {
-        if key.starts_with(sccgub_types::namespace::NS_BALANCE) && value.len() == 16 {
-            if let Ok(agent_bytes) = hex::decode(&key[8..]) {
-                if agent_bytes.len() == 32 {
-                    let mut id = [0u8; 32];
-                    id.copy_from_slice(&agent_bytes);
-                    let mut raw = [0u8; 16];
-                    raw.copy_from_slice(value);
-                    balances
-                        .balances
-                        .insert(id, TensionValue(i128::from_le_bytes(raw)));
-                }
+        if key.starts_with(sccgub_types::namespace::NS_BALANCE) {
+            let suffix = &key[sccgub_types::namespace::NS_BALANCE.len()..];
+            if value.len() != 16 {
+                return Err(format!(
+                    "Malformed balance entry: key {} has value length {} (expected 16)",
+                    String::from_utf8_lossy(key),
+                    value.len()
+                ));
             }
+            let agent_bytes = hex::decode(suffix).map_err(|e| {
+                format!(
+                    "Malformed balance key: {} (hex decode failed: {})",
+                    String::from_utf8_lossy(key),
+                    e
+                )
+            })?;
+            if agent_bytes.len() != 32 {
+                return Err(format!(
+                    "Malformed balance key: {} (agent ID {} bytes, expected 32)",
+                    String::from_utf8_lossy(key),
+                    agent_bytes.len()
+                ));
+            }
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&agent_bytes);
+            let mut raw = [0u8; 16];
+            raw.copy_from_slice(value);
+            balances
+                .balances
+                .insert(id, TensionValue(i128::from_le_bytes(raw)));
         }
     }
-    balances
+    Ok(balances)
 }
 
 #[cfg(test)]
@@ -313,9 +336,44 @@ mod tests {
         apply_block_transitions(&mut state, &mut balances, &[]);
 
         // Reconstruct.
-        let recovered = balances_from_trie(&state);
+        let recovered = balances_from_trie(&state).expect("roundtrip should succeed");
         assert_eq!(recovered.balance_of(&a1), TensionValue::from_integer(500));
         assert_eq!(recovered.balance_of(&a2), TensionValue::from_integer(300));
         assert_eq!(recovered.total_supply(), balances.total_supply());
+    }
+
+    #[test]
+    fn test_balances_from_trie_rejects_malformed_hex() {
+        let mut state = ManagedWorldState::new();
+        // Insert a well-formed balance.
+        let key = sccgub_types::namespace::balance_key(&[1u8; 32]);
+        state.trie.insert(
+            key,
+            TensionValue::from_integer(100).raw().to_le_bytes().to_vec(),
+        );
+        // N-21: Insert a malformed key under balance/ with non-hex suffix.
+        state
+            .trie
+            .insert(b"balance/not_valid_hex!!!".to_vec(), vec![0u8; 16]);
+
+        let result = balances_from_trie(&state);
+        assert!(
+            result.is_err(),
+            "Malformed hex key under balance/ must fail import"
+        );
+    }
+
+    #[test]
+    fn test_balances_from_trie_rejects_wrong_value_length() {
+        let mut state = ManagedWorldState::new();
+        let key = sccgub_types::namespace::balance_key(&[1u8; 32]);
+        // 8 bytes instead of 16.
+        state.trie.insert(key, vec![0u8; 8]);
+
+        let result = balances_from_trie(&state);
+        assert!(
+            result.is_err(),
+            "Wrong value length under balance/ must fail import"
+        );
     }
 }
