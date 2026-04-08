@@ -7,6 +7,12 @@ use sccgub_types::transition::{OperationPayload, StateDelta, StateWrite, Symboli
 /// This is the SINGLE SOURCE OF TRUTH for state application.
 /// Used by: chain.rs produce_block, cpog.rs validation, cmd_verify, cmd_import, from_blocks.
 ///
+/// N-9: Returns a `Vec<StateDelta>` of per-transition deltas in input order.
+/// Each entry captures the actual writes performed by the corresponding transition.
+/// Duplicate-tx_id rejections produce an empty `StateDelta::default()` at that index
+/// so caller indexing matches the input slice. Callers that need per-tx attribution
+/// (e.g., for `WHBindingResolved.what_actual`) should consume this vec; callers that
+/// only need the side effects on `state` and `balances` may discard it.
 ///
 /// Safety: follows checks-effects-interactions pattern —
 /// all transfers computed, then state writes applied, then balance trie commitment.
@@ -15,10 +21,11 @@ pub fn apply_block_transitions(
     state: &mut ManagedWorldState,
     balances: &mut BalanceLedger,
     transitions: &[SymbolicTransition],
-) {
+) -> Vec<StateDelta> {
     // Guard: reject duplicate tx_ids within a single block apply.
     // This prevents reentrancy-style double-apply of the same transition.
     let mut applied_ids = std::collections::HashSet::new();
+    let mut per_tx_deltas: Vec<StateDelta> = Vec::with_capacity(transitions.len());
 
     for tx in transitions {
         if !applied_ids.insert(tx.tx_id) {
@@ -26,31 +33,55 @@ pub fn apply_block_transitions(
                 "INVARIANT VIOLATION: duplicate tx_id {} in block apply",
                 hex::encode(tx.tx_id)
             );
+            per_tx_deltas.push(StateDelta::default());
             continue;
         }
 
-        match &tx.payload {
+        let tx_delta = match &tx.payload {
             OperationPayload::Write { key, value } => {
-                state.apply_delta(&StateDelta {
+                let delta = StateDelta {
                     writes: vec![StateWrite {
                         address: key.clone(),
                         value: value.clone(),
                     }],
                     deletes: vec![],
-                });
+                };
+                state.apply_delta(&delta);
+                delta
             }
             OperationPayload::AssetTransfer { from, to, amount } => {
                 // Transfer must not fail during apply — validation should have caught it.
-                // If it does fail, log it (indicates a consensus bug).
-                if let Err(e) = balances.transfer(from, to, TensionValue(*amount)) {
-                    eprintln!(
-                        "INVARIANT VIOLATION: transfer failed during state apply: {}",
-                        e
-                    );
+                match balances.transfer(from, to, TensionValue(*amount)) {
+                    Ok(()) => {
+                        // Capture both balance writes for per-tx attribution.
+                        let from_bal = balances.balance_of(from).raw().to_le_bytes().to_vec();
+                        let to_bal = balances.balance_of(to).raw().to_le_bytes().to_vec();
+                        StateDelta {
+                            writes: vec![
+                                StateWrite {
+                                    address: sccgub_types::namespace::balance_key(from),
+                                    value: from_bal,
+                                },
+                                StateWrite {
+                                    address: sccgub_types::namespace::balance_key(to),
+                                    value: to_bal,
+                                },
+                            ],
+                            deletes: vec![],
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "INVARIANT VIOLATION: transfer failed during state apply: {}",
+                            e
+                        );
+                        StateDelta::default()
+                    }
                 }
             }
-            _ => {}
-        }
+            _ => StateDelta::default(),
+        };
+        per_tx_deltas.push(tx_delta);
     }
 
     // Write ALL balance entries into trie for unified state root commitment.
@@ -67,6 +98,8 @@ pub fn apply_block_transitions(
             deletes: vec![],
         });
     }
+
+    per_tx_deltas
 }
 
 /// Initialize genesis balance in state trie + balance ledger.

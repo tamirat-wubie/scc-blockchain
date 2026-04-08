@@ -277,7 +277,7 @@ impl Chain {
         // Gas-metered admission: validate each tx with gas accounting,
         // enforce per-block gas limit, reject failed transfers and bad nonces.
         let mut block_gas = BlockGasMeter::default_block();
-        let mut filter_state = self.state.clone();
+        let filter_state = self.state.clone();
         let filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
         let mut metered_receipts = Vec::new();
@@ -307,22 +307,29 @@ impl Chain {
                     continue;
                 }
             }
-            // Pre-filter: nonce must be valid.
-            if filter_state
-                .check_nonce(&tx.actor.agent_id, tx.nonce)
-                .is_err()
+            // Pre-filter: nonce must be valid (READ-ONLY check).
+            // Do NOT call check_nonce here — it mutates filter_state, which
+            // would advance the nonce before validate_transition re-checks it.
+            // That was the TOCTOU bug the audit caught.
             {
-                // N-17: produce reject receipt instead of silent continue.
-                rejected_receipts.push(make_prefilter_reject_receipt(
-                    &tx,
-                    self.state.state_root(),
-                    &format!(
-                        "Nonce sequence violation: got {} for agent {}",
-                        tx.nonce,
-                        hex::encode(tx.actor.agent_id)
-                    ),
-                ));
-                continue;
+                let last = filter_state
+                    .agent_nonces
+                    .get(&tx.actor.agent_id)
+                    .copied()
+                    .unwrap_or(0);
+                if tx.nonce == 0 || tx.nonce != last + 1 {
+                    // N-17: produce reject receipt instead of silent continue.
+                    rejected_receipts.push(make_prefilter_reject_receipt(
+                        &tx,
+                        self.state.state_root(),
+                        &format!(
+                            "Nonce sequence violation: got {} for agent {}",
+                            tx.nonce,
+                            hex::encode(tx.actor.agent_id)
+                        ),
+                    ));
+                    continue;
+                }
             }
 
             // Gas-metered validation — produces a typed receipt for every tx.
@@ -352,17 +359,19 @@ impl Chain {
         }
         let transitions = accepted_transitions;
 
-        // Distribute block reward to validator (from accumulated treasury fees).
+        // Apply accepted transitions using shared function (single source of truth).
+        // N-9: capture per-tx deltas for what_actual attribution.
+        //
+        // Block reward is NOT included in the speculative state. It's credited
+        // to self.balances after CPoG validation passes (in the commit phase).
+        // This ensures CPoG replay produces the same state root as produce_block,
+        // because CPoG doesn't have access to the fee/reward logic.
         let block_reward = TensionValue::from_integer(10); // 10 tokens per block.
         let actual_reward = self.treasury.distribute_reward(block_reward);
-        if actual_reward.raw() > 0 {
-            self.balances.credit(&validator_id_for_check, actual_reward);
-        }
 
-        // Apply accepted transitions using shared function (single source of truth).
         let mut speculative_state = self.state.clone();
         let mut speculative_balances = self.balances.clone();
-        sccgub_state::apply::apply_block_transitions(
+        let per_tx_deltas = sccgub_state::apply::apply_block_transitions(
             &mut speculative_state,
             &mut speculative_balances,
             &transitions,
@@ -373,6 +382,12 @@ impl Chain {
             }
         }
         speculative_state.set_height(height);
+
+        // N-9: wire per-tx deltas into receipt what_actual before sealing.
+        // per_tx_deltas[i] corresponds to metered_receipts[i] (same input order).
+        for (receipt, delta) in metered_receipts.iter_mut().zip(per_tx_deltas.iter()) {
+            receipt.wh_binding.what_actual = delta.clone();
+        }
 
         // Seal receipts with the post-apply state root (atomic finalization).
         // This is the ONLY place where post_state_root is set — after state is committed.
@@ -435,6 +450,15 @@ impl Chain {
                 // Commit speculative state and balances.
                 self.state = speculative_state;
                 self.balances = speculative_balances;
+
+                // Credit block reward AFTER CPoG validation and commit.
+                // The reward is not in the state root (CPoG doesn't replicate it).
+                // It's applied to self.balances and will be included in the NEXT
+                // block's state root when apply_block_transitions writes all balances.
+                if actual_reward.raw() > 0 {
+                    self.balances.credit(&validator_id_for_check, actual_reward);
+                }
+
                 self.blocks.push(block);
 
                 // Finalize governance proposals whose voting period has ended.
@@ -1469,6 +1493,116 @@ mod tests {
                         <= TensionValue::from_integer(1000).raw().unsigned_abs()
                 }),
             "Responsibility must be bounded (INV-13)"
+        );
+    }
+
+    #[test]
+    fn test_n9_what_actual_populated_for_write_tx() {
+        // N-9 closure test: accepted Write transitions must have non-empty
+        // what_actual in their receipt after block production.
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Build a properly signed Write transaction.
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            blake3_hash_concat(&[&pk, &sccgub_crypto::canonical::canonical_bytes(&seal)]);
+        let agent = AgentIdentity {
+            agent_id,
+            public_key: pk,
+            mfidel_seal: seal,
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: HashSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        let target = b"data/n9/test".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: agent,
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "N-9 test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"hello_n9".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "N-9 test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+        chain.submit_transition(tx).expect("submit should succeed");
+
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed")
+            .clone();
+        let rejects: Vec<_> = chain
+            .latest_rejected_receipts
+            .iter()
+            .map(|r| format!("{:?}", r.verdict))
+            .collect();
+
+        // The block should have exactly 1 accepted transition.
+        assert_eq!(
+            block.body.transitions.len(),
+            1,
+            "Write tx must be accepted (rejects: {:?})",
+            rejects
+        );
+
+        // N-9: The receipt's what_actual must contain the actual writes.
+        assert_eq!(block.receipts.len(), 1);
+        let receipt = &block.receipts[0];
+        assert!(
+            receipt.verdict.is_accepted(),
+            "Write tx receipt must be accepted"
+        );
+        assert!(
+            !receipt.wh_binding.what_actual.writes.is_empty(),
+            "N-9: what_actual.writes must be populated for accepted Write tx"
+        );
+        assert_eq!(
+            receipt.wh_binding.what_actual.writes[0].address,
+            b"data/n9/test".to_vec(),
+            "N-9: what_actual must record the actual write address"
+        );
+        assert_eq!(
+            receipt.wh_binding.what_actual.writes[0].value,
+            b"hello_n9".to_vec(),
+            "N-9: what_actual must record the actual write value"
         );
     }
 }
