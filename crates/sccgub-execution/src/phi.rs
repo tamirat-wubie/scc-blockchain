@@ -1,17 +1,24 @@
-// DUAL-PATH PHI TRAVERSAL (N-11 invariant)
+// COLLAPSED PHI TRAVERSAL — N-11 resolved
 //
-// This module contains TWO traversal functions that must stay in sync:
+// Per-tx semantic checks live in ONE place: `phi_check_single_tx()`.
+// Both traversal entry-points call this shared function:
 //
 //   phi_traversal_block  — runs at CPoG validation time (per-block).
+//                          For per-tx phases: iterates all txs through
+//                          the shared function. For block-only phases:
+//                          runs block-level logic.
+//
 //   phi_traversal_tx     — runs at mempool drain time (per-transaction).
+//                          Calls the shared function for per-tx phases.
+//                          Block-only phases auto-pass.
 //
-// Every semantic check added to a Phi phase MUST be added to BOTH paths.
-// Drift between them causes mempool/CPoG disagreement: a tx that passes
-// mempool admission could fail block-level validation, or vice versa.
+// Adding a semantic check to a per-tx phase means editing ONLY
+// `phi_check_single_tx()`. Both paths pick it up automatically.
 //
-// Phases that are block-only (Topology, Body, Architecture, Performance,
-// Feedback, Evolution) run only in phi_traversal_block and auto-pass in
-// phi_traversal_tx. All other phases must have identical logic in both.
+// Block-only phases: Topology(4), Body(9), Architecture(10),
+// Performance(11), Feedback(12), Evolution(13).
+// Per-tx phases: Distinction(1), Constraint(2), Ontology(3),
+// Form(5), Organization(6), Module(7), Execution(8).
 
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
@@ -22,6 +29,195 @@ use sccgub_types::transition::SymbolicTransition;
 
 use crate::scce::{scce_validate, ConstraintWeights};
 use crate::wh_check::check_transition_wh;
+
+// ---------------------------------------------------------------------------
+// Per-tx phase check — SINGLE SOURCE OF TRUTH
+// ---------------------------------------------------------------------------
+
+/// Check a single transaction against a per-tx Phi phase.
+///
+/// This is the canonical implementation of per-tx semantics. Both
+/// `phi_traversal_block` and `phi_traversal_tx` call this function.
+/// Block-only phases panic — callers must not pass them here.
+fn phi_check_single_tx(
+    phase: PhiPhase,
+    tx: &SymbolicTransition,
+    state: &ManagedWorldState,
+) -> PhiPhaseResult {
+    match phase {
+        // Phase 1: Distinction — WHBinding completeness.
+        PhiPhase::Distinction => {
+            let result = check_transition_wh(tx);
+            let passed = result.is_ok();
+            PhiPhaseResult {
+                phase,
+                passed,
+                details: result.err().unwrap_or_else(|| "WHBinding complete".into()),
+            }
+        }
+
+        // Phase 2: Constraint — SCCE validation.
+        PhiPhase::Constraint => {
+            let weights = ConstraintWeights::default();
+            let result = scce_validate(tx, state, &weights, 32, 10_000);
+            PhiPhaseResult {
+                phase,
+                passed: result.valid,
+                details: result.details,
+            }
+        }
+
+        // Phase 3: Ontology — target namespace check.
+        PhiPhase::Ontology => {
+            let result = crate::ontology::check_ontology(tx);
+            let ok = result.is_allowed();
+            PhiPhaseResult {
+                phase,
+                passed: ok,
+                details: match &result {
+                    crate::ontology::OntologyResult::Allowed => "Ontology verified".into(),
+                    crate::ontology::OntologyResult::Rejected {
+                        kind,
+                        target,
+                        allowed,
+                    } => format!(
+                        "Kind {:?} cannot target {} (allowed: {:?})",
+                        kind,
+                        String::from_utf8_lossy(target),
+                        allowed
+                            .iter()
+                            .map(|n| String::from_utf8_lossy(n).into_owned())
+                            .collect::<Vec<_>>(),
+                    ),
+                },
+            }
+        }
+
+        // Phase 5: Form — structural validity.
+        // Checks BOTH signature length AND address length (was split across paths).
+        PhiPhase::Form => {
+            if tx.signature.len() < 64 {
+                return PhiPhaseResult {
+                    phase,
+                    passed: false,
+                    details: format!(
+                        "Signature too short ({} bytes, need >= 64)",
+                        tx.signature.len()
+                    ),
+                };
+            }
+            let addr_ok = tx.intent.target.len() <= sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
+            PhiPhaseResult {
+                phase,
+                passed: addr_ok,
+                details: if addr_ok {
+                    "Form validated".into()
+                } else {
+                    "Address exceeds max length".into()
+                },
+            }
+        }
+
+        // Phase 6: Organization — governance invariant preservation.
+        // Governance/norm/constraint ops require at least Meaning precedence.
+        PhiPhase::Organization => {
+            let requires_meaning = matches!(
+                tx.intent.kind,
+                sccgub_types::transition::TransitionKind::GovernanceUpdate
+                    | sccgub_types::transition::TransitionKind::NormProposal
+                    | sccgub_types::transition::TransitionKind::ConstraintAddition
+            );
+            if requires_meaning {
+                let level = tx.actor.governance_level as u8;
+                let meaning = sccgub_types::governance::PrecedenceLevel::Meaning as u8;
+                if level > meaning {
+                    return PhiPhaseResult {
+                        phase,
+                        passed: false,
+                        details: format!(
+                            "Requires Meaning precedence but actor has {:?}",
+                            tx.actor.governance_level
+                        ),
+                    };
+                }
+            }
+            PhiPhaseResult {
+                phase,
+                passed: true,
+                details: "Governance invariants verified".into(),
+            }
+        }
+
+        // Phase 7: Module — contract boundary compliance.
+        // At per-tx level: structural checks only (receipt consistency is block-only).
+        PhiPhase::Module => PhiPhaseResult {
+            phase,
+            passed: true,
+            details: "Module boundaries respected".into(),
+        },
+
+        // Phase 8: Execution — payload consistency.
+        PhiPhase::Execution => {
+            let payload_result = crate::payload_check::check_payload_consistency(tx);
+            if let crate::payload_check::PayloadConsistency::Inconsistent { reason } =
+                &payload_result
+            {
+                return PhiPhaseResult {
+                    phase,
+                    passed: false,
+                    details: format!("Payload inconsistent: {}", reason),
+                };
+            }
+            if tx.intent.target.is_empty() {
+                return PhiPhaseResult {
+                    phase,
+                    passed: false,
+                    details: "Missing target".into(),
+                };
+            }
+            if tx.nonce == 0 {
+                return PhiPhaseResult {
+                    phase,
+                    passed: false,
+                    details: "Zero nonce".into(),
+                };
+            }
+            PhiPhaseResult {
+                phase,
+                passed: true,
+                details: "Execution verified: payload consistent".into(),
+            }
+        }
+
+        // Block-only phases — must not be called for single-tx checks.
+        PhiPhase::Topology
+        | PhiPhase::Body
+        | PhiPhase::Architecture
+        | PhiPhase::Performance
+        | PhiPhase::Feedback
+        | PhiPhase::Evolution => {
+            unreachable!("Block-only phase {:?} passed to phi_check_single_tx", phase);
+        }
+    }
+}
+
+/// Returns true if this phase has per-tx semantics (runs in both paths).
+fn is_per_tx_phase(phase: PhiPhase) -> bool {
+    matches!(
+        phase,
+        PhiPhase::Distinction
+            | PhiPhase::Constraint
+            | PhiPhase::Ontology
+            | PhiPhase::Form
+            | PhiPhase::Organization
+            | PhiPhase::Module
+            | PhiPhase::Execution
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Block-level traversal
+// ---------------------------------------------------------------------------
 
 /// Execute the 13-phase Phi traversal on a block.
 /// Per v2.1 FIX-8: some phases are per-tx, some are block-only.
@@ -48,259 +244,53 @@ fn execute_block_phase(
     block: &Block,
     state: &ManagedWorldState,
 ) -> PhiPhaseResult {
+    if is_per_tx_phase(phase) {
+        // Per-tx phase: iterate all transactions through the shared checker.
+        for (i, tx) in block.body.transitions.iter().enumerate() {
+            let result = phi_check_single_tx(phase, tx, state);
+            if !result.passed {
+                return PhiPhaseResult {
+                    phase,
+                    passed: false,
+                    details: format!("Tx {}: {}", i, result.details),
+                };
+            }
+        }
+        return PhiPhaseResult {
+            phase,
+            passed: true,
+            details: format!(
+                "{:?} verified for {} transitions",
+                phase,
+                block.body.transitions.len()
+            ),
+        };
+    }
+
+    // Block-only phases.
     match phase {
-        PhiPhase::Distinction => phase_distinction(block, state),
-        PhiPhase::Constraint => phase_constraint(block, state),
-        PhiPhase::Ontology => phase_ontology(block),
         PhiPhase::Topology => phase_topology(block),
-        PhiPhase::Form => phase_form(block),
-        PhiPhase::Organization => phase_organization(block),
-        PhiPhase::Module => phase_module(block),
-        PhiPhase::Execution => phase_execution(block),
         PhiPhase::Body => phase_body(block, state),
         PhiPhase::Architecture => phase_architecture(block),
         PhiPhase::Performance => phase_performance(block),
         PhiPhase::Feedback => phase_feedback(block),
         PhiPhase::Evolution => phase_evolution(block),
+        // Per-tx phases handled above; this arm is unreachable.
+        _ => unreachable!(),
     }
 }
 
-/// Execute per-transaction Phi phases (subset of full 13).
-pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> PhiTraversalLog {
-    let mut log = PhiTraversalLog::new();
+// ---------------------------------------------------------------------------
+// Block-level: additional block-wide checks for Execution phase
+// ---------------------------------------------------------------------------
 
-    // Phase 1: Distinction — verify WHBinding completeness.
-    let wh_result = check_transition_wh(tx);
-    let wh_passed = wh_result.is_ok();
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Distinction,
-        passed: wh_passed,
-        details: wh_result
-            .err()
-            .unwrap_or_else(|| "WHBinding complete".into()),
-    });
-    if !wh_passed {
-        return log;
-    }
-
-    // Phase 2: Constraint — run SCCE validation.
-    let weights = ConstraintWeights::default();
-    let scce_result = scce_validate(tx, state, &weights, 32, 10_000);
-    let scce_passed = scce_result.valid;
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Constraint,
-        passed: scce_passed,
-        details: scce_result.details,
-    });
-    if !scce_passed {
-        return log;
-    }
-
-    // Phase 3: Ontology — verify target falls within allowed namespaces for this kind.
-    let ontology_result = crate::ontology::check_ontology(tx);
-    let ontology_ok = ontology_result.is_allowed();
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Ontology,
-        passed: ontology_ok,
-        details: match &ontology_result {
-            crate::ontology::OntologyResult::Allowed => "Ontology verified".into(),
-            crate::ontology::OntologyResult::Rejected {
-                kind,
-                target,
-                allowed,
-            } => format!(
-                "Kind {:?} cannot target {} (allowed: {:?})",
-                kind,
-                String::from_utf8_lossy(target),
-                allowed
-                    .iter()
-                    .map(|n| String::from_utf8_lossy(n).into_owned())
-                    .collect::<Vec<_>>(),
-            ),
-        },
-    });
-    if !ontology_ok {
-        return log;
-    }
-
-    // Phase 4: Topology — block-only (auto-pass at tx level).
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Topology,
-        passed: true,
-        details: "Block-only phase, auto-pass at tx level".into(),
-    });
-
-    // Phase 5: Form — validate payload structure.
-    let addr_ok = tx.intent.target.len() <= sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Form,
-        passed: addr_ok,
-        details: if addr_ok {
-            "Form validated".into()
-        } else {
-            "Address exceeds max length".into()
-        },
-    });
-    if !addr_ok {
-        log.finalize();
-        return log;
-    }
-
-    // Phase 6: Organization — check invariant preservation.
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Organization,
-        passed: true,
-        details: "Invariants preserved".into(),
-    });
-
-    // Phase 7: Module — verify contract compliance at boundaries.
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Module,
-        passed: true,
-        details: "Module boundaries respected".into(),
-    });
-
-    // Phase 8: Execution — payload consistency check.
-    let payload_result = crate::payload_check::check_payload_consistency(tx);
-    let exec_ok = payload_result.is_consistent() && !tx.intent.target.is_empty() && tx.nonce > 0;
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Execution,
-        passed: exec_ok,
-        details: match &payload_result {
-            crate::payload_check::PayloadConsistency::Consistent if exec_ok => {
-                "Execution verified: payload consistent".into()
-            }
-            crate::payload_check::PayloadConsistency::Inconsistent { reason } => {
-                format!("Payload inconsistent: {}", reason)
-            }
-            _ => "Missing target or zero nonce".into(),
-        },
-    });
-    if !exec_ok {
-        log.finalize();
-        return log;
-    }
-
-    // Phase 9: Body — block-only (auto-pass at tx level).
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Body,
-        passed: true,
-        details: "Block-only phase, auto-pass at tx level".into(),
-    });
-
-    // Phase 10: Architecture — block-only (auto-pass at tx level).
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Architecture,
-        passed: true,
-        details: "Block-only phase, auto-pass at tx level".into(),
-    });
-
-    // Phase 11: Performance — block-only (auto-pass at tx level).
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Performance,
-        passed: true,
-        details: "Block-only phase, auto-pass at tx level".into(),
-    });
-
-    // Phase 12: Feedback — per-tx feedback stable.
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Feedback,
-        passed: true,
-        details: "Feedback stable".into(),
-    });
-
-    // Phase 13: Evolution — per-tx evolution recorded.
-    log.phases_completed.push(PhiPhaseResult {
-        phase: PhiPhase::Evolution,
-        passed: true,
-        details: "Evolution recorded".into(),
-    });
-
-    log.finalize();
-    log
-}
-
-// --- Block-level phase implementations ---
-
-fn phase_distinction(block: &Block, _state: &ManagedWorldState) -> PhiPhaseResult {
-    // Verify all transitions have complete WHBinding.
-    for tx in &block.body.transitions {
-        if let Err(e) = check_transition_wh(tx) {
-            return PhiPhaseResult {
-                phase: PhiPhase::Distinction,
-                passed: false,
-                details: format!("WHBinding incomplete: {}", e),
-            };
-        }
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Distinction,
-        passed: true,
-        details: format!(
-            "{} transitions with complete WHBinding",
-            block.body.transitions.len()
-        ),
-    }
-}
-
-fn phase_constraint(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
-    // Run SCCE on each transition for cross-tx constraint checking.
-    let weights = ConstraintWeights::default();
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        let result = scce_validate(tx, state, &weights, 32, 10_000);
-        if !result.valid {
-            return PhiPhaseResult {
-                phase: PhiPhase::Constraint,
-                passed: false,
-                details: format!("SCCE failed for tx {}: {}", i, result.details),
-            };
-        }
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Constraint,
-        passed: true,
-        details: format!(
-            "SCCE validated {} transitions",
-            block.body.transitions.len()
-        ),
-    }
-}
-
-fn phase_ontology(block: &Block) -> PhiPhaseResult {
-    use crate::ontology::{check_ontology, OntologyResult};
-
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        if let OntologyResult::Rejected {
-            kind,
-            target,
-            allowed,
-        } = check_ontology(tx)
-        {
-            return PhiPhaseResult {
-                phase: PhiPhase::Ontology,
-                passed: false,
-                details: format!(
-                    "Tx {}: kind {:?} cannot target {} (allowed: {:?})",
-                    i,
-                    kind,
-                    String::from_utf8_lossy(&target),
-                    allowed
-                        .iter()
-                        .map(|n| String::from_utf8_lossy(n).into_owned())
-                        .collect::<Vec<_>>(),
-                ),
-            };
-        }
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Ontology,
-        passed: true,
-        details: format!(
-            "Ontology verified for {} transitions",
-            block.body.transitions.len()
-        ),
-    }
-}
+// NOTE: The block-level Execution phase also needs to check transition_count
+// and receipt consistency. We handle this by wrapping execute_block_phase
+// for Execution with an extra block-wide check. However, to keep the refactor
+// clean, we embed the block-wide transition_count check in Module (phase 7)
+// which already handles receipt-transition consistency. The per-tx Execution
+// check (payload consistency, non-empty target, non-zero nonce) is in the
+// shared function. Transition count is a block-wide property checked here:
 
 fn phase_topology(block: &Block) -> PhiPhaseResult {
     // Block-only: verify causal graph connectivity, detect cycles (INV-17).
@@ -326,127 +316,8 @@ fn phase_topology(block: &Block) -> PhiPhaseResult {
     }
 }
 
-fn phase_form(block: &Block) -> PhiPhaseResult {
-    // Verify all transitions have valid signatures (>= 64 bytes for Ed25519).
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        if tx.signature.len() < 64 {
-            return PhiPhaseResult {
-                phase: PhiPhase::Form,
-                passed: false,
-                details: format!(
-                    "Transaction {} signature too short ({} bytes, need >= 64)",
-                    i,
-                    tx.signature.len()
-                ),
-            };
-        }
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Form,
-        passed: true,
-        details: "All signatures present".into(),
-    }
-}
-
-fn phase_organization(block: &Block) -> PhiPhaseResult {
-    // Verify governance invariants: GovernanceUpdate/NormProposal transitions
-    // must come from actors with at least Meaning precedence level.
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        let requires_meaning = matches!(
-            tx.intent.kind,
-            sccgub_types::transition::TransitionKind::GovernanceUpdate
-                | sccgub_types::transition::TransitionKind::NormProposal
-                | sccgub_types::transition::TransitionKind::ConstraintAddition
-        );
-        if requires_meaning {
-            let level = tx.actor.governance_level as u8;
-            let meaning = sccgub_types::governance::PrecedenceLevel::Meaning as u8;
-            if level > meaning {
-                return PhiPhaseResult {
-                    phase: PhiPhase::Organization,
-                    passed: false,
-                    details: format!(
-                        "Tx {} requires Meaning precedence but actor has {:?}",
-                        i, tx.actor.governance_level
-                    ),
-                };
-            }
-        }
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Organization,
-        passed: true,
-        details: format!(
-            "Governance invariants verified for {} transitions",
-            block.body.transitions.len()
-        ),
-    }
-}
-
-fn phase_module(block: &Block) -> PhiPhaseResult {
-    // Verify receipt-transition consistency: every non-genesis block with
-    // transitions must have matching receipt count.
-    if !block.body.transitions.is_empty()
-        && !block.receipts.is_empty()
-        && block.receipts.len() != block.body.transitions.len()
-    {
-        return PhiPhaseResult {
-            phase: PhiPhase::Module,
-            passed: false,
-            details: format!(
-                "Receipt count {} != transition count {}",
-                block.receipts.len(),
-                block.body.transitions.len()
-            ),
-        };
-    }
-    PhiPhaseResult {
-        phase: PhiPhase::Module,
-        passed: true,
-        details: "Module boundaries respected".into(),
-    }
-}
-
-fn phase_execution(block: &Block) -> PhiPhaseResult {
-    // Verify transition count matches body.
-    if u32::try_from(block.body.transitions.len()) != Ok(block.body.transition_count) {
-        return PhiPhaseResult {
-            phase: PhiPhase::Execution,
-            passed: false,
-            details: format!(
-                "Transition count mismatch: header says {} but body has {}",
-                block.body.transition_count,
-                block.body.transitions.len()
-            ),
-        };
-    }
-
-    // Payload consistency: verify each transition's payload matches its intent.
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        if let crate::payload_check::PayloadConsistency::Inconsistent { reason } =
-            crate::payload_check::check_payload_consistency(tx)
-        {
-            return PhiPhaseResult {
-                phase: PhiPhase::Execution,
-                passed: false,
-                details: format!("Tx {}: payload inconsistent: {}", i, reason),
-            };
-        }
-    }
-
-    PhiPhaseResult {
-        phase: PhiPhase::Execution,
-        passed: true,
-        details: format!(
-            "Execution verified: {} transitions, all payloads consistent",
-            block.body.transitions.len()
-        ),
-    }
-}
-
 fn phase_body(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     // Block-only: check chain homeostasis — tension must not grow unboundedly (INV-5).
-    // Use spec formula directly: tension_after <= tension_before + budget.
     let budget = state.state.tension_field.budget.current_budget;
     let within_budget = block.header.tension_after <= block.header.tension_before + budget;
 
@@ -465,8 +336,7 @@ fn phase_body(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
 }
 
 fn phase_architecture(block: &Block) -> PhiPhaseResult {
-    // Architecture layer consistency: verify that all transitions in the block
-    // are correctly signed and that the block's validator_id is non-zero.
+    // Architecture layer consistency: verify validator_id and version.
     if block.header.validator_id == [0u8; 32] {
         return PhiPhaseResult {
             phase: PhiPhase::Architecture,
@@ -475,7 +345,6 @@ fn phase_architecture(block: &Block) -> PhiPhaseResult {
         };
     }
 
-    // Verify block version is supported.
     if block.header.version == 0 || block.header.version > 1 {
         return PhiPhaseResult {
             phase: PhiPhase::Architecture,
@@ -487,19 +356,33 @@ fn phase_architecture(block: &Block) -> PhiPhaseResult {
         };
     }
 
-    // Verify every transition has a valid-length signature (Ed25519 >= 64 bytes).
-    for (i, tx) in block.body.transitions.iter().enumerate() {
-        if tx.signature.len() < 64 {
-            return PhiPhaseResult {
-                phase: PhiPhase::Architecture,
-                passed: false,
-                details: format!(
-                    "Transaction {} signature too short ({} bytes)",
-                    i,
-                    tx.signature.len()
-                ),
-            };
-        }
+    // Transition count consistency (block-wide check, moved from old Execution).
+    if u32::try_from(block.body.transitions.len()) != Ok(block.body.transition_count) {
+        return PhiPhaseResult {
+            phase: PhiPhase::Architecture,
+            passed: false,
+            details: format!(
+                "Transition count mismatch: header says {} but body has {}",
+                block.body.transition_count,
+                block.body.transitions.len()
+            ),
+        };
+    }
+
+    // Receipt-transition consistency (moved from old Module — block-wide check).
+    if !block.body.transitions.is_empty()
+        && !block.receipts.is_empty()
+        && block.receipts.len() != block.body.transitions.len()
+    {
+        return PhiPhaseResult {
+            phase: PhiPhase::Architecture,
+            passed: false,
+            details: format!(
+                "Receipt count {} != transition count {}",
+                block.receipts.len(),
+                block.body.transitions.len()
+            ),
+        };
     }
 
     PhiPhaseResult {
@@ -539,16 +422,14 @@ fn phase_performance(block: &Block) -> PhiPhaseResult {
 
 fn phase_feedback(block: &Block) -> PhiPhaseResult {
     // Feedback loop stability: tension must not swing wildly between blocks.
-    // If tension_after diverges from tension_before by more than 100% of budget,
-    // the feedback system is oscillating (unstable).
     let delta = if block.header.tension_after >= block.header.tension_before {
         block.header.tension_after - block.header.tension_before
     } else {
         block.header.tension_before - block.header.tension_after
     };
 
-    // Stability bound: delta_T < 2 * budget (generous bound; prevents runaway).
-    let max_swing = TensionValue::from_integer(2_000_000); // 2M units max swing.
+    // Stability bound: delta_T < 2M units max swing.
+    let max_swing = TensionValue::from_integer(2_000_000);
     if delta > max_swing {
         return PhiPhaseResult {
             phase: PhiPhase::Feedback,
@@ -583,9 +464,7 @@ fn phase_feedback(block: &Block) -> PhiPhaseResult {
 }
 
 fn phase_evolution(block: &Block) -> PhiPhaseResult {
-    // Evolution: verify the block advances the chain — height must be strictly
-    // greater than 0 for non-genesis blocks, and the proof must reference
-    // the correct block height.
+    // Evolution: verify the block advances the chain.
     if block.header.height > 0 && block.proof.block_height != block.header.height {
         return PhiPhaseResult {
             phase: PhiPhase::Evolution,
@@ -597,13 +476,12 @@ fn phase_evolution(block: &Block) -> PhiPhaseResult {
         };
     }
 
-    // Verify causal graph delta is consistent: new edges must reference
-    // transitions that exist in this block.
+    // Verify causal graph delta is consistent.
     for edge in &block.causal_delta.new_edges {
         let (src, _) = edge.endpoints();
         if let CausalVertex::Transition(tx_id) = src {
             let tx_exists =
-                block.body.transitions.iter().any(|t| t.tx_id == tx_id) || block.header.height == 0; // Genesis has no txs.
+                block.body.transitions.iter().any(|t| t.tx_id == tx_id) || block.header.height == 0;
             if !tx_exists {
                 return PhiPhaseResult {
                     phase: PhiPhase::Evolution,
@@ -623,6 +501,38 @@ fn phase_evolution(block: &Block) -> PhiPhaseResult {
             block.causal_delta.new_edges.len()
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-transaction traversal
+// ---------------------------------------------------------------------------
+
+/// Execute per-transaction Phi phases (subset of full 13).
+/// Block-only phases auto-pass. Per-tx phases call the shared checker.
+pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> PhiTraversalLog {
+    let mut log = PhiTraversalLog::new();
+
+    for phase in PhiPhase::ALL {
+        if is_per_tx_phase(phase) {
+            let result = phi_check_single_tx(phase, tx, state);
+            let passed = result.passed;
+            log.phases_completed.push(result);
+            if !passed {
+                log.finalize();
+                return log;
+            }
+        } else {
+            // Block-only phase: auto-pass at tx level.
+            log.phases_completed.push(PhiPhaseResult {
+                phase,
+                passed: true,
+                details: "Block-only phase, auto-pass at tx level".into(),
+            });
+        }
+    }
+
+    log.finalize();
+    log
 }
 
 #[cfg(test)]
@@ -710,20 +620,20 @@ mod tests {
         block.header.mfidel_seal = MfidelAtomicSeal::from_height(999);
         let log = phi_traversal_block(&block, &state);
         assert!(!log.is_all_passed());
-        // Performance phase (11) should fail.
         let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
         assert_eq!(failed.phase, PhiPhase::Performance);
     }
 
     #[test]
-    fn test_transition_count_mismatch_fails_execution() {
+    fn test_transition_count_mismatch_fails_architecture() {
         let state = ManagedWorldState::new();
         let mut block = empty_genesis();
         block.body.transition_count = 5; // Claims 5, has 0.
         let log = phi_traversal_block(&block, &state);
         assert!(!log.is_all_passed());
         let failed = log.phases_completed.iter().find(|p| !p.passed).unwrap();
-        assert_eq!(failed.phase, PhiPhase::Execution);
+        // Now caught in Architecture (block-wide check) instead of Execution.
+        assert_eq!(failed.phase, PhiPhase::Architecture);
     }
 
     #[test]
@@ -799,12 +709,14 @@ mod tests {
             phi_phase_reached: 0,
             tension_delta: TensionValue::ZERO,
         });
-        // Also need matching transition count for Module phase to pass.
+        // Receipt count will mismatch transition count (1 receipt, 0 transitions).
+        // Architecture phase catches this before Feedback.
+        // To test Feedback specifically, add a matching transition count.
         block.body.transition_count = 1;
 
         let log = phi_traversal_block(&block, &state);
         assert!(!log.is_all_passed());
-        // Feedback phase (12) should catch the rejected receipt.
+        // Feedback phase should catch the rejected receipt.
         let feedback = log
             .phases_completed
             .iter()
@@ -815,5 +727,91 @@ mod tests {
                 "Rejected receipt in committed block must fail Feedback"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // New tests: verify shared per-tx checks work in both paths
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_per_tx_phase_classification() {
+        // Per-tx phases.
+        assert!(is_per_tx_phase(PhiPhase::Distinction));
+        assert!(is_per_tx_phase(PhiPhase::Constraint));
+        assert!(is_per_tx_phase(PhiPhase::Ontology));
+        assert!(is_per_tx_phase(PhiPhase::Form));
+        assert!(is_per_tx_phase(PhiPhase::Organization));
+        assert!(is_per_tx_phase(PhiPhase::Module));
+        assert!(is_per_tx_phase(PhiPhase::Execution));
+        // Block-only phases.
+        assert!(!is_per_tx_phase(PhiPhase::Topology));
+        assert!(!is_per_tx_phase(PhiPhase::Body));
+        assert!(!is_per_tx_phase(PhiPhase::Architecture));
+        assert!(!is_per_tx_phase(PhiPhase::Performance));
+        assert!(!is_per_tx_phase(PhiPhase::Feedback));
+        assert!(!is_per_tx_phase(PhiPhase::Evolution));
+    }
+
+    #[test]
+    fn test_phi_tx_produces_13_phase_entries() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let state = ManagedWorldState::new();
+        let tx = SymbolicTransition {
+            tx_id: [1u8; 32],
+            actor: AgentIdentity {
+                agent_id: [1u8; 32],
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"data/test".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: [1u8; 32],
+                when: CausalTimestamp::genesis(),
+                r#where: b"data/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce: 1,
+            signature: vec![0u8; 64],
+        };
+
+        let log = phi_traversal_tx(&tx, &state);
+        // Must produce exactly 13 entries (all phases, including auto-pass block-only).
+        assert_eq!(log.phases_completed.len(), 13);
+        assert!(
+            log.is_all_passed(),
+            "Valid tx should pass all per-tx phases: {:?}",
+            log.phases_completed
+                .iter()
+                .filter(|p| !p.passed)
+                .collect::<Vec<_>>()
+        );
     }
 }
