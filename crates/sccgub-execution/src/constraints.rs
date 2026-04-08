@@ -33,6 +33,9 @@ pub enum Predicate {
     True,
     /// Always false (unreachable).
     False,
+    /// Parser failure — surfaces in receipts so misconfigured contracts
+    /// are observable, not silently always-false.
+    Invalid { reason: String },
 }
 
 /// Result of constraint evaluation.
@@ -158,6 +161,10 @@ pub fn evaluate(
         Predicate::False => ConstraintResult {
             satisfied: false,
             details: "Always false".into(),
+        },
+        Predicate::Invalid { reason } => ConstraintResult {
+            satisfied: false,
+            details: format!("invalid constraint expression: {}", reason),
         },
     }
 }

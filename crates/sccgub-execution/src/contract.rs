@@ -183,8 +183,11 @@ fn parse_constraint_expression(expr: &str) -> crate::constraints::Predicate {
             return crate::constraints::Predicate::MinGovernanceLevel { level };
         }
     }
-    // Reject unknown expressions — a typo in a constraint must not silently pass.
-    crate::constraints::Predicate::False
+    // Surface the parse failure rather than masquerading as False.
+    // The receipt will carry the reason, so a typo is observable.
+    crate::constraints::Predicate::Invalid {
+        reason: format!("unknown expression form: {}", expr),
+    }
 }
 
 fn reject_step_limit(steps: u64, max: u64, phase: &str) -> ContractExecutionResult {

@@ -15,7 +15,8 @@
       "Bash(cargo audit:*)",
       "Bash(cargo fmt:*)",
       "Bash(grep -rn 'Err\\(\"' crates/sccgub-*/src/*.rs)",
-      "Bash(grep \"    ///\" crates/sccgub-node/src/main.rs)"
+      "Bash(grep \"    ///\" crates/sccgub-node/src/main.rs)",
+      "Bash(cargo clean:*)"
     ]
   }
 }
