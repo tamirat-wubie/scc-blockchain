@@ -45,6 +45,22 @@ pub fn validate_transition(
         errors.push(format!("WHBinding: {}", e));
     }
 
+    // 1b. WHY cross-check: invoking_rule must reference an active norm.
+    // Skip for genesis height (no norms yet) or if norm registry is empty
+    // (single-validator bootstrap mode).
+    if !state.state.governance_state.active_norms.is_empty()
+        && !state
+            .state
+            .governance_state
+            .active_norms
+            .contains_key(&tx.wh_binding_intent.why.invoking_rule)
+    {
+        errors.push(format!(
+            "WHBinding 'why.invoking_rule' ({}) is not an active norm",
+            hex::encode(tx.wh_binding_intent.why.invoking_rule)
+        ));
+    }
+
     // 2. Signature must be present and correct length (Ed25519 = 64 bytes).
     if tx.signature.len() < 64 {
         errors.push(format!(
