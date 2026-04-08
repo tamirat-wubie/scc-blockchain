@@ -47,6 +47,9 @@ impl AccessGrant {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.grant_id == [0u8; 32] {
+            return Err("grant_id is required".into());
+        }
         if self.artifact_id == [0u8; 32] {
             return Err("artifact_id is required".into());
         }
@@ -84,6 +87,9 @@ pub struct UsageLicense {
 
 impl UsageLicense {
     pub fn validate(&self) -> Result<(), String> {
+        if self.license_id == [0u8; 32] {
+            return Err("license_id is required".into());
+        }
         if self.artifact_id == [0u8; 32] {
             return Err("artifact_id is required".into());
         }
@@ -132,14 +138,23 @@ pub struct PolicyVerdictReceipt {
 
 impl PolicyVerdictReceipt {
     pub fn validate(&self) -> Result<(), String> {
+        if self.receipt_id == [0u8; 32] {
+            return Err("receipt_id is required".into());
+        }
         if self.artifact_id == [0u8; 32] {
             return Err("artifact_id is required".into());
+        }
+        if self.policy_set_id == [0u8; 32] {
+            return Err("policy_set_id is required".into());
+        }
+        if self.evidence_root == [0u8; 32] {
+            return Err("evidence_root is required".into());
         }
         if self.issued_by == [0u8; 32] {
             return Err("authority (issued_by) is required".into());
         }
-        if self.signature.is_empty() {
-            return Err("signature is required".into());
+        if self.signature.len() < 64 {
+            return Err("signature must be at least 64 bytes (Ed25519)".into());
         }
         Ok(())
     }
@@ -235,5 +250,100 @@ mod tests {
             signature: vec![], // Empty.
         };
         assert!(receipt.validate().is_err());
+    }
+
+    // --- Boundary tests ---
+
+    #[test]
+    fn test_access_grant_boundary_heights() {
+        let grant = AccessGrant {
+            grant_id: [1u8; 32],
+            artifact_id: [2u8; 32],
+            grantee: [3u8; 32],
+            actions: vec![ArtifactAction::View],
+            purpose_hash: None,
+            valid_from_block: 10,
+            valid_to_block: Some(100),
+            revocable: true,
+            revoked: false,
+            granted_by: [4u8; 32],
+        };
+        // Exact boundaries must be included.
+        assert!(
+            grant.is_active(10),
+            "valid_from_block boundary must be active"
+        );
+        assert!(
+            grant.is_active(100),
+            "valid_to_block boundary must be active"
+        );
+    }
+
+    #[test]
+    fn test_access_grant_serialization_roundtrip() {
+        let grant = AccessGrant {
+            grant_id: [1u8; 32],
+            artifact_id: [2u8; 32],
+            grantee: [3u8; 32],
+            actions: vec![ArtifactAction::View, ArtifactAction::Derive],
+            purpose_hash: Some([5u8; 32]),
+            valid_from_block: 10,
+            valid_to_block: Some(100),
+            revocable: true,
+            revoked: false,
+            granted_by: [4u8; 32],
+        };
+        let json = serde_json::to_string(&grant).unwrap();
+        let recovered: AccessGrant = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered.grantee, grant.grantee);
+        assert_eq!(recovered.actions.len(), 2);
+    }
+
+    #[test]
+    fn test_usage_license_validation() {
+        let license = UsageLicense {
+            license_id: [1u8; 32],
+            artifact_id: [2u8; 32],
+            licensor: [3u8; 32],
+            licensee: [4u8; 32],
+            terms_hash: [5u8; 32],
+            exclusivity: false,
+            transfer_allowed: true,
+            sublicense_allowed: false,
+            expires_at_block: Some(500),
+            revoked: false,
+        };
+        assert!(license.validate().is_ok());
+
+        let mut self_license = license.clone();
+        self_license.licensee = self_license.licensor;
+        assert!(self_license.validate().is_err(), "Self-licensing rejected");
+    }
+
+    #[test]
+    fn test_policy_verdict_receipt_validation_hardened() {
+        let receipt = PolicyVerdictReceipt {
+            receipt_id: [1u8; 32],
+            artifact_id: [2u8; 32],
+            verdict: PolicyVerdict::Allow,
+            policy_set_id: [3u8; 32],
+            reason_codes: vec![],
+            evidence_root: [4u8; 32],
+            issued_by: [5u8; 32],
+            supersedes: None,
+            block_height: 100,
+            signature: vec![0u8; 64],
+        };
+        assert!(receipt.validate().is_ok());
+
+        // Short signature (< 64 bytes) must be rejected.
+        let mut short_sig = receipt.clone();
+        short_sig.signature = vec![0u8; 32];
+        assert!(short_sig.validate().is_err());
+
+        // Missing policy_set_id.
+        let mut no_policy = receipt.clone();
+        no_policy.policy_set_id = [0u8; 32];
+        assert!(no_policy.validate().is_err());
     }
 }

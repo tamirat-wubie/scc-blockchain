@@ -1036,6 +1036,7 @@ dependencies = [
  "sccgub-types",
  "serde",
  "serde_json",
+ "subtle",
  "thiserror",
  "zeroize",
 ]

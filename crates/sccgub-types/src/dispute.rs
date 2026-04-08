@@ -128,6 +128,30 @@ mod tests {
     }
 
     #[test]
+    fn test_minimal_window_accepted() {
+        let mut d = valid_dispute();
+        d.challenge_window_end = d.filed_at_block + 1; // Minimal valid window.
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn test_arbitration_verdict_validation() {
+        let verdict = ArbitrationVerdict {
+            dispute_id: [1u8; 32],
+            arbiter: [2u8; 32],
+            verdict_hash: [3u8; 32],
+            in_favor_of: [4u8; 32],
+            penalty_hash: None,
+            resolved_at_block: 200,
+        };
+        assert!(verdict.validate().is_ok());
+
+        let mut bad = verdict.clone();
+        bad.arbiter = [0u8; 32];
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
     fn test_is_open() {
         let d = valid_dispute();
         assert!(d.is_open());

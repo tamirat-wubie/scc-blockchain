@@ -5,6 +5,7 @@ use chacha20poly1305::{
 };
 use ed25519_dalek::SigningKey;
 use rand::RngCore;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 /// Finance-grade keystore — encrypts private keys at rest.
@@ -108,9 +109,9 @@ pub fn decrypt_key(bundle: &EncryptedKeyBundle, passphrase: &str) -> Result<Sign
         return Err("Decrypted key has wrong length".into());
     }
 
-    // Verify BLAKE3 checksum.
+    // Verify BLAKE3 checksum (constant-time to prevent timing side-channels).
     let checksum = crate::hash::blake3_hash(&plaintext);
-    if checksum != bundle.checksum {
+    if checksum.ct_eq(&bundle.checksum).unwrap_u8() != 1 {
         plaintext.zeroize();
         return Err("Integrity check failed: checksum mismatch".into());
     }
@@ -121,8 +122,14 @@ pub fn decrypt_key(bundle: &EncryptedKeyBundle, passphrase: &str) -> Result<Sign
     let key = SigningKey::from_bytes(&key_bytes);
     key_bytes.zeroize(); // Wipe key bytes copy.
 
-    // Verify public key matches.
-    if *key.verifying_key().as_bytes() != bundle.public_key {
+    // Verify public key matches (constant-time comparison).
+    if key
+        .verifying_key()
+        .as_bytes()
+        .ct_eq(&bundle.public_key)
+        .unwrap_u8()
+        != 1
+    {
         return Err("Decrypted key does not match stored public key".into());
     }
 
