@@ -1,5 +1,7 @@
 # SCCGUB — Symbolic Causal Chain General Universal Blockchain
 
+[![CI](https://github.com/tamirat-wubie/scc-blockchain/actions/workflows/ci.yml/badge.svg)](https://github.com/tamirat-wubie/scc-blockchain/actions/workflows/ci.yml)
+
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
 **Status:** Production hardening phase — v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). 9 crates, 87 source files, ~30K lines Rust, 413+ tests, all CI green (Ubuntu + Windows + security audit).
@@ -53,7 +55,7 @@ POST /api/v1/tx/submit               Submit signed transaction (hex-encoded)
 
 Structured error codes (12 machine-readable `ErrorCode` variants). CORS enabled. Legacy routes at `/api/*`.
 
-## CLI Commands (16)
+## CLI Commands (18)
 
 ```bash
 # Chain lifecycle
@@ -77,6 +79,10 @@ sccgub import FILE        # Import with CPoG re-validation
 
 # API server
 sccgub serve --port 3000  # Start REST API
+
+# Economics
+sccgub treasury           # Treasury status + conservation check
+sccgub escrow             # Escrow registry summary
 
 # Reference
 sccgub demo               # In-memory demonstration

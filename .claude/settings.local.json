@@ -13,7 +13,9 @@
       "Bash(grep -rn \"MAX_STATE_ENTRY_SIZE\\\\|MAX_INLINE\\\\|MAX_PAYLOAD\\\\|max_size\\\\|byte_length\" crates/sccgub-*/src/*.rs)",
       "Bash(grep -rn \"unreachable!\\(\\)\" crates/sccgub-*/src/*.rs)",
       "Bash(cargo audit:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(grep -rn 'Err\\(\"' crates/sccgub-*/src/*.rs)",
+      "Bash(grep \"    ///\" crates/sccgub-node/src/main.rs)"
     ]
   }
 }

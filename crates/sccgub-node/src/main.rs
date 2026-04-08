@@ -104,6 +104,10 @@ enum Commands {
     Demo,
     /// Show information about the chain/spec.
     Info,
+    /// Show treasury status (fees collected, rewards distributed, pending).
+    Treasury,
+    /// Show escrow registry summary.
+    Escrow,
 }
 
 #[tokio::main]
@@ -137,6 +141,8 @@ async fn main() {
         Commands::Serve { port } => cmd_serve(&cli.data_dir, port).await,
         Commands::Demo => cmd_demo(),
         Commands::Info => cmd_info(),
+        Commands::Treasury => cmd_treasury(&cli.data_dir),
+        Commands::Escrow => cmd_escrow(&cli.data_dir),
     }
 }
 
@@ -1499,4 +1505,80 @@ fn create_test_transition(
     tx.tx_id = blake3_hash(&canonical);
     tx.signature = sign(agent_key, &canonical);
     tx
+}
+
+fn cmd_treasury(data_dir: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    let chain = Chain::from_blocks(blocks);
+
+    println!("=== Treasury Status ===\n");
+    println!("  Epoch:              {}", chain.treasury.epoch);
+    println!("  Pending fees:       {}", chain.treasury.pending_fees);
+    println!(
+        "  Total collected:    {}",
+        chain.treasury.total_fees_collected
+    );
+    println!(
+        "  Total distributed:  {}",
+        chain.treasury.total_rewards_distributed
+    );
+    println!("  Total burned:       {}", chain.treasury.total_burned);
+    println!("  Epoch fees:         {}", chain.treasury.epoch_fees);
+    println!("  Epoch rewards:      {}", chain.treasury.epoch_rewards);
+    println!();
+
+    // Conservation check.
+    let sum = sccgub_types::tension::TensionValue(
+        chain.treasury.total_rewards_distributed.raw()
+            + chain.treasury.total_burned.raw()
+            + chain.treasury.pending_fees.raw(),
+    );
+    let conserved = sum == chain.treasury.total_fees_collected;
+    println!(
+        "  Conservation:       {} (collected = distributed + burned + pending)",
+        if conserved { "OK" } else { "VIOLATION" }
+    );
+}
+
+fn cmd_escrow(data_dir: &std::path::Path) {
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    let chain = Chain::from_blocks(blocks);
+
+    println!("=== Escrow Status ===\n");
+    println!("  Chain height:       {}", chain.height());
+    println!("  Total supply:       {}", chain.balances.total_supply());
+    println!("  Active accounts:    {}", chain.balances.account_count());
+    println!();
+    println!("  (Escrow registry is initialized per-session;");
+    println!("   persistent escrow state requires state trie integration.)");
 }
