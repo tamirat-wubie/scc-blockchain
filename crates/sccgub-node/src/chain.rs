@@ -1014,36 +1014,130 @@ mod tests {
     }
 
     #[test]
-    fn test_scce_constraint_wired_into_block_production() {
-        // This test proves the SCCE walker is wired into the production path:
-        // phi_traversal_block → phase_constraint → scce_validate → propagate_constraints
-        //
-        // Plant a "false" constraint into the chain's state trie targeting
-        // a symbol, then produce a block. If SCCE is wired, the constraint
-        // should be evaluated and the block should still produce (because
-        // empty blocks don't touch the constrained symbol). Then verify
-        // the constraint system is actually queried.
+    fn test_scce_constraint_persists_through_empty_block() {
+        // Smoke test: planting a constraint doesn't get clobbered by block production.
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
 
-        // Plant a constraint that will reject any transaction touching "test/symbol".
         let key = sccgub_execution::scce::constraint_key(b"test/symbol", b"c0");
-        chain.state.trie.insert(key, b"false".to_vec());
+        chain.state.trie.insert(key.clone(), b"false".to_vec());
 
-        // Produce an EMPTY block — should succeed because no transactions
-        // touch the constrained symbol.
         let result = chain.produce_block();
+        assert!(result.is_ok());
+
         assert!(
-            result.is_ok(),
-            "Empty block should succeed even with constraint in state: {:?}",
-            result.err()
+            chain.state.trie.get(&key).is_some(),
+            "Constraint must persist in state trie after block production"
+        );
+    }
+
+    #[test]
+    fn test_scce_rejects_tx_targeting_constrained_symbol() {
+        // REAL integration test: proves the SCCE walker is wired into
+        // the production path. If propagate_constraints were replaced with
+        // `return consistent: true`, this test would fail.
+        //
+        // Flow: validate_transition → phi_traversal_tx → phase_constraint
+        //       → scce_validate → propagate_constraints → UNSAT → reject
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // 1. Plant an unsatisfiable constraint at "test/constrained".
+        let constraint = sccgub_execution::scce::constraint_key(b"test/constrained", b"c0");
+        chain.state.trie.insert(constraint, b"false".to_vec());
+
+        // 2. Build a properly signed transaction targeting that symbol.
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            blake3_hash_concat(&[&pk, &sccgub_crypto::canonical::canonical_bytes(&seal)]);
+        let agent = AgentIdentity {
+            agent_id,
+            public_key: pk,
+            mfidel_seal: seal,
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: HashSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        let target = b"test/constrained".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: agent,
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "SCCE e2e test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"should_be_rejected".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "SCCE e2e test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        // Sign properly.
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+        // 3. Submit to mempool.
+        chain.submit_transition(tx).expect("submit should succeed");
+        assert_eq!(chain.mempool.len(), 1, "tx must be in mempool");
+
+        // 4. Produce a block. The tx should be FILTERED by the SCCE
+        //    constraint during drain_validated → validate_transition →
+        //    phi_traversal_tx → phase_constraint → scce_validate →
+        //    propagate_constraints → UNSAT.
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed");
+
+        // 5. Assert: the block has ZERO transactions because the
+        //    constrained tx was rejected during validation.
+        assert_eq!(
+            block.body.transitions.len(),
+            0,
+            "Constrained tx must be filtered out by SCCE. If this fails, \
+             the SCCE walker is not wired into the production path."
         );
 
-        // Verify the constraint key is in the trie (confirming our plant worked).
-        let verify_key = sccgub_execution::scce::constraint_key(b"test/symbol", b"c0");
+        // 6. Verify the state was NOT mutated by the rejected tx.
         assert!(
-            chain.state.trie.get(&verify_key).is_some(),
-            "Constraint must persist in state trie after block production"
+            chain
+                .state
+                .trie
+                .get(&b"test/constrained".to_vec())
+                .is_none()
+                || chain.state.trie.get(&b"test/constrained".to_vec())
+                    != Some(&b"should_be_rejected".to_vec()),
+            "Rejected tx must not mutate state"
         );
     }
 }
