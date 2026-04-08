@@ -1,16 +1,23 @@
-// COLLAPSED PHI TRAVERSAL — N-11 resolved
+// PHI TRAVERSAL — SINGLE SOURCE OF TRUTH (N-11 structural)
 //
 // Per-tx semantic checks live in ONE place: `phi_check_single_tx()`.
-// Both traversal entry-points call this shared function:
+// Two traversal entry-points call this shared function:
 //
 //   phi_traversal_block  — runs at CPoG validation time (per-block).
 //                          For per-tx phases: iterates all txs through
 //                          the shared function. For block-only phases:
 //                          runs block-level logic.
 //
-//   phi_traversal_tx     — runs at mempool drain time (per-transaction).
-//                          Calls the shared function for per-tx phases.
+//   phi_traversal_tx     — runs inside the gas loop (per-transaction).
+//                          Called by validate_transition → validate_transition_metered
+//                          → produce_block's gas loop. Every rejection here produces
+//                          a CausalReceipt (closing N-3-mempool).
 //                          Block-only phases auto-pass.
+//
+// IMPORTANT: The mempool does NOT call phi_traversal_tx. Mempool admission
+// uses admit_check() (lightweight: sig length, nonce, size, WHBinding structure).
+// All Phi-phase semantic checks run in the gas loop where rejections produce
+// receipts. This ensures no transition is silently dropped for semantic reasons.
 //
 // Adding a semantic check to a per-tx phase means editing ONLY
 // `phi_check_single_tx()`. Both paths pick it up automatically.

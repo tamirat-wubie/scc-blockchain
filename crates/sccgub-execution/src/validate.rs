@@ -31,6 +31,72 @@ pub fn seal_receipt_post_state(
     Ok(())
 }
 
+/// Lightweight mempool admission check — cheap, structural only.
+///
+/// This is the ONLY validation that runs at mempool drain time. It checks:
+/// - Signature length (malformed input defense)
+/// - Nonce sequence (replay defense)
+/// - Target/payload size (memory exhaustion defense)
+/// - WHBinding structural completeness (non-zero who, non-empty where/what)
+///
+/// It does NOT run: Ed25519 verification, agent_id binding, WHBinding cross-checks,
+/// Phi traversal, SCCE constraint propagation, ontology check, payload consistency.
+/// Those all run in `validate_transition_metered` inside the gas loop, where every
+/// rejection produces a receipt (closing N-3-mempool).
+pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result<(), String> {
+    // 1. Signature length (cheap, defends against malformed input).
+    if tx.signature.len() < 64 {
+        return Err(format!(
+            "Signature too short: {} bytes, need >= 64",
+            tx.signature.len()
+        ));
+    }
+
+    // 2. Nonce must be >= 1 and sequential.
+    if tx.nonce == 0 {
+        return Err("Nonce must be >= 1".into());
+    }
+    let last_nonce = state
+        .agent_nonces
+        .get(&tx.actor.agent_id)
+        .copied()
+        .unwrap_or(0);
+    if tx.nonce != last_nonce + 1 {
+        return Err(format!(
+            "Nonce sequence: expected {}, got {}",
+            last_nonce + 1,
+            tx.nonce
+        ));
+    }
+
+    // 3. Size limits.
+    if tx.intent.target.len() > MAX_SYMBOL_ADDRESS_LEN {
+        return Err(format!(
+            "Target address {} bytes exceeds max {}",
+            tx.intent.target.len(),
+            MAX_SYMBOL_ADDRESS_LEN
+        ));
+    }
+    if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
+        if key.len() > MAX_STATE_ENTRY_SIZE || value.len() > MAX_STATE_ENTRY_SIZE {
+            return Err("Payload key or value exceeds 1MB size limit".into());
+        }
+    }
+
+    // 4. WHBinding structural completeness (cheap checks only, no cross-checks).
+    if tx.wh_binding_intent.who == sccgub_types::ZERO_HASH {
+        return Err("WHBinding: 'who' is zero".into());
+    }
+    if tx.wh_binding_intent.r#where.is_empty() {
+        return Err("WHBinding: 'where' is empty".into());
+    }
+    if tx.wh_binding_intent.what_declared.is_empty() {
+        return Err("WHBinding: 'what_declared' is empty".into());
+    }
+
+    Ok(())
+}
+
 /// Validate a single transition before inclusion in a block.
 /// Checks: WHBinding, signature, agent_id binding, nonce, size limits, Phi traversal.
 /// Returns errors list on failure.
@@ -442,5 +508,81 @@ mod tests {
             expression: "x > 0".into(),
         }];
         assert_ne!(canonical_tx_bytes(&tx1), canonical_tx_bytes(&tx2));
+    }
+
+    // --- admit_check tests ---
+
+    #[test]
+    fn test_admit_check_valid_tx_passes() {
+        let tx = make_signed_tx();
+        let state = ManagedWorldState::new();
+        assert!(admit_check(&tx, &state).is_ok());
+    }
+
+    #[test]
+    fn test_admit_check_short_signature_rejected() {
+        let mut tx = make_signed_tx();
+        tx.signature = vec![0u8; 32]; // Too short.
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("Signature too short"));
+    }
+
+    #[test]
+    fn test_admit_check_nonce_zero_rejected() {
+        let mut tx = make_signed_tx();
+        tx.nonce = 0;
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("Nonce"));
+    }
+
+    #[test]
+    fn test_admit_check_nonce_replay_rejected() {
+        let tx = make_signed_tx();
+        let mut state = ManagedWorldState::new();
+        state.agent_nonces.insert(tx.actor.agent_id, 100);
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("Nonce sequence"));
+    }
+
+    #[test]
+    fn test_admit_check_zero_who_rejected() {
+        let mut tx = make_signed_tx();
+        tx.wh_binding_intent.who = sccgub_types::ZERO_HASH;
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("who"));
+    }
+
+    #[test]
+    fn test_admit_check_empty_where_rejected() {
+        let mut tx = make_signed_tx();
+        tx.wh_binding_intent.r#where = vec![];
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("where"));
+    }
+
+    #[test]
+    fn test_admit_check_empty_what_rejected() {
+        let mut tx = make_signed_tx();
+        tx.wh_binding_intent.what_declared = String::new();
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(err.contains("what_declared"));
+    }
+
+    #[test]
+    fn test_admit_check_does_not_run_ed25519() {
+        // A tampered signature should PASS admit_check (it only checks length).
+        // Ed25519 verification runs in validate_transition, not admit_check.
+        let mut tx = make_signed_tx();
+        tx.signature[0] ^= 0xFF; // Tamper.
+        let state = ManagedWorldState::new();
+        assert!(
+            admit_check(&tx, &state).is_ok(),
+            "admit_check should not verify Ed25519 — that's the gas loop's job"
+        );
     }
 }

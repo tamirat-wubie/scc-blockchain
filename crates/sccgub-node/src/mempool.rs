@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use sccgub_execution::validate::validate_transition;
+use sccgub_execution::validate::admit_check;
 use sccgub_governance::containment::ContainmentState;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::tension::TensionValue;
@@ -54,8 +54,15 @@ impl Mempool {
         Ok(())
     }
 
-    /// Drain validated transitions. Tracks nonces locally during drain to prevent
-    /// same-agent duplicate nonces within a single block (fail-closed).
+    /// Drain admitted transitions. Lightweight structural checks only.
+    ///
+    /// Runs `admit_check` (signature length, nonce, size limits, WHBinding structure)
+    /// but NOT Phi traversal, Ed25519 verification, or SCCE constraint propagation.
+    /// Those expensive checks run in the gas loop inside `produce_block`, where every
+    /// rejection produces a receipt (closing N-3-mempool).
+    ///
+    /// Tracks nonces locally during drain to prevent same-agent duplicate nonces
+    /// within a single block (fail-closed).
     pub fn drain_validated(&mut self, state: &ManagedWorldState) -> Vec<SymbolicTransition> {
         let mut validated = Vec::new();
         let mut to_remove: Vec<Hash> = Vec::new();
@@ -65,7 +72,9 @@ impl Mempool {
         for tx in &self.pending {
             let node_id = tx.actor.agent_id;
 
-            // Check nonce: must be exactly last + 1 (sequential, no gaps).
+            // Check nonce with local tracking (catches same-block duplicates).
+            // This is more precise than admit_check's nonce check because it
+            // tracks nonces assigned to earlier txs in this same drain batch.
             let committed = state.agent_nonces.get(&node_id).copied().unwrap_or(0);
             let local = local_nonces.get(&node_id).copied().unwrap_or(committed);
             if tx.nonce == 0 || tx.nonce != local + 1 {
@@ -76,7 +85,8 @@ impl Mempool {
                 continue;
             }
 
-            match validate_transition(tx, state) {
+            // Lightweight admission: structural checks only, no Phi/SCCE/Ed25519.
+            match admit_check(tx, state) {
                 Ok(()) => {
                     // Update local nonce tracker.
                     local_nonces.insert(node_id, tx.nonce);

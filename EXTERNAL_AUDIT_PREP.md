@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-07
-**Repo:** 108 commits, 488 tests, 9 crates, ~22.5K lines Rust
+**Repo:** 111 commits, 496 tests, 9 crates, ~22.5K lines Rust
 
 ---
 
@@ -95,7 +95,7 @@ Auditors should focus on these files first:
 The 13-phase Phi traversal runs in two contexts:
 
 - **Block-level** (`phi_traversal_block`): Called during CPoG validation at block import/production time. Runs all 13 phases.
-- **Transaction-level** (`phi_traversal_tx`): Called during mempool admission via `validate_transition()`. Runs per-tx phases; block-only phases auto-pass.
+- **Transaction-level** (`phi_traversal_tx`): Called inside the gas loop via `validate_transition_metered` → `validate_transition`. Runs per-tx phases; block-only phases auto-pass. Every rejection here produces a `CausalReceipt`.
 
 **N-11 structural enforcement**: Both paths call `phi_check_single_tx()` for
 per-tx phases (Distinction, Constraint, Ontology, Form, Organization, Module,
@@ -106,16 +106,15 @@ paths pick it up automatically.
 Block-only phases (Topology, Body, Architecture, Performance, Feedback,
 Evolution) run only in `phi_traversal_block`.
 
-**Open architectural item**: The dual-path *structure* still exists — two
-entry points, two callers (mempool vs CPoG). The per-tx *content* is unified
-but the execution paths are separate. N-3-mempool (mempool-rejected
-transitions produce no receipt) remains open and requires an architectural
-decision about whether to make mempool admission lightweight or to refactor
-`drain_validated` to return rejected receipts.
+**Mempool admission** uses `admit_check()` (lightweight: signature length,
+nonce sequence, size limits, WHBinding structural completeness). It does NOT
+run Phi traversal, Ed25519 verification, SCCE constraint propagation, or
+ontology checks. Those all run in the gas loop where every rejection produces
+a receipt (N-3-mempool closed).
 
 **Recommended audit action**: Verify that `phi_check_single_tx` covers all
-per-tx-relevant checks, and that block-only phase functions don't duplicate
-per-tx logic that should be in the shared function.
+per-tx-relevant checks, and that `admit_check` does not accidentally run
+expensive checks that belong in the gas loop.
 
 ## 6. Ontology Table (Consensus-Critical)
 
@@ -137,7 +136,7 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 ## 7. Audit Findings Summary
 
 An 11-session internal audit cycle identified 38 findings:
-- **36 closed** (code fixes applied and verified)
+- **37 closed** (code fixes applied and verified, including N-3-mempool)
 - **1 false positive** (F-5: see below)
 - **1 deferred** (Patch 03: ConsensusParams in genesis — architectural, ~1 day effort)
 
@@ -171,8 +170,14 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-15: Phase 6 (Organization) drift — governance precedence enforcement missing from tx path. Medium severity: DoS surface where governance-kind txs with insufficient authority were accepted into the mempool unchecked. Fixed.
 - N-16: Phase 8 (Execution) drift — inconsistent completeness checks between paths. Unified.
 
+### N-3-mempool closed:
+- Mempool admission refactored to `admit_check()` (lightweight structural checks).
+- All Phi-phase semantic checks moved to the gas loop (`validate_transition_metered`),
+  where every rejection produces a `CausalReceipt`.
+- Proven by integration test: `test_scce_rejects_tx_targeting_constrained_symbol`
+  asserts that a semantically-bad tx produces a reject receipt.
+
 ### Open items:
-- N-3-mempool: Mempool-rejected transitions produce no receipt. Requires architectural decision on whether mempool admission is lightweight or heavyweight.
 - N-9: `what_actual` capture not implemented (StateDelta recording during apply).
 - Patch 03: ConsensusParams embedded in genesis block for fork-safe parameter evolution.
 

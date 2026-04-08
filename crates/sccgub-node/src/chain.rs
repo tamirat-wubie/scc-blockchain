@@ -1125,8 +1125,9 @@ mod tests {
         // the production path. If propagate_constraints were replaced with
         // `return consistent: true`, this test would fail.
         //
-        // Flow: validate_transition → phi_traversal_tx → phase_constraint
-        //       → scce_validate → propagate_constraints → UNSAT → reject
+        // Flow: admit_check (mempool) → gas loop → validate_transition_metered
+        //       → validate_transition → phi_traversal_tx → phase_constraint
+        //       → scce_validate → propagate_constraints → UNSAT → reject receipt
         use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
         use sccgub_types::governance::PrecedenceLevel;
         use sccgub_types::mfidel::MfidelAtomicSeal;
@@ -1199,16 +1200,16 @@ mod tests {
         chain.submit_transition(tx).expect("submit should succeed");
         assert_eq!(chain.mempool.len(), 1, "tx must be in mempool");
 
-        // 4. Produce a block. The tx should be FILTERED by the SCCE
-        //    constraint during drain_validated → validate_transition →
-        //    phi_traversal_tx → phase_constraint → scce_validate →
-        //    propagate_constraints → UNSAT.
+        // 4. Produce a block. The tx passes admit_check (lightweight) but is
+        //    REJECTED by the gas loop: validate_transition_metered →
+        //    validate_transition → phi_traversal_tx → phase_constraint →
+        //    scce_validate → propagate_constraints → UNSAT → reject receipt.
         let block = chain
             .produce_block()
             .expect("block production should succeed");
 
         // 5. Assert: the block has ZERO transactions because the
-        //    constrained tx was rejected during validation.
+        //    constrained tx was rejected during gas-loop validation.
         assert_eq!(
             block.body.transitions.len(),
             0,
@@ -1227,6 +1228,17 @@ mod tests {
                     != Some(&b"should_be_rejected".to_vec()),
             "Rejected tx must not mutate state"
         );
+
+        // 7. N-3 closure: the rejected tx must have produced a reject receipt.
+        // Before the mempool → admit_check refactor, this tx would have been
+        // silently dropped at drain_validated time with no receipt. Now it passes
+        // admit_check, enters the gas loop, and is rejected with a receipt.
+        assert!(
+            !chain.latest_rejected_receipts.is_empty(),
+            "N-3: SCCE-rejected tx must produce a reject receipt in the gas loop"
+        );
+        let reject = &chain.latest_rejected_receipts[0];
+        assert!(!reject.verdict.is_accepted(), "Receipt must be a rejection");
     }
 
     #[test]
