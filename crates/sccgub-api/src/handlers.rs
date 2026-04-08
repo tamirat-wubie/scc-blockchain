@@ -12,6 +12,10 @@ pub struct AppState {
     pub state: ManagedWorldState,
     pub chain_id: [u8; 32],
     pub finalized_height: u64,
+    /// Pending transactions submitted via API (not yet included in a block).
+    pub pending_txs: Vec<sccgub_types::transition::SymbolicTransition>,
+    /// Transaction IDs already seen (deduplication).
+    pub seen_tx_ids: std::collections::HashSet<[u8; 32]>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -150,9 +154,9 @@ pub async fn get_state(
     }))
 }
 
-/// POST /tx/submit — submit a raw signed transaction.
+/// POST /tx/submit — submit a raw signed transaction to the pending pool.
 pub async fn submit_tx(
-    _state: axum::extract::State<SharedState>,
+    state: axum::extract::State<SharedState>,
     axum::extract::Json(req): axum::extract::Json<SubmitTransactionRequest>,
 ) -> (
     axum::http::StatusCode,
@@ -199,7 +203,34 @@ pub async fn submit_tx(
 
     let tx_id = hex::encode(tx.tx_id);
 
-    // For now, acknowledge receipt. Full mempool integration requires chain access.
+    // Validate and push to pending pool.
+    let mut app = state.write().await;
+
+    // Deduplication: reject if already seen or confirmed.
+    if app.seen_tx_ids.contains(&tx.tx_id) {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(ApiResponse::err(
+                ErrorCode::NonceReplay,
+                format!("Transaction {} already submitted", tx_id),
+            )),
+        );
+    }
+
+    // Basic validation against current state.
+    if let Err(errors) = sccgub_execution::validate::validate_transition(&tx, &app.state) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(ApiResponse::err(
+                ErrorCode::InvalidTransaction,
+                format!("Validation failed: {}", errors.join("; ")),
+            )),
+        );
+    }
+
+    // Admit to pending pool.
+    app.seen_tx_ids.insert(tx.tx_id);
+    app.pending_txs.push(tx);
     // In production, this would push to the mempool and return pending status.
     let _ = tx; // Transaction deserialized and validated.
 

@@ -118,9 +118,11 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    let passphrase = &cli.passphrase;
+
     match cli.command {
-        Commands::Init => cmd_init(&cli.data_dir),
-        Commands::Produce { txs } => cmd_produce(&cli.data_dir, txs),
+        Commands::Init => cmd_init(&cli.data_dir, passphrase),
+        Commands::Produce { txs } => cmd_produce(&cli.data_dir, txs, passphrase),
         Commands::ShowBlock { height } => cmd_show_block(&cli.data_dir, height),
         Commands::Status => cmd_status(&cli.data_dir),
         Commands::ShowState => cmd_show_state(&cli.data_dir),
@@ -128,7 +130,7 @@ async fn main() {
         Commands::SearchTx { prefix } => cmd_search_tx(&cli.data_dir, &prefix),
         Commands::Export { output } => cmd_export(&cli.data_dir, &output),
         Commands::Import { input } => cmd_import(&cli.data_dir, &input),
-        Commands::Transfer { amount } => cmd_transfer(&cli.data_dir, amount),
+        Commands::Transfer { amount } => cmd_transfer(&cli.data_dir, amount, passphrase),
         Commands::Stats => cmd_stats(&cli.data_dir),
         Commands::Balance { agent } => cmd_balance(&cli.data_dir, &agent),
         Commands::Health => cmd_health(&cli.data_dir),
@@ -171,7 +173,7 @@ fn replay_chain_state(
     (state, balances)
 }
 
-fn cmd_init(data_dir: &std::path::Path) {
+fn cmd_init(data_dir: &std::path::Path, passphrase: &str) {
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -199,7 +201,7 @@ fn cmd_init(data_dir: &std::path::Path) {
         .save_metadata(&chain.chain_id)
         .expect("Failed to save metadata");
     store
-        .save_validator_key(&chain.validator_key, "")
+        .save_validator_key(&chain.validator_key, passphrase)
         .expect("Failed to save validator key");
 
     println!("Chain initialized at {:?}", data_dir);
@@ -215,7 +217,7 @@ fn cmd_init(data_dir: &std::path::Path) {
     );
 }
 
-fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
+fn cmd_produce(data_dir: &std::path::Path, num_txs: u32, passphrase: &str) {
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -244,7 +246,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32) {
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
-        match store.load_validator_key("") {
+        match store.load_validator_key(passphrase) {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => eprintln!("Warning: could not load validator key: {}", e),
         }
@@ -870,7 +872,7 @@ fn cmd_search_tx(data_dir: &std::path::Path, prefix: &str) {
     }
 }
 
-fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
+fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -891,7 +893,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64) {
 
     // Load validator key (sender).
     if store.has_validator_key() {
-        match store.load_validator_key("") {
+        match store.load_validator_key(passphrase) {
             Ok(key) => chain.set_validator_key(key),
             Err(e) => {
                 eprintln!("Failed to load validator key: {}", e);
@@ -1293,6 +1295,8 @@ async fn cmd_serve(data_dir: &std::path::Path, port: u16) {
             state,
             chain_id,
             finalized_height: finality.finalized_height,
+            pending_txs: Vec::new(),
+            seen_tx_ids: std::collections::HashSet::new(),
         }),
     ));
 

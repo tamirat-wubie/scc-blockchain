@@ -63,6 +63,8 @@ mod tests {
             state: ManagedWorldState::new(),
             chain_id: [1u8; 32],
             finalized_height: 0,
+            pending_txs: Vec::new(),
+            seen_tx_ids: std::collections::HashSet::new(),
         }))
     }
 

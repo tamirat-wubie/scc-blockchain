@@ -110,6 +110,27 @@ cargo run -- serve             # Start API server
 | Runtime invariants | 7 checks | Supply, nonce, state root, tension, receipts, causality |
 | CI | 3 jobs | Ubuntu (fmt+build+test+clippy), Windows (build+test), security (cargo-audit) |
 
+## Conformance Matrix
+
+| Invariant | Enforcing Module | Test File | Failure Mode |
+|-----------|-----------------|-----------|--------------|
+| INV-1: Valid CPoG | `execution/cpog.rs` | `integration_test.rs` | Block rejected with error list |
+| INV-2: Phi traversal | `execution/phi.rs` | `integration_test.rs` | Phase failure halts traversal |
+| INV-3: Governance precedence | `execution/phi.rs` (phase 6) | `integration_test.rs` | Transition rejected |
+| INV-4: No fork | `consensus/safety.rs` | `adversarial_test.rs` | Equivocators identified + slashed |
+| INV-5: Tension budget | `execution/phi.rs` (phase 9) | `integration_test.rs` | Block rejected |
+| INV-6: Identity immutable | `execution/validate.rs` | `integration_test.rs` | agent_id mismatch rejected |
+| INV-7: WHBinding complete | `execution/wh_check.rs` | `integration_test.rs` | Transition rejected |
+| INV-8: Contract decidability | `execution/contract.rs` | `execution` unit tests | Step limit exceeded → reject |
+| INV-13: Responsibility bound | `governance/responsibility.rs` | `integration_test.rs` | Contribution capped |
+| INV-17: Causal acyclicity | `execution/phi.rs` (phase 4) | `integration_test.rs` | Cycle detected → reject |
+| Supply conservation | `state/apply.rs`, `invariants.rs` | `adversarial_test.rs` | Transfer/escrow/treasury tests |
+| Treasury conservation | `state/treasury.rs` | `adversarial_test.rs` | collected = distributed + burned + pending |
+| Escrow conservation | `state/escrow.rs` | `adversarial_test.rs` | supply = balances + locked |
+| Nonce monotonicity | `state/world.rs`, `execution/validate.rs` | `adversarial_test.rs` | Replay rejected |
+| Vote authentication | `consensus/protocol.rs` | `adversarial_test.rs` | Forged/corrupted/non-member rejected |
+| Receipt completeness | `execution/invariants.rs` | `execution` unit tests | Missing/rejected receipt detected |
+
 ## Security Model
 
 ### Conservation Laws (consensus-critical)
