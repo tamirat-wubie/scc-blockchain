@@ -131,18 +131,21 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         details: "Module boundaries respected".into(),
     });
 
-    // Phase 8: Execution — verify signature present (>= 64 bytes) and termination.
-    let sig_ok = tx.signature.len() >= 64;
+    // Phase 8: Execution — verify transaction structural completeness.
+    // NOTE: Ed25519 signature verification is done by validate_transition()
+    // BEFORE phi_traversal_tx is called. Duplicating it here would be dead code.
+    // Phase 8 checks structural completeness: non-empty target, non-zero nonce.
+    let exec_ok = !tx.intent.target.is_empty() && tx.nonce > 0;
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Execution,
-        passed: sig_ok,
-        details: if sig_ok {
-            "Signature present".into()
+        passed: exec_ok,
+        details: if exec_ok {
+            "Execution structurally complete".into()
         } else {
-            "Missing signature".into()
+            "Missing target or zero nonce".into()
         },
     });
-    if !sig_ok {
+    if !exec_ok {
         log.finalize();
         return log;
     }

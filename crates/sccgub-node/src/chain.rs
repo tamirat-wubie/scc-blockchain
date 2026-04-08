@@ -51,9 +51,10 @@ impl Chain {
     pub fn init() -> Self {
         let validator_key = generate_keypair();
         let pk = *validator_key.verifying_key().as_bytes();
-        let seal = MfidelAtomicSeal::from_height(0);
-        // Agent ID = Hash(pubkey ++ seal) — canonical derivation matching validate.rs.
-        let validator_id = blake3_hash_concat(&[&pk, &canonical_bytes(&seal)]);
+        // validator_id = public_key directly (Position A).
+        // This enables real Ed25519 verification at import without a registry.
+        // Key rotation requires a Constitutional governance proposal.
+        let validator_id = pk;
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
         let mut state = ManagedWorldState::new();
@@ -250,10 +251,8 @@ impl Chain {
         let height = parent.header.height + 1;
 
         // Anti-concentration: check consecutive proposal limit.
-        let validator_id_for_check = blake3_hash_concat(&[
-            self.validator_key.verifying_key().as_bytes(),
-            &canonical_bytes(&MfidelAtomicSeal::from_height(0)),
-        ]);
+        // validator_id = public_key directly (Position A).
+        let validator_id_for_check: [u8; 32] = *self.validator_key.verifying_key().as_bytes();
         if let Err(e) = self
             .power_tracker
             .check_proposal(&validator_id_for_check, &self.governance_limits)
@@ -625,12 +624,11 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Verify the producer signature on a block.
+/// Verify the producer's Ed25519 signature on a block.
 ///
-/// Checks: signature present (>= 64 bytes), validator_id is non-zero.
-/// CPoG state-root replay provides the deeper integrity gate.
-/// Full Ed25519 verification requires a validator_id → public_key
-/// registry (future: multi-validator mode).
+/// validator_id = Ed25519 public key directly (Position A).
+/// Signature is over BLAKE3(canonical(header, proof_with_sig_cleared)).
+/// No registry needed — the public key IS the validator identity.
 fn verify_producer_signature(block: &Block) -> Result<(), String> {
     let sig = &block.proof.validator_signature;
     if sig.len() < 64 {
@@ -640,8 +638,19 @@ fn verify_producer_signature(block: &Block) -> Result<(), String> {
         ));
     }
 
-    if block.header.validator_id == [0u8; 32] {
-        return Err("validator_id is zero".into());
+    let public_key = block.header.validator_id;
+    if public_key == [0u8; 32] {
+        return Err("validator_id (public key) is zero".into());
+    }
+
+    // Build signing payload: hash(header, proof_with_sig_cleared).
+    let mut proof_for_signing = block.proof.clone();
+    proof_for_signing.validator_signature = Vec::new();
+    let payload = canonical_bytes(&(&block.header, &proof_for_signing));
+    let payload_hash = blake3_hash(&payload);
+
+    if !sccgub_crypto::signature::verify(&public_key, &payload_hash, sig) {
+        return Err("Ed25519 producer signature verification failed".into());
     }
 
     Ok(())
@@ -684,7 +693,8 @@ fn build_genesis_block(
         version: 1,
     };
 
-    let proof = CausalProof {
+    // Build proof without signature, then sign the (header, proof) pair.
+    let mut proof = CausalProof {
         block_height: 0,
         transitions_proven: vec![],
         phi_traversal_log: PhiTraversalLog::new(),
@@ -693,9 +703,13 @@ fn build_genesis_block(
         tension_after: TensionValue::ZERO,
         constraint_results: vec![],
         recursion_depth: 0,
-        validator_signature: sign(validator_key, &header_data),
+        validator_signature: vec![],
         causal_hash: blake3_hash(b"genesis-proof"),
     };
+    // Sign over hash(header, proof_with_empty_sig) — matches verify_producer_signature.
+    let signing_payload = canonical_bytes(&(&header, &proof));
+    let signing_hash = blake3_hash(&signing_payload);
+    proof.validator_signature = sign(validator_key, &signing_hash);
 
     Block {
         header,
@@ -826,7 +840,8 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let header_bytes = canonical_bytes(&header);
     header.block_id = blake3_hash(&header_bytes);
 
-    let proof = CausalProof {
+    // Build proof without signature, then sign (header, proof) pair.
+    let mut proof = CausalProof {
         block_height: height,
         transitions_proven: vec![],
         phi_traversal_log: PhiTraversalLog::default(),
@@ -835,9 +850,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         tension_after: tension_before,
         constraint_results: vec![],
         recursion_depth: 0,
-        validator_signature: sign(validator_key, &header_bytes),
+        validator_signature: vec![],
         causal_hash: blake3_hash_concat(&[&parent_id, &transition_root]),
     };
+    let signing_payload = canonical_bytes(&(&header, &proof));
+    let signing_hash = blake3_hash(&signing_payload);
+    proof.validator_signature = sign(validator_key, &signing_hash);
 
     let transition_count = transitions.len() as u32;
     Block {
