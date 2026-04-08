@@ -344,10 +344,10 @@ mod tests {
             responsibility: ResponsibilityState::default(),
         };
 
-        let target = b"test/key".to_vec();
+        let target = b"data/test/key".to_vec();
         let nonce = 1u128;
         let payload = OperationPayload::Write {
-            key: b"test/key".to_vec(),
+            key: b"data/test/key".to_vec(),
             value: b"value".to_vec(),
         };
 

@@ -220,9 +220,15 @@ fn test_full_chain_lifecycle() {
     );
 
     // 4. Submit transitions.
-    let tx1 = create_write_tx(&agent, &agent_key, b"account/alice/balance", b"1000", 1);
-    let tx2 = create_write_tx(&agent, &agent_key, b"account/bob/balance", b"500", 2);
-    let tx3 = create_write_tx(&agent, &agent_key, b"config/max_supply", b"1000000", 3);
+    let tx1 = create_write_tx(
+        &agent,
+        &agent_key,
+        b"data/account/alice/balance",
+        b"1000",
+        1,
+    );
+    let tx2 = create_write_tx(&agent, &agent_key, b"data/account/bob/balance", b"500", 2);
+    let tx3 = create_write_tx(&agent, &agent_key, b"data/config/max_supply", b"1000000", 3);
 
     // 5. Validate each transition individually.
     for tx in [&tx1, &tx2, &tx3] {
@@ -281,15 +287,15 @@ fn test_full_chain_lifecycle() {
 
     // 10. Verify state was applied.
     assert_eq!(
-        state.get(&b"account/alice/balance".to_vec()),
+        state.get(&b"data/account/alice/balance".to_vec()),
         Some(&b"1000".to_vec())
     );
     assert_eq!(
-        state.get(&b"account/bob/balance".to_vec()),
+        state.get(&b"data/account/bob/balance".to_vec()),
         Some(&b"500".to_vec())
     );
     assert_eq!(
-        state.get(&b"config/max_supply".to_vec()),
+        state.get(&b"data/config/max_supply".to_vec()),
         Some(&b"1000000".to_vec())
     );
 
@@ -363,7 +369,7 @@ fn test_invalid_transition_missing_wh_binding() {
     let (agent, agent_key) = create_test_agent();
 
     // Create transition with empty WHBinding fields.
-    let mut tx = create_write_tx(&agent, &agent_key, b"test", b"data", 0);
+    let mut tx = create_write_tx(&agent, &agent_key, b"data/test", b"data", 0);
     tx.wh_binding_intent.who = ZERO_HASH; // Make it invalid.
 
     let result = check_wh_binding_intent(&tx.wh_binding_intent);
@@ -637,7 +643,7 @@ fn test_multi_block_chain() {
         let tx = create_write_tx(
             &agent,
             &agent_key,
-            format!("block/{}/data", i).as_bytes(),
+            format!("data/block/{}", i).as_bytes(),
             format!("payload_{}", i).as_bytes(),
             i as u128,
         );
@@ -677,7 +683,7 @@ fn test_multi_block_chain() {
 
     // Verify final state.
     assert_eq!(
-        state.get(&b"block/10/data".to_vec()),
+        state.get(&b"data/block/10".to_vec()),
         Some(&b"payload_10".to_vec())
     );
     assert_ne!(state.state_root(), ZERO_HASH);
@@ -972,9 +978,15 @@ fn test_end_to_end_all_subsystems() {
     assert_eq!(balances.total_supply(), TensionValue::from_integer(100_000));
 
     // ===== 4. TRANSACTIONS + BLOCK #1 =====
-    let tx1 = create_write_tx(&agent_alice, &key_alice, b"alice/data", b"hello world", 1);
-    let tx2 = create_write_tx(&agent_alice, &key_alice, b"alice/config", b"v1", 2);
-    let tx3 = create_write_tx(&agent_alice, &key_alice, b"alice/counter", b"42", 3);
+    let tx1 = create_write_tx(
+        &agent_alice,
+        &key_alice,
+        b"data/alice/data",
+        b"hello world",
+        1,
+    );
+    let tx2 = create_write_tx(&agent_alice, &key_alice, b"data/alice/config", b"v1", 2);
+    let tx3 = create_write_tx(&agent_alice, &key_alice, b"data/alice/counter", b"42", 3);
 
     let block1 = build_test_block(
         1,
@@ -1012,17 +1024,20 @@ fn test_end_to_end_all_subsystems() {
 
     // Verify state was applied.
     assert_eq!(
-        state.get(&b"alice/data".to_vec()),
+        state.get(&b"data/alice/data".to_vec()),
         Some(&b"hello world".to_vec())
     );
-    assert_eq!(state.get(&b"alice/counter".to_vec()), Some(&b"42".to_vec()));
+    assert_eq!(
+        state.get(&b"data/alice/counter".to_vec()),
+        Some(&b"42".to_vec())
+    );
     assert_ne!(state.state_root(), ZERO_HASH);
 
     // State root matches block header.
     assert_eq!(state.state_root(), block1.header.state_root);
 
     // ===== 8. NONCE REPLAY REJECTED =====
-    let replay_tx = create_write_tx(&agent_alice, &key_alice, b"alice/replay", b"bad", 1);
+    let replay_tx = create_write_tx(&agent_alice, &key_alice, b"data/alice/replay", b"bad", 1);
     let replay_result = sccgub_execution::validate::validate_transition(&replay_tx, &state);
     assert!(replay_result.is_err(), "Nonce replay should be rejected");
 
@@ -1170,7 +1185,7 @@ fn test_end_to_end_all_subsystems() {
     assert_eq!(domain_registry.active_packs().len(), 1);
 
     // ===== 17. MULTI-BLOCK CHAIN =====
-    let tx4 = create_write_tx(&agent_alice, &key_alice, b"alice/block2", b"data2", 4);
+    let tx4 = create_write_tx(&agent_alice, &key_alice, b"data/alice/block2", b"data2", 4);
     let block2 = build_test_block(
         2,
         block1.header.block_id,
@@ -1215,7 +1230,7 @@ fn test_duplicate_mempool_submission_rejected() {
     use std::collections::HashSet;
 
     let (agent, agent_key) = create_test_agent();
-    let tx = create_write_tx(&agent, &agent_key, b"dedup/test", b"data", 1);
+    let tx = create_write_tx(&agent, &agent_key, b"data/dedup/test", b"data", 1);
 
     // Manual mempool to test dedup.
     let mut seen = HashSet::new();
@@ -1335,7 +1350,7 @@ fn test_inv4_no_fork_deterministic_finality() {
         &state,
     );
 
-    let tx = create_write_tx(&agent, &agent_key, b"inv4/test", b"data", 1);
+    let tx = create_write_tx(&agent, &agent_key, b"data/inv4/test", b"data", 1);
 
     let block_a = build_test_block(
         1,

@@ -79,15 +79,27 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         return log;
     }
 
-    // Phase 3: Ontology — verify transition target type is valid.
-    let ontology_ok = !tx.intent.target.is_empty();
+    // Phase 3: Ontology — verify target falls within allowed namespaces for this kind.
+    let ontology_result = crate::ontology::check_ontology(tx);
+    let ontology_ok = ontology_result.is_allowed();
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Ontology,
         passed: ontology_ok,
-        details: if ontology_ok {
-            "Type check passed".into()
-        } else {
-            "Empty target address".into()
+        details: match &ontology_result {
+            crate::ontology::OntologyResult::Allowed => "Ontology verified".into(),
+            crate::ontology::OntologyResult::Rejected {
+                kind,
+                target,
+                allowed,
+            } => format!(
+                "Kind {:?} cannot target {} (allowed: {:?})",
+                kind,
+                String::from_utf8_lossy(target),
+                allowed
+                    .iter()
+                    .map(|n| String::from_utf8_lossy(n).into_owned())
+                    .collect::<Vec<_>>(),
+            ),
         },
     });
     if !ontology_ok {
@@ -235,11 +247,39 @@ fn phase_constraint(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult 
     }
 }
 
-fn phase_ontology(_block: &Block) -> PhiPhaseResult {
+fn phase_ontology(block: &Block) -> PhiPhaseResult {
+    use crate::ontology::{check_ontology, OntologyResult};
+
+    for (i, tx) in block.body.transitions.iter().enumerate() {
+        if let OntologyResult::Rejected {
+            kind,
+            target,
+            allowed,
+        } = check_ontology(tx)
+        {
+            return PhiPhaseResult {
+                phase: PhiPhase::Ontology,
+                passed: false,
+                details: format!(
+                    "Tx {}: kind {:?} cannot target {} (allowed: {:?})",
+                    i,
+                    kind,
+                    String::from_utf8_lossy(&target),
+                    allowed
+                        .iter()
+                        .map(|n| String::from_utf8_lossy(n).into_owned())
+                        .collect::<Vec<_>>(),
+                ),
+            };
+        }
+    }
     PhiPhaseResult {
         phase: PhiPhase::Ontology,
         passed: true,
-        details: "Ontology types verified".into(),
+        details: format!(
+            "Ontology verified for {} transitions",
+            block.body.transitions.len()
+        ),
     }
 }
 
