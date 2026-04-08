@@ -71,26 +71,28 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
 
     // Phase 1: Distinction — verify WHBinding completeness.
     let wh_result = check_transition_wh(tx);
+    let wh_passed = wh_result.is_ok();
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Distinction,
-        passed: wh_result.is_ok(),
+        passed: wh_passed,
         details: wh_result
             .err()
             .unwrap_or_else(|| "WHBinding complete".into()),
     });
-    if !log.phases_completed.last().unwrap().passed {
+    if !wh_passed {
         return log;
     }
 
     // Phase 2: Constraint — run SCCE validation.
     let weights = ConstraintWeights::default();
     let scce_result = scce_validate(tx, state, &weights, 32, 10_000);
+    let scce_passed = scce_result.valid;
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Constraint,
-        passed: scce_result.valid,
+        passed: scce_passed,
         details: scce_result.details,
     });
-    if !log.phases_completed.last().unwrap().passed {
+    if !scce_passed {
         return log;
     }
 
