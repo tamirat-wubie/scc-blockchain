@@ -16,7 +16,8 @@
       "Bash(cargo fmt:*)",
       "Bash(grep -rn 'Err\\(\"' crates/sccgub-*/src/*.rs)",
       "Bash(grep \"    ///\" crates/sccgub-node/src/main.rs)",
-      "Bash(cargo clean:*)"
+      "Bash(cargo clean:*)",
+      "Bash(grep -rn \"prefix_iter\" crates/sccgub-*/src/*.rs)"
     ]
   }
 }

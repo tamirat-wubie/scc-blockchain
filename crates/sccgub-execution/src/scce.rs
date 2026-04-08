@@ -195,12 +195,41 @@ struct PropagationResult {
 /// Maximum constraints evaluated per symbol before the walker advances.
 const MAX_CONSTRAINTS_PER_SYMBOL: u64 = 64;
 
-/// Constraint storage prefix. Constraints attached to symbol "foo/bar"
-/// live under "constraints/foo/bar\0" in the trie (null-byte terminated).
-/// The null terminator prevents prefix collision: "constraints/alpha\0"
-/// does NOT match "constraints/alpha/leaf\0", so a parent scan never
-/// sees child constraints. Without this, depth bounds are meaningless.
+/// Constraint storage root prefix.
 const CONSTRAINT_PREFIX: &[u8] = b"constraints/";
+
+/// Build the trie key for a constraint attached to a specific symbol.
+/// Uses null-byte separation to prevent prefix collisions between
+/// a symbol's own constraints and its descendants' constraints.
+///
+/// Convention: `constraints/<symbol>\0<constraint_id>`
+///
+/// This is the ONLY correct way to construct constraint keys.
+/// Constructing keys by string concatenation will re-introduce
+/// the N-1 prefix collision bug.
+pub fn constraint_key(symbol: &[u8], constraint_id: &[u8]) -> Vec<u8> {
+    assert!(
+        !symbol.contains(&0),
+        "symbol addresses must not contain null bytes"
+    );
+    let mut k =
+        Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1 + constraint_id.len());
+    k.extend_from_slice(CONSTRAINT_PREFIX);
+    k.extend_from_slice(symbol);
+    k.push(0);
+    k.extend_from_slice(constraint_id);
+    k
+}
+
+/// Build the prefix used by the walker to find all constraints attached
+/// to a specific symbol (and ONLY that symbol, not its descendants).
+fn constraint_prefix_for_symbol(symbol: &[u8]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1);
+    p.extend_from_slice(CONSTRAINT_PREFIX);
+    p.extend_from_slice(symbol);
+    p.push(0);
+    p
+}
 
 /// Bounded constraint propagation walker.
 ///
@@ -247,12 +276,7 @@ fn propagate_constraints(
             continue;
         }
 
-        // Build constraint prefix: "constraints/" + symbol + "\0"
-        // Null terminator isolates this symbol's constraints from children.
-        let mut prefix = Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1);
-        prefix.extend_from_slice(CONSTRAINT_PREFIX);
-        prefix.extend_from_slice(&symbol);
-        prefix.push(0x00);
+        let prefix = constraint_prefix_for_symbol(&symbol);
 
         let mut per_symbol = 0u64;
         for (key, value) in state.trie.prefix_iter(&prefix) {
@@ -461,18 +485,9 @@ mod tests {
     }
 
     // === SCCE constraint propagation walker tests ===
-    // Convention: constraints for symbol "foo" stored at "constraints/foo\0c<N>"
-    // (null-terminated to prevent prefix collision with children).
-
-    /// Helper: build a constraint trie key using the null-terminator convention.
-    fn constraint_key(symbol: &[u8], id: &str) -> Vec<u8> {
-        let mut key = Vec::new();
-        key.extend_from_slice(b"constraints/");
-        key.extend_from_slice(symbol);
-        key.push(0x00);
-        key.extend_from_slice(id.as_bytes());
-        key
-    }
+    // All tests use the public constraint_key() helper to ensure the
+    // null-terminated convention is used consistently.
+    use super::constraint_key;
 
     #[test]
     fn test_propagation_passes_with_no_constraints() {
@@ -488,7 +503,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state
             .trie
-            .insert(constraint_key(b"alpha/beta", "c0"), b"false".to_vec());
+            .insert(constraint_key(b"alpha/beta", b"c0"), b"false".to_vec());
         let active = vec![b"alpha/beta".to_vec()];
         let result = propagate_constraints(&active, &state, 4, 1000);
         assert!(!result.consistent);
@@ -501,7 +516,7 @@ mod tests {
         state.trie.insert(b"data/foo".to_vec(), b"present".to_vec());
         state
             .trie
-            .insert(constraint_key(b"alpha", "c0"), b"exists:data/foo".to_vec());
+            .insert(constraint_key(b"alpha", b"c0"), b"exists:data/foo".to_vec());
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(result.consistent, "{}", result.conflict_detail);
@@ -515,7 +530,7 @@ mod tests {
         // Constraint on the CHILD symbol (null-terminated).
         state
             .trie
-            .insert(constraint_key(b"alpha/leaf", "c0"), b"false".to_vec());
+            .insert(constraint_key(b"alpha/leaf", b"c0"), b"false".to_vec());
         let active = vec![b"alpha".to_vec()];
         // Depth 2 is enough to reach the child via worklist expansion.
         let result = propagate_constraints(&active, &state, 2, 1000);
@@ -532,7 +547,7 @@ mod tests {
         // Constraint on the CHILD only (null-terminated — NOT visible to parent).
         state
             .trie
-            .insert(constraint_key(b"alpha/leaf", "c0"), b"false".to_vec());
+            .insert(constraint_key(b"alpha/leaf", b"c0"), b"false".to_vec());
         let active = vec![b"alpha".to_vec()];
         // Depth 0 — parent "alpha" is processed but child "alpha/leaf" is NOT
         // expanded into the worklist. With null-terminated keys, the parent's
@@ -550,7 +565,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state
             .trie
-            .insert(constraint_key(b"alpha", "c0"), vec![0xFF, 0xFE, 0xFD]);
+            .insert(constraint_key(b"alpha", b"c0"), vec![0xFF, 0xFE, 0xFD]);
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(!result.consistent);
@@ -562,7 +577,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         for i in 0..10u8 {
             state.trie.insert(
-                constraint_key(b"alpha", &format!("c{}", i)),
+                constraint_key(b"alpha", format!("c{}", i).as_bytes()),
                 b"true".to_vec(),
             );
         }
@@ -582,5 +597,11 @@ mod tests {
         let result = crate::constraints::evaluate(&pred, &state, 0);
         assert!(!result.satisfied);
         assert!(result.details.contains("invalid constraint"));
+    }
+
+    #[test]
+    #[should_panic(expected = "null bytes")]
+    fn test_null_byte_in_symbol_rejected() {
+        constraint_key(b"alpha\x00evil", b"c0");
     }
 }
