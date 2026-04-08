@@ -1,3 +1,18 @@
+// DUAL-PATH PHI TRAVERSAL (N-11 invariant)
+//
+// This module contains TWO traversal functions that must stay in sync:
+//
+//   phi_traversal_block  — runs at CPoG validation time (per-block).
+//   phi_traversal_tx     — runs at mempool drain time (per-transaction).
+//
+// Every semantic check added to a Phi phase MUST be added to BOTH paths.
+// Drift between them causes mempool/CPoG disagreement: a tx that passes
+// mempool admission could fail block-level validation, or vice versa.
+//
+// Phases that are block-only (Topology, Body, Architecture, Performance,
+// Feedback, Evolution) run only in phi_traversal_block and auto-pass in
+// phi_traversal_tx. All other phases must have identical logic in both.
+
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
 use sccgub_types::causal::CausalVertex;

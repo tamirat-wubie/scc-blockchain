@@ -45,6 +45,10 @@ pub struct Chain {
     pub slashing: SlashingEngine,
     /// Event log for the most recently produced block.
     pub latest_events: sccgub_types::events::BlockEventLog,
+    /// Rejected transaction receipts from the most recent block production.
+    /// Not Merkle-committed (they're not in the block) but queryable for
+    /// user feedback and audit purposes.
+    pub latest_rejected_receipts: Vec<sccgub_types::receipt::CausalReceipt>,
 }
 
 impl Chain {
@@ -103,6 +107,7 @@ impl Chain {
             finality_config: FinalityConfig::default(),
             slashing,
             latest_events: sccgub_types::events::BlockEventLog::new(),
+            latest_rejected_receipts: Vec::new(),
         };
 
         chain.state.set_height(0);
@@ -235,6 +240,7 @@ impl Chain {
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
             latest_events: sccgub_types::events::BlockEventLog::new(),
+            latest_rejected_receipts: Vec::new(),
         })
     }
 
@@ -272,6 +278,7 @@ impl Chain {
         let filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
         let mut metered_receipts = Vec::new();
+        let mut rejected_receipts = Vec::new();
 
         let prior_tension = self
             .blocks
@@ -318,9 +325,11 @@ impl Chain {
 
                 accepted_transitions.push(tx);
                 metered_receipts.push(receipt);
+            } else {
+                // Rejected txs get receipts too — on-chain evidence of consideration.
+                // Users can query the receipt to see why their tx was rejected.
+                rejected_receipts.push(receipt);
             }
-            // Rejected txs are silently dropped from the block
-            // (their receipts are not included — only accepted txs are committed).
         }
         let transitions = accepted_transitions;
 
@@ -499,6 +508,7 @@ impl Chain {
                 }
 
                 self.latest_events = events;
+                self.latest_rejected_receipts = rejected_receipts;
 
                 Ok(self.blocks.last().unwrap())
             }
@@ -1332,5 +1342,11 @@ mod tests {
             "Payload-mismatched tx must be filtered by Phase 8. \
              If this fails, the payload consistency check is not wired."
         );
+
+        // N-3: Rejected receipts are captured when txs pass mempool drain
+        // but fail gas-metered validation. In this test, the tx fails at
+        // mempool drain (Phase 8 runs inside validate_transition), so
+        // no receipt reaches the gas loop. The rejected_receipts field
+        // captures gas-loop rejections specifically.
     }
 }
