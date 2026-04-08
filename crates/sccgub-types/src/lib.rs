@@ -12,6 +12,7 @@ pub mod dispute;
 pub mod domain;
 pub mod economics;
 pub mod events;
+pub mod future;
 pub mod governance;
 pub mod lineage;
 pub mod mfidel;
