@@ -45,13 +45,16 @@ pub fn validate_transition(
         errors.push(format!("WHBinding: {}", e));
     }
 
-    // 2. Signature must be present.
-    if tx.signature.is_empty() {
-        errors.push("Missing signature".into());
+    // 2. Signature must be present and correct length (Ed25519 = 64 bytes).
+    if tx.signature.len() < 64 {
+        errors.push(format!(
+            "Signature too short: {} bytes, need >= 64",
+            tx.signature.len()
+        ));
     }
 
     // 3. Verify Ed25519 signature against actor's public key.
-    if !tx.signature.is_empty() {
+    if tx.signature.len() >= 64 {
         let tx_data = canonical_tx_bytes(tx);
         if !sccgub_crypto::signature::verify(&tx.actor.public_key, &tx_data, &tx.signature) {
             errors.push("Ed25519 signature verification failed".into());

@@ -131,8 +131,8 @@ pub fn phi_traversal_tx(tx: &SymbolicTransition, state: &ManagedWorldState) -> P
         details: "Module boundaries respected".into(),
     });
 
-    // Phase 8: Execution — verify signature present and termination.
-    let sig_ok = !tx.signature.is_empty();
+    // Phase 8: Execution — verify signature present (>= 64 bytes) and termination.
+    let sig_ok = tx.signature.len() >= 64;
     log.phases_completed.push(PhiPhaseResult {
         phase: PhiPhase::Execution,
         passed: sig_ok,
@@ -265,13 +265,17 @@ fn phase_topology(block: &Block) -> PhiPhaseResult {
 }
 
 fn phase_form(block: &Block) -> PhiPhaseResult {
-    // Verify all transitions have valid signatures present.
+    // Verify all transitions have valid signatures (>= 64 bytes for Ed25519).
     for (i, tx) in block.body.transitions.iter().enumerate() {
-        if tx.signature.is_empty() {
+        if tx.signature.len() < 64 {
             return PhiPhaseResult {
                 phase: PhiPhase::Form,
                 passed: false,
-                details: format!("Transaction {} has empty signature", i),
+                details: format!(
+                    "Transaction {} signature too short ({} bytes, need >= 64)",
+                    i,
+                    tx.signature.len()
+                ),
             };
         }
     }
@@ -404,13 +408,17 @@ fn phase_architecture(block: &Block) -> PhiPhaseResult {
         };
     }
 
-    // Verify every transition has a non-empty signature.
+    // Verify every transition has a valid-length signature (Ed25519 >= 64 bytes).
     for (i, tx) in block.body.transitions.iter().enumerate() {
-        if tx.signature.is_empty() {
+        if tx.signature.len() < 64 {
             return PhiPhaseResult {
                 phase: PhiPhase::Architecture,
                 passed: false,
-                details: format!("Transaction {} has empty signature", i),
+                details: format!(
+                    "Transaction {} signature too short ({} bytes)",
+                    i,
+                    tx.signature.len()
+                ),
             };
         }
     }

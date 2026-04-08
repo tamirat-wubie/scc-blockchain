@@ -69,6 +69,23 @@ pub struct ArtifactRef {
 }
 
 impl ArtifactRef {
+    /// Compute the canonical bytes used for artifact ID derivation.
+    /// Callers should hash this with BLAKE3 to produce the artifact_id.
+    /// Formula: artifact_id = BLAKE3(content_hash || manifest_hash || schema_name || schema_version)
+    pub fn canonical_id_preimage(
+        content_hash: &[u8; 32],
+        manifest_hash: &[u8; 32],
+        schema_name: &str,
+        schema_version: &str,
+    ) -> Vec<u8> {
+        let mut data = Vec::with_capacity(64 + schema_name.len() + schema_version.len());
+        data.extend_from_slice(content_hash);
+        data.extend_from_slice(manifest_hash);
+        data.extend_from_slice(schema_name.as_bytes());
+        data.extend_from_slice(schema_version.as_bytes());
+        data
+    }
+
     /// Validate that required fields are present (fail-closed).
     pub fn validate(&self) -> Result<(), String> {
         if self.artifact_id == [0u8; 32] {

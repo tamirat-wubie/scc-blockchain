@@ -71,9 +71,10 @@ impl SafetyCertificate {
                 format!("Signer {} not in validator set", hex::encode(validator_id))
             })?;
 
-            if signature.is_empty() {
+            if signature.len() < 64 {
                 return Err(format!(
-                    "Empty signature from validator {}",
+                    "Signature too short ({} bytes) from validator {}",
+                    signature.len(),
                     hex::encode(validator_id)
                 ));
             }

@@ -141,7 +141,10 @@ impl ConsensusRound {
             return Err("Duplicate vote from validator".into());
         }
         // Signature verification — domain-separated with chain_id and epoch.
-        if !vote.signature.is_empty() {
+        if vote.signature.len() < 64 {
+            return Err("Vote signature must be at least 64 bytes (Ed25519)".into());
+        }
+        {
             let vote_data = vote_sign_data(
                 &self.chain_id,
                 self.epoch,
@@ -153,8 +156,6 @@ impl ConsensusRound {
             if !sccgub_crypto::signature::verify(public_key, &vote_data, &vote.signature) {
                 return Err("Vote signature verification failed".into());
             }
-        } else {
-            return Err("Vote has empty signature".into());
         }
         Ok(())
     }
