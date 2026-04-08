@@ -532,10 +532,7 @@ impl Chain {
                 // N-6: Responsibility tracking — record contributions
                 // for each accepted transition in this block.
                 for tx in &self.blocks.last().unwrap().body.transitions {
-                    let agent_resp = self
-                        .responsibility
-                        .entry(tx.actor.agent_id)
-                        .or_default();
+                    let agent_resp = self.responsibility.entry(tx.actor.agent_id).or_default();
                     sccgub_governance::responsibility::record_positive(
                         agent_resp,
                         tx.tx_id,
