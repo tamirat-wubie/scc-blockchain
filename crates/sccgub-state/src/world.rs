@@ -56,17 +56,19 @@ impl ManagedWorldState {
     }
 
     /// Check and update nonce for an agent.
-    /// Nonce must be >= 1 and strictly greater than last seen.
+    /// Nonce must be exactly last + 1 (strictly sequential, no gaps).
+    /// This prevents nonce-gap attacks and ensures transaction ordering is deterministic.
     pub fn check_nonce(&mut self, agent_id: &AgentId, nonce: u128) -> Result<(), String> {
         if nonce == 0 {
             return Err("Nonce must be >= 1".into());
         }
         let last = self.agent_nonces.get(agent_id).copied().unwrap_or(0);
-        if nonce <= last {
+        let expected = last + 1;
+        if nonce != expected {
             return Err(format!(
-                "Nonce replay: got {} but last seen was {} for agent {}",
+                "Nonce must be sequential: expected {}, got {} for agent {}",
+                expected,
                 nonce,
-                last,
                 hex::encode(agent_id)
             ));
         }

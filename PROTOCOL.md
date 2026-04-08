@@ -46,7 +46,7 @@ A `SymbolicTransition` contains:
 - `intent`: (kind, target, declared_purpose)
 - `payload`: Write | AssetTransfer | InvokeContract | Noop
 - `wh_binding_intent`: 7-dimensional causal binding (who, what, when, where, why, how, which)
-- `nonce`: u128, strictly increasing per agent (>= 1)
+- `nonce`: u128, strictly sequential per agent (must be exactly last + 1, starting at 1)
 - `signature`: Ed25519 over canonical_tx_bytes
 
 ### canonical_tx_bytes coverage:
@@ -216,7 +216,7 @@ for each block in chain:
 These invariants MUST hold at every block height:
 
 - **INV-1**: `total_supply` is constant except at genesis mint.
-- **INV-2**: Per-agent nonces are strictly monotonically increasing.
+- **INV-2**: Per-agent nonces are strictly sequential (nonce == last + 1, no gaps).
 - **INV-3**: `state_root` matches the computed trie root.
 - **INV-5**: `tension_after <= tension_before + budget`.
 - **INV-6**: Every accepted transition has exactly one receipt with Accept verdict.

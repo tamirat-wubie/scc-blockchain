@@ -1087,3 +1087,184 @@ fn test_nonce_state_survives_replay() {
         "Nonce 11 should be valid"
     );
 }
+
+// === Nonce gap rejection test ===
+
+#[test]
+fn test_nonce_gap_rejected() {
+    use sccgub_state::world::ManagedWorldState;
+
+    let mut state = ManagedWorldState::new();
+    let agent = [1u8; 32];
+
+    // First nonce must be 1.
+    assert!(state.check_nonce(&agent, 1).is_ok());
+
+    // Next must be 2, not 5 (gap).
+    assert!(
+        state.check_nonce(&agent, 5).is_err(),
+        "Nonce gap (1 -> 5) must be rejected"
+    );
+
+    // Correct next nonce.
+    assert!(state.check_nonce(&agent, 2).is_ok());
+    assert!(state.check_nonce(&agent, 3).is_ok());
+
+    // Replay of used nonce rejected.
+    assert!(state.check_nonce(&agent, 2).is_err());
+}
+
+// === Full chain lifecycle test ===
+
+#[test]
+fn test_chain_init_produce_verify_roundtrip() {
+    use sccgub_state::apply::{apply_block_transitions, apply_genesis_mint, balances_from_trie};
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::world::ManagedWorldState;
+    use sccgub_types::transition::{OperationPayload, StateDelta, StateWrite};
+
+    let validator = [1u8; 32];
+
+    // Phase 1: Init — genesis mint.
+    let mut state = ManagedWorldState::new();
+    let mut balances = BalanceLedger::new();
+    apply_genesis_mint(&mut state, &mut balances, &validator);
+
+    let genesis_supply = balances.total_supply();
+    let genesis_root = state.state_root();
+    assert!(genesis_supply.raw() > 0, "Genesis must mint supply");
+
+    // Phase 2: Produce — apply some writes.
+    let transitions = vec![];
+    apply_block_transitions(&mut state, &mut balances, &transitions);
+
+    // Supply unchanged with no transactions.
+    assert_eq!(balances.total_supply(), genesis_supply);
+
+    // Phase 3: State writes.
+    state.apply_delta(&StateDelta {
+        writes: vec![
+            StateWrite {
+                address: b"doc/1".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            StateWrite {
+                address: b"doc/2".to_vec(),
+                value: b"world".to_vec(),
+            },
+        ],
+        deletes: vec![],
+    });
+
+    let post_write_root = state.state_root();
+    assert_ne!(
+        post_write_root, genesis_root,
+        "Writes must change state root"
+    );
+
+    // Phase 4: Verify — replay from scratch produces identical root.
+    let mut replay_state = ManagedWorldState::new();
+    let mut replay_bal = BalanceLedger::new();
+    apply_genesis_mint(&mut replay_state, &mut replay_bal, &validator);
+    replay_state.apply_delta(&StateDelta {
+        writes: vec![
+            StateWrite {
+                address: b"doc/1".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            StateWrite {
+                address: b"doc/2".to_vec(),
+                value: b"world".to_vec(),
+            },
+        ],
+        deletes: vec![],
+    });
+    assert_eq!(
+        replay_state.state_root(),
+        post_write_root,
+        "Replay must produce identical root"
+    );
+
+    // Phase 5: Export/Import — trie entries roundtrip.
+    let exported: Vec<(Vec<u8>, Vec<u8>)> = state
+        .trie
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let mut imported_state = ManagedWorldState::new();
+    for (k, v) in &exported {
+        imported_state.trie.insert(k.clone(), v.clone());
+    }
+    assert_eq!(
+        imported_state.state_root(),
+        post_write_root,
+        "Import must produce identical root"
+    );
+
+    // Phase 6: Balance reconstruction from trie.
+    let recovered = balances_from_trie(&state);
+    assert_eq!(
+        recovered.total_supply(),
+        genesis_supply,
+        "Balance reconstruction must match"
+    );
+    assert_eq!(
+        recovered.balance_of(&validator),
+        balances.balance_of(&validator)
+    );
+}
+
+// === Escrow condition spoofing test ===
+
+#[test]
+fn test_escrow_wrong_value_does_not_release() {
+    use sccgub_state::balances::BalanceLedger;
+    use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
+    use sccgub_state::world::ManagedWorldState;
+
+    let mut bal = BalanceLedger::new();
+    let alice = [1u8; 32];
+    let bob = [2u8; 32];
+    bal.credit(&alice, TensionValue::from_integer(1000));
+
+    let mut escrow = EscrowRegistry::new();
+    let mut state = ManagedWorldState::new();
+
+    escrow
+        .create(
+            alice,
+            bob,
+            TensionValue::from_integer(500),
+            EscrowCondition::StateProof {
+                key: b"delivery/proof".to_vec(),
+                expected_value: b"confirmed".to_vec(),
+                required_authority: None,
+            },
+            1,
+            100,
+            &mut bal,
+        )
+        .unwrap();
+
+    // Write WRONG value to the key.
+    state.apply_delta(&sccgub_types::transition::StateDelta {
+        writes: vec![sccgub_types::transition::StateWrite {
+            address: b"delivery/proof".to_vec(),
+            value: b"WRONG_VALUE".to_vec(),
+        }],
+        deletes: vec![],
+    });
+
+    // Escrow must NOT release — value doesn't match.
+    let released = escrow.check_and_release(&state, 50, &mut bal);
+    assert!(
+        released.is_empty(),
+        "Escrow must not release on wrong value"
+    );
+    assert_eq!(
+        bal.balance_of(&bob),
+        TensionValue::ZERO,
+        "Bob must not receive funds"
+    );
+}

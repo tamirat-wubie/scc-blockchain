@@ -659,7 +659,7 @@ fn test_multi_block_chain() {
         let result = validate_cpog(&block, &state, &prev_block.header.block_id);
         assert!(result.is_valid(), "Block #{} CPoG failed: {:?}", i, result);
 
-        // Apply state.
+        // Apply state + advance nonce.
         if let OperationPayload::Write { key, value } = &tx.payload {
             state.apply_delta(&StateDelta {
                 writes: vec![StateWrite {
@@ -669,6 +669,7 @@ fn test_multi_block_chain() {
                 deletes: vec![],
             });
         }
+        let _ = state.check_nonce(&tx.actor.agent_id, tx.nonce);
         state.set_height(i);
 
         prev_block = block;

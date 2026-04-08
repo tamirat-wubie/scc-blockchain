@@ -65,11 +65,11 @@ impl Mempool {
         for tx in &self.pending {
             let node_id = tx.actor.agent_id;
 
-            // Check nonce against both committed state AND local tracking.
+            // Check nonce: must be exactly last + 1 (sequential, no gaps).
             let committed = state.agent_nonces.get(&node_id).copied().unwrap_or(0);
             let local = local_nonces.get(&node_id).copied().unwrap_or(committed);
-            if tx.nonce == 0 || tx.nonce <= local {
-                // Nonce replay — reject and remove.
+            if tx.nonce == 0 || tx.nonce != local + 1 {
+                // Nonce violation — reject and remove.
                 to_remove.push(tx.tx_id);
                 self.containment
                     .record_invalid(node_id, TensionValue::from_integer(1));
