@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::ArtifactId;
+use crate::artifact::{ArtifactId, MAX_STRING_LEN};
 use crate::{AgentId, Hash};
 
 /// Attestation — a signed claim about an artifact by an authority.
@@ -68,6 +68,9 @@ impl ArtifactAttestation {
         }
         if self.signature.len() < 64 {
             return Err("signature must be at least 64 bytes (Ed25519)".into());
+        }
+        if self.software_version.len() > MAX_STRING_LEN {
+            return Err("software_version too long".into());
         }
         if let Some(end) = self.valid_to_block {
             if end < self.valid_from_block {

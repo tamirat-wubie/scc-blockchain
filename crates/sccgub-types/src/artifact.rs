@@ -8,6 +8,11 @@ use crate::{AgentId, Hash};
 /// Design rule: content_hash is primary, locator is secondary.
 /// An artifact remains validatable even if the storage locator changes.
 ///
+/// Maximum length for string fields in artifact types (prevents DoS via oversized metadata).
+pub const MAX_STRING_LEN: usize = 4096;
+/// Maximum locator URI length.
+pub const MAX_LOCATOR_LEN: usize = 2048;
+
 /// Unique artifact identifier (BLAKE3 hash of canonical content commitment).
 pub type ArtifactId = Hash;
 
@@ -109,6 +114,19 @@ impl ArtifactRef {
         if self.locator.is_empty() {
             return Err("locator is required".into());
         }
+        if self.locator.len() > MAX_LOCATOR_LEN {
+            return Err(format!(
+                "locator too long: {} > {}",
+                self.locator.len(),
+                MAX_LOCATOR_LEN
+            ));
+        }
+        if self.schema_name.len() > MAX_STRING_LEN {
+            return Err("schema_name too long".into());
+        }
+        if self.schema_version.len() > MAX_STRING_LEN {
+            return Err("schema_version too long".into());
+        }
         if self.byte_length == 0 {
             return Err("byte_length must be > 0".into());
         }
@@ -136,8 +154,14 @@ impl SchemaEntry {
         if self.schema_name.is_empty() {
             return Err("schema_name is required".into());
         }
+        if self.schema_name.len() > MAX_STRING_LEN {
+            return Err("schema_name too long".into());
+        }
         if self.schema_version.is_empty() {
             return Err("schema_version is required".into());
+        }
+        if self.schema_version.len() > MAX_STRING_LEN {
+            return Err("schema_version too long".into());
         }
         if self.spec_hash == [0u8; 32] {
             return Err("spec_hash is required".into());
@@ -215,5 +239,19 @@ mod tests {
         let recovered: ArtifactRef = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(recovered.artifact_id, a.artifact_id);
         assert_eq!(recovered.content_hash, a.content_hash);
+    }
+
+    #[test]
+    fn test_oversized_locator_rejected() {
+        let mut a = valid_artifact();
+        a.locator = "x".repeat(MAX_LOCATOR_LEN + 1);
+        assert!(a.validate().is_err());
+    }
+
+    #[test]
+    fn test_oversized_schema_name_rejected() {
+        let mut a = valid_artifact();
+        a.schema_name = "x".repeat(MAX_STRING_LEN + 1);
+        assert!(a.validate().is_err());
     }
 }

@@ -222,6 +222,15 @@ impl ZkCommitment {
         if self.proof_schema.is_empty() {
             return Err("proof_schema is required".into());
         }
+        if self.claim_type.len() > 256 {
+            return Err("claim_type too long".into());
+        }
+        if self.proof_schema.len() > 256 {
+            return Err("proof_schema too long".into());
+        }
+        if self.proof_bytes.len() > 1_048_576 {
+            return Err("proof_bytes exceeds 1MB limit".into());
+        }
         if self.prover == [0u8; 32] {
             return Err("prover is required".into());
         }

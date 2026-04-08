@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::ArtifactId;
+use crate::artifact::{ArtifactId, MAX_STRING_LEN};
 use crate::{AgentId, Hash};
+
+/// Maximum number of reason codes in a policy verdict.
+pub const MAX_REASON_CODES: usize = 64;
 
 /// Rights and licensing — who may do what with which artifact.
 ///
@@ -155,6 +158,18 @@ impl PolicyVerdictReceipt {
         }
         if self.signature.len() < 64 {
             return Err("signature must be at least 64 bytes (Ed25519)".into());
+        }
+        if self.reason_codes.len() > MAX_REASON_CODES {
+            return Err(format!(
+                "too many reason_codes: {} > {}",
+                self.reason_codes.len(),
+                MAX_REASON_CODES
+            ));
+        }
+        for rc in &self.reason_codes {
+            if rc.len() > MAX_STRING_LEN {
+                return Err("reason_code entry too long".into());
+            }
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::ArtifactId;
+use crate::artifact::{ArtifactId, MAX_STRING_LEN};
 use crate::{AgentId, Hash};
 
 /// Dispute and challenge — on-chain arbitration primitives.
@@ -43,6 +43,9 @@ impl DisputeClaim {
         }
         if self.reason_code.is_empty() {
             return Err("reason_code is required".into());
+        }
+        if self.reason_code.len() > MAX_STRING_LEN {
+            return Err("reason_code too long".into());
         }
         if self.evidence_hash == [0u8; 32] {
             return Err("evidence_hash is required".into());
