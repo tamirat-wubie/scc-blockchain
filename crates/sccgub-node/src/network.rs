@@ -2227,6 +2227,11 @@ mod tests {
             chain.latest_block().unwrap().header.validator_id,
             proposer_pk
         );
+        assert_eq!(chain.safety_certificates.len(), 1);
+        assert_eq!(
+            chain.safety_certificates[0].block_hash,
+            block.header.block_id
+        );
     }
 
     #[tokio::test]
