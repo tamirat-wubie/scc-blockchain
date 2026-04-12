@@ -46,7 +46,7 @@ sccgub-execution   13-phase Phi traversal, CPoG validation, SCCE constraint engi
 sccgub-consensus   Two-round BFT protocol, safety certificates, equivocation detection
 sccgub-governance  Precedence enforcement, norm registry, validator selection, proposals
 sccgub-network     P2P message types, peer registry, basic runtime hooks
-sccgub-api         REST API router + handlers, structured errors, 21 versioned endpoints
+sccgub-api         REST API router + handlers, structured errors, 22 versioned endpoints
                    OpenAPI contract: `crates/sccgub-api/openapi.yaml` (refreshable from Rust source in one command)
 sccgub-node        CLI binary: genesis, block production, chain lifecycle, mempool, block log, snapshots
 ```
