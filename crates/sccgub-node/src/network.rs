@@ -1484,9 +1484,16 @@ mod tests {
             .await
             .unwrap();
 
-        let rounds = runtime.consensus_rounds.lock().await;
-        let state = rounds.get(&block.header.height).expect("round created");
-        assert_eq!(state.round.quorum, 1);
+        // With quorum=1 (deterministic mode), the single proposer's prevote
+        // immediately reaches quorum, the block finalizes, and the round is
+        // cleaned up — all within handle_block_proposal. Verify the block was
+        // imported as proof that quorum=1 worked.
+        let guard = chain.read().await;
+        assert_eq!(
+            guard.height(),
+            block.header.height,
+            "Deterministic quorum=1 must finalize the block immediately"
+        );
     }
 
     #[tokio::test]
