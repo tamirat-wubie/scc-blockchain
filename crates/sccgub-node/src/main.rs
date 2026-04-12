@@ -1,10 +1,10 @@
+mod api_bridge;
 mod chain;
 pub mod config;
 mod mempool;
 mod network;
 mod observability;
 mod persistence;
-mod api_bridge;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -247,11 +247,7 @@ fn replay_chain_state(
     Ok((replayed.state, replayed.balances))
 }
 
-fn restore_snapshot_if_available(
-    store: &ChainStore,
-    chain: &mut Chain,
-    allow_restore: bool,
-) {
+fn restore_snapshot_if_available(store: &ChainStore, chain: &mut Chain, allow_restore: bool) {
     if !allow_restore {
         return;
     }
@@ -1456,17 +1452,16 @@ async fn cmd_serve(
     }
 
     if config.network.enable || p2p {
-        let runtime = match network::NetworkRuntime::new(chain_ref.clone(), config.network.clone())
-            .await
-        {
-            Ok(rt) => rt
-                .with_api_bridge(bridge.clone())
-                .with_persistence(store.clone(), config.chain.snapshot_interval),
-            Err(e) => {
-                eprintln!("Failed to start p2p runtime: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let runtime =
+            match network::NetworkRuntime::new(chain_ref.clone(), config.network.clone()).await {
+                Ok(rt) => rt
+                    .with_api_bridge(bridge.clone())
+                    .with_persistence(store.clone(), config.chain.snapshot_interval),
+                Err(e) => {
+                    eprintln!("Failed to start p2p runtime: {}", e);
+                    std::process::exit(1);
+                }
+            };
         let runtime = std::sync::Arc::new(runtime);
         let _ = runtime.run().await;
     }
@@ -1484,10 +1479,7 @@ async fn cmd_serve(
             loop {
                 ticker.tick().await;
                 let chain = chain_for_observe.read().await;
-                let api_sync_events = metrics
-                    .lock()
-                    .map(|m| m.api_sync_events)
-                    .unwrap_or(0);
+                let api_sync_events = metrics.lock().map(|m| m.api_sync_events).unwrap_or(0);
                 if json_output {
                     let payload = serde_json::json!({
                         "height": chain.height(),
@@ -1521,9 +1513,7 @@ async fn cmd_serve(
     println!("  GET  /api/v1/slashing                - slashing summary");
     println!("  GET  /api/v1/slashing/{{validator_id}} - validator slashing detail");
     println!("  GET  /api/v1/slashing/evidence       - equivocation evidence list");
-    println!(
-        "  GET  /api/v1/slashing/evidence/{{validator_id}} - validator evidence list"
-    );
+    println!("  GET  /api/v1/slashing/evidence/{{validator_id}} - validator evidence list");
     println!("  GET  /api/v1/block/{{height}}           - block detail with transactions");
     println!("  GET  /api/v1/block/{{height}}/receipts  - block receipts with gas breakdown");
     println!("  GET  /api/v1/state                   - paginated world state (?offset=&limit=)");
@@ -1693,10 +1683,7 @@ fn cmd_demo() {
         "  Escrow status: {:?}",
         registry.get(&escrow_id).map(|e| e.status)
     );
-    println!(
-        "  Sender balance: {}",
-        balances.balance_of(&sender).raw()
-    );
+    println!("  Sender balance: {}", balances.balance_of(&sender).raw());
     println!(
         "  Recipient balance: {}",
         balances.balance_of(&recipient).raw()
@@ -1842,12 +1829,7 @@ fn cmd_governed(data_dir: &std::path::Path, json: bool, schema: bool) {
     );
 }
 
-fn cmd_governed_propose(
-    data_dir: &std::path::Path,
-    passphrase: &str,
-    key: &str,
-    value: &str,
-) {
+fn cmd_governed_propose(data_dir: &std::path::Path, passphrase: &str, key: &str, value: &str) {
     let (mut chain, store) = load_chain_with_key(data_dir, passphrase);
     if !GOVERNED_PARAMETER_KEYS.contains(&key) {
         eprintln!("Unknown governed parameter key: {}", key);
@@ -1855,9 +1837,13 @@ fn cmd_governed_propose(
     }
     let actor_key = chain.validator_key.clone();
     let actor_pk = *actor_key.verifying_key().as_bytes();
-    let actor_id =
-        sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
-    let last_nonce = chain.state.agent_nonces.get(&actor_id).copied().unwrap_or(0);
+    let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+    let last_nonce = chain
+        .state
+        .agent_nonces
+        .get(&actor_id)
+        .copied()
+        .unwrap_or(0);
     let nonce = last_nonce + 1;
 
     let target = b"norms/governance/params/propose".to_vec();
@@ -1928,17 +1914,17 @@ fn cmd_governed_propose(
     );
 }
 
-fn cmd_governed_vote(
-    data_dir: &std::path::Path,
-    passphrase: &str,
-    proposal_id: &str,
-) {
+fn cmd_governed_vote(data_dir: &std::path::Path, passphrase: &str, proposal_id: &str) {
     let (mut chain, store) = load_chain_with_key(data_dir, passphrase);
     let actor_key = chain.validator_key.clone();
     let actor_pk = *actor_key.verifying_key().as_bytes();
-    let actor_id =
-        sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
-    let last_nonce = chain.state.agent_nonces.get(&actor_id).copied().unwrap_or(0);
+    let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+    let last_nonce = chain
+        .state
+        .agent_nonces
+        .get(&actor_id)
+        .copied()
+        .unwrap_or(0);
     let nonce = last_nonce + 1;
 
     let proposal_bytes = parse_hex_32(proposal_id).unwrap_or_else(|e| {
@@ -2007,7 +1993,10 @@ fn cmd_governed_vote(
         std::process::exit(1);
     });
 
-    println!("Governance vote submitted in block #{}", block.header.height);
+    println!(
+        "Governance vote submitted in block #{}",
+        block.header.height
+    );
 }
 
 fn cmd_governed_status(data_dir: &std::path::Path) {
