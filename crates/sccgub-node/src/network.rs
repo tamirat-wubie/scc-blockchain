@@ -453,7 +453,7 @@ impl NetworkRuntime {
                         epoch,
                         block.header.block_id,
                         height,
-                        0,
+                        msg.round,
                         self.validator_set.clone(),
                         self.config.max_rounds,
                     ),
@@ -468,6 +468,12 @@ impl NetworkRuntime {
         if state.round.epoch != epoch {
             return Err("Consensus epoch mismatch".into());
         }
+        if state.round.round != msg.round {
+            return Err(format!(
+                "Consensus round mismatch: expected {}, got {}",
+                state.round.round, msg.round
+            ));
+        }
         if state.round.block_hash != block.header.block_id {
             return Err("Consensus round already tracking another block hash".into());
         }
@@ -476,7 +482,7 @@ impl NetworkRuntime {
                 epoch,
                 block.header.block_id,
                 height,
-                0,
+                msg.round,
                 VoteType::Prevote,
             );
             state.round.add_prevote(vote.clone())?;
@@ -1156,27 +1162,48 @@ impl NetworkRuntime {
         let mut ticker = interval(Duration::from_millis(self.config.block_interval_ms));
         loop {
             ticker.tick().await;
-            let maybe_block = {
+            let (next_height, is_proposer) = {
                 let chain = self.chain.read().await;
                 let next_height = chain.height().saturating_add(1);
-                if !chain.is_proposer_for_height(next_height) {
-                    None
+                (next_height, chain.is_proposer_for_height(next_height))
+            };
+            if !is_proposer {
+                continue;
+            }
+            let (round, phase, existing_hash) = {
+                let rounds = self.consensus_rounds.lock().await;
+                if let Some(state) = rounds.get(&next_height) {
+                    (state.round.round, state.round.phase, Some(state.round.block_hash))
                 } else {
-                    chain.build_candidate_block().ok()
+                    (0, sccgub_consensus::protocol::ConsensusPhase::Propose, None)
                 }
             };
-            if let Some(block) = maybe_block {
-                let msg = NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: self.validator_id,
-                    block,
-                    round: 0,
-                    signature: Vec::new(),
-                });
-                if let Err(e) = self.handle_message(msg.clone(), "local").await {
-                    tracing::warn!("Local proposal handling failed: {}", e);
-                }
-                self.broadcast(msg).await;
+            if phase != sccgub_consensus::protocol::ConsensusPhase::Propose {
+                continue;
             }
+            let block = if let Some(hash) = existing_hash {
+                let block = self.pending_blocks.lock().await.get(&hash).cloned();
+                let Some(block) = block else {
+                    continue;
+                };
+                block
+            } else {
+                let chain = self.chain.read().await;
+                match chain.build_candidate_block() {
+                    Ok(block) => block,
+                    Err(_) => continue,
+                }
+            };
+            let msg = NetworkMessage::BlockProposal(BlockProposalMessage {
+                proposer_id: self.validator_id,
+                block,
+                round,
+                signature: Vec::new(),
+            });
+            if let Err(e) = self.handle_message(msg.clone(), "local").await {
+                tracing::warn!("Local proposal handling failed: {}", e);
+            }
+            self.broadcast(msg).await;
         }
     }
 }
