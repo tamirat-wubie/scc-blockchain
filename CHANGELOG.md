@@ -56,7 +56,7 @@ All notable changes to SCCGUB are documented here.
 #### API
 - 22 versioned REST endpoints with CORS
 - 14 machine-readable ErrorCode variants
-- OpenAPI contract for the 21 versioned API routes, refreshable from Rust source in one command
+- OpenAPI contract for the 22 versioned API routes, refreshable from Rust source in one command
 - Block detail response now includes governance limits and finality config snapshots
 - Network peers endpoint with bandwidth + score visibility
 - Idempotency key support
