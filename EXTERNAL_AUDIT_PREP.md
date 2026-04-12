@@ -1,15 +1,24 @@
 # SCCGUB External Audit Preparation Guide
 
 **Version:** 0.3.0
-**Date:** 2026-04-08
-**Repo:** 115 commits, 498 tests, 9 crates, ~22.5K lines Rust
+**Date:** 2026-04-11
+**Repo:** 9 crates, 602 tests, hardening-stage reference runtime with optional p2p alpha
+
+**Known Limits (MVP) Summary:**
+- Default single-proposer mode when no validator set is configured
+- Replay-authoritative state without a fully durable state database
+- Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
+- No ZK/privacy layer (placeholder types only)
+- ContractInvoke namespace still maps to both `contract/` and `data/`
+- No state pruning implementation yet
 
 ---
 
 ## 1. Project Overview
 
-SCCGUB (Symbolic Causal Chain General Universal Blockchain) is a Rust blockchain
-kernel that enforces governance constraints through symbolic causal chains. Every
+SCCGUB (Symbolic Causal Chain General Universal Blockchain) is a Rust governed
+blockchain kernel with a reference runtime that can run in single-node mode
+or with optional p2p networking. Every
 state transition carries a causal proof, is validated through a 13-phase Phi
 traversal pipeline, and is governed by a strict precedence hierarchy
 (GENESIS > SAFETY > MEANING > EMOTION > OPTIMIZATION).
@@ -32,13 +41,14 @@ traversal pipeline, and is governed by a strict precedence hierarchy
 ```
 sccgub-types       Core type definitions (Block, Transition, WHBinding, TensionValue, etc.)
 sccgub-crypto      Blake3 hashing, Merkle trees, Ed25519 signatures, Argon2id keystore
-sccgub-state       In-memory Merkle Patricia Trie, WorldState, BalanceLedger, TensionField
+sccgub-state       Replay-authoritative Merkle Patricia Trie, WorldState, BalanceLedger, TensionField
 sccgub-execution   13-phase Phi traversal, CPoG validation, SCCE constraint engine
 sccgub-consensus   Two-round BFT protocol, safety certificates, equivocation detection
 sccgub-governance  Precedence enforcement, norm registry, validator selection, proposals
-sccgub-network     P2P message types, peer management (stub for MVP)
-sccgub-api         REST API types, structured errors (stub for MVP)
-sccgub-node        CLI binary: genesis, block production, chain lifecycle, mempool
+sccgub-network     P2P message types, peer registry, basic runtime hooks
+sccgub-api         REST API router + handlers, structured errors, 21 versioned endpoints
+                   OpenAPI contract: `crates/sccgub-api/openapi.yaml` (refreshable from Rust source in one command)
+sccgub-node        CLI binary: genesis, block production, chain lifecycle, mempool, block log, snapshots
 ```
 
 ## 3. Consensus-Critical Code Paths
@@ -74,9 +84,9 @@ Auditors should focus on these files first:
 
 ### 4.2 Known Limitations (MVP)
 
-1. **Single-proposer mode** — No BFT rotation in production path yet (consensus crate has the protocol)
-2. **In-memory state** — No persistence across restarts (HashMap-backed trie)
-3. **No networking** — Single-node only; network crate is stub
+1. **Default single-proposer mode** — Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator
+2. **Replay-authoritative state** — Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts, but there is no fully durable state database
+3. **P2P networking is minimal** — Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits
 4. **No ZK/privacy layer** — Placeholder types exist (ZkCommitment) but no implementation
 5. **ContractInvoke namespace is loose** — Maps to both NS_CONTRACT and NS_DATA; should tighten to per-contract namespace
 6. **No state pruning** — RetentionClass types exist but no pruning implementation
@@ -89,6 +99,14 @@ Auditors should focus on these files first:
 - **Argon2id + ChaCha20-Poly1305 keystore** with constant-time comparison and zeroize
 - **Ed25519 signature verification** on every imported block (not just produced blocks)
 - **CPoG validation on import** — `from_blocks()` returns `Result<Self, ImportError>` with full 11-check validation
+- **Explicit spend-account version boundary** — block v1 replays legacy signer-public-key balances, block v2 funds the canonical validator agent account
+- **Chain-bound consensus parameters** — proof depth, SCCE walker bounds, contract default step limit, gas schedule + limits, validation size caps, and contract invoke arg-size bounds replay from `system/consensus_params` instead of local compile-time defaults
+- **Governance activation is live** — accepted + timelocked proposals can toggle emergency mode and update parameter allowlist keys: `governance.max_consecutive_proposals`, `governance.max_actions_per_agent_pct`, `governance.safety_change_min_signers`, `governance.genesis_change_min_signers`, `governance.max_authority_term_epochs`, `governance.authority_cooldown_epochs`, `finality.confirmation_depth`, `finality.max_finality_ms`, `finality.target_block_time_ms`
+- **On-chain governance proposals** — parameter proposals use `norms/governance/params/propose` with payload `key=value`, votes use `norms/governance/proposals/...`
+- **Governance snapshot surface** — block responses now expose governance limits + finality config snapshots for external verification
+- **Peer diversity thresholds configurable** — `network.min_connected_peers` and `network.max_same_subnet_pct` control eclipse-resistance gating in networked mode
+
+- **Peer seed exchange bounded** — Hello messages carry a bounded peer hint list to expand seed connectivity without unbounded growth
 
 ## 5. Phi Traversal Architecture
 
@@ -136,9 +154,8 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 
 ## 7. Audit Findings Summary
 
-Internal audit cycle plus 4 hardening passes identified 42 findings:
-- **42 closed** (all code fixes applied and verified)
-- **1 deferred** (Patch 03: ConsensusParams in genesis — architectural, ~1 day effort)
+Internal audit cycle plus 4 hardening passes identified 43 tracked findings:
+- **43 closed** (all code fixes applied and verified)
 
 ### F-5 lifecycle (worth noting for credibility)
 
@@ -180,15 +197,20 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
   asserts that a semantically-bad tx produces a reject receipt.
 
 ### Open items:
-- N-9: `what_actual` capture not implemented (StateDelta recording during apply).
-- Patch 03: ConsensusParams embedded in genesis block for fork-safe parameter evolution.
+- None currently tracked in this hardening pass.
 
-### Known MVP scaling limitation (N-20):
-`apply_block_transitions` rewrites ALL balance entries to the trie at the end
-of each block, regardless of which entries changed. This is O(n) per block
-where n is the total number of accounts. Becomes a bottleneck above ~10,000
-accounts or ~100 transactions per second. Closing requires delta-only writes
-that propagate only modified entries. ~100 LOC change to apply.rs, ~3 hours.
+### Closed hardening items:
+- **N-9 closed** — `what_actual` is now populated from the per-transaction `StateDelta`
+  returned by `apply_block_transitions`, then sealed into receipts during block production.
+- **N-20 closed** — `apply_block_transitions` now commits only balance entries changed by
+  the current block's transitions. The prior end-of-block O(n) trie rewrite was removed.
+- **Patch 03 closed** — canonical `ConsensusParams` bytes now embed in genesis, commit into
+  `system/consensus_params`, restore through `from_blocks()` and snapshot recovery, and
+  drive proof-depth, tx gas, block gas, and state-entry bounds from chain-bound values.
+
+- **Economics replay closure** — fee debits, treasury counters, and the fixed block reward
+  now commit into trie-backed state and replay identically in block production, CPoG,
+  `from_blocks()`, and snapshot restoration.
 
 ### Dismissed false positives (6):
 Aggressive automated tooling flagged 6 items that were verified as non-issues:
@@ -242,6 +264,11 @@ cargo run --bin sccgub-node -- init
 cargo run --bin sccgub-node -- submit-tx --key <key> --value <value>
 cargo run --bin sccgub-node -- produce-block
 cargo run --bin sccgub-node -- show-chain
+```
+
+```powershell
+# Windows fallback for full-suite verification if link.exe reports LNK1104 on the default target dir
+$env:CARGO_TARGET_DIR='target-windows-full'; cargo test -j 1 --workspace
 ```
 
 ## 10. Recommended Audit Focus Areas

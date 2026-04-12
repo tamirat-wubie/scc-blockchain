@@ -6,7 +6,7 @@ All notable changes to SCCGUB are documented here.
 
 ### Production Hardening Release
 
-**442 tests, 9 crates, ~30K lines Rust, all CI green.**
+**602 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
 - Argon2id + ChaCha20-Poly1305 keystore with constant-time comparison (subtle crate)
@@ -24,24 +24,46 @@ All notable changes to SCCGUB are documented here.
 - 13/13 Phi phases with real enforcement (Architecture, Feedback, Evolution)
 - Deterministic fair tx ordering in mempool (anti-MEV)
 - All discarded Results in consensus paths now logged
+- Canonical `ConsensusParams` now embed in genesis, commit under `system/consensus_params`, and replay through import + snapshot restoration
+- SCCE propagation depth/step caps, per-symbol scan/constraint caps, contract default step limits, gas schedule + limits, and validation size caps now replay from chain-bound `ConsensusParams`
+- Default gas/world-state helper constructors now derive from `ConsensusParams`, and contract invoke arg-size rejection uses the live `max_state_entry_size` bound
+- P2P block gossip + sync loop wired (hello/heartbeat/tx gossip/block request-response), proposer rotation gating, consensus vote propagation, and multi-round timeouts
 
 #### Economics
 - Gas metering wired into block production (12 cost categories)
 - Treasury with fee/reward/burn lifecycle and epoch management
+- Fee debits, treasury counters, and fixed block rewards now replay through CPoG/import and commit into trie-backed state
+- Block version 2 now funds validator liquidity through the canonical agent account while preserving block version 1 signer-account replay compatibility
 - Escrow with StateProof conditions (value + authority match)
 - Block gas limit enforcement (50M default)
+- Delta-only balance trie commits remove the prior O(n) end-of-block rewrite
 
 #### Governance
 - Timelocks: ordinary 50 blocks, constitutional 200 blocks
 - Settlement finality classes: Soft, Economic, Legal
 - 6 operator key roles with rotation ceremony
+- On-chain parameter proposals via `norms/governance/params/propose` and votes via `norms/governance/proposals/...`
+- CLI governance registry status command
+
+#### Known Limits (MVP)
+- Default single-proposer mode when no validator set is configured
+- Replay-authoritative state without a fully durable state database
+- Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
+- No ZK/privacy layer (placeholder types only)
+- ContractInvoke namespace still maps to both `contract/` and `data/`
+- No state pruning implementation yet
 
 #### API
-- 8 versioned REST endpoints with CORS
-- 12 machine-readable ErrorCode variants
+- 21 versioned REST endpoints with CORS
+- 14 machine-readable ErrorCode variants
+- OpenAPI contract for the 21 versioned API routes, refreshable from Rust source in one command
+- Block detail response now includes governance limits and finality config snapshots
+- Network peers endpoint with bandwidth + score visibility
 - Idempotency key support
 - Transaction validation against state before admission
 - Receipt and block-receipts lookup endpoints
+- Governance parameter proposal and vote submission endpoints
+- Governance proposal registry endpoint
 
 #### Observability
 - 18 typed ChainEvent variants with active emission in block production
@@ -58,7 +80,7 @@ All notable changes to SCCGUB are documented here.
 - Session keys / account abstraction
 - State pruning / archival policies
 - Zero-knowledge commitment support
-- AI agent circuit breakers (Closed/Open/HalfOpen lifecycle)
+- Symbolic intelligence agent circuit breakers (Closed/Open/HalfOpen lifecycle)
 
 #### Five-Plane Coordination
 - CapabilityLease with bounded delegation
@@ -68,7 +90,7 @@ All notable changes to SCCGUB are documented here.
 - Autonomy budgets for off-chain decision authority
 
 #### Testing
-- 442 tests across 9 crates
+- 602 tests across 9 crates
 - Property-based tests (3000+ random scenarios)
 - Adversarial consensus tests (Byzantine, partition, equivocation)
 - Full-pipeline integration tests (treasury, escrow, artifacts, delegation, events)
@@ -80,7 +102,7 @@ All notable changes to SCCGUB are documented here.
 - Two-round BFT consensus with Ed25519 signatures
 - 13-phase Phi validation framework
 - Multi-asset ledger and balance trie commitment
-- CLI with 16 commands
+- CLI with 20 commands
 - REST API with health/status/block/state endpoints
 - GDPR compliance module
 - Bridge adapter framework

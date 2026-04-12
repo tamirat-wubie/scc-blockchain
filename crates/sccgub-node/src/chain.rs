@@ -4,15 +4,26 @@ use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::merkle::merkle_root_of_bytes;
 use sccgub_crypto::signature::sign;
 use sccgub_execution::cpog::{validate_cpog, CpogResult};
-use sccgub_execution::gas::{self, BlockGasMeter};
+use sccgub_execution::gas::BlockGasMeter;
 use sccgub_execution::validate::validate_transition_metered;
 use sccgub_state::balances::BalanceLedger;
-use sccgub_state::treasury::Treasury;
-use sccgub_state::world::ManagedWorldState;
-use sccgub_types::block::{Block, BlockBody, BlockHeader};
+use sccgub_state::treasury::{
+    commit_treasury_state, default_block_reward, treasury_from_trie, Treasury,
+};
+use sccgub_state::world::{
+    commit_consensus_params, consensus_params_from_trie, ManagedWorldState,
+};
+use sccgub_types::agent::ValidatorAuthority;
+use sccgub_types::block::{
+    is_supported_block_version, Block, BlockBody, BlockHeader, CURRENT_BLOCK_VERSION,
+};
 use sccgub_types::causal::{CausalEdge, CausalGraphDelta, CausalVertex};
+use sccgub_types::consensus_params::ConsensusParams;
 use sccgub_types::economics::EconomicState;
-use sccgub_types::governance::{FinalityMode, GovernanceSnapshot, GovernanceState};
+use sccgub_types::governance::{
+    FinalityConfigSnapshot, FinalityMode, GovernanceLimitsSnapshot, GovernanceSnapshot,
+    GovernanceState,
+};
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::proof::{CausalProof, PhiTraversalLog};
 use sccgub_types::receipt::CausalReceipt;
@@ -20,16 +31,65 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::SymbolicTransition;
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
+use sccgub_consensus::protocol::EquivocationProof;
 use sccgub_consensus::slashing::SlashingEngine;
 use sccgub_governance::anti_concentration::{GovernanceLimits, GovernancePowerTracker};
 
 use crate::mempool::Mempool;
 
+fn initialize_genesis_state(
+    block_version: u32,
+    validator_public_key: &[u8; 32],
+    consensus_params: ConsensusParams,
+) -> (ManagedWorldState, BalanceLedger) {
+    let mut state = ManagedWorldState::with_consensus_params(consensus_params);
+    state.state.governance_state = GovernanceState {
+        finality_mode: FinalityMode::Deterministic,
+        ..GovernanceState::default()
+    };
+    commit_consensus_params(&mut state);
+
+    let mut balances = BalanceLedger::new();
+    let validator_spend_account =
+        sccgub_state::apply::validator_spend_account(block_version, validator_public_key);
+    sccgub_state::apply::apply_genesis_mint(&mut state, &mut balances, &validator_spend_account);
+    state.set_height(0);
+
+    (state, balances)
+}
+
+pub(crate) fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
+    let mut bal_entries: Vec<_> = balances.balances.iter().collect();
+    bal_entries.sort_by_key(|(k, _)| *k);
+    if bal_entries.is_empty() {
+        ZERO_HASH
+    } else {
+        let mut hasher_data = Vec::new();
+        for (agent_id, balance) in &bal_entries {
+            hasher_data.extend_from_slice(*agent_id);
+            hasher_data.extend_from_slice(&balance.raw().to_le_bytes());
+        }
+        blake3_hash(&hasher_data)
+    }
+}
+
+fn load_genesis_consensus_params(genesis: &Block) -> Result<ConsensusParams, ImportError> {
+    match genesis.body.genesis_consensus_params.as_ref() {
+        Some(bytes) => {
+            ConsensusParams::from_canonical_bytes(bytes).map_err(ImportError::GenesisConsensusParams)
+        }
+        None => Ok(ConsensusParams::default()),
+    }
+}
+
 /// The chain — manages blocks, state, consensus, and block production.
+#[derive(Clone)]
 pub struct Chain {
     pub blocks: Vec<Block>,
+    pub block_version: u32,
     pub state: ManagedWorldState,
     pub mempool: Mempool,
     pub chain_id: Hash,
@@ -43,6 +103,10 @@ pub struct Chain {
     pub finality: FinalityTracker,
     pub finality_config: FinalityConfig,
     pub slashing: SlashingEngine,
+    /// Equivocation evidence records (proof + epoch).
+    pub equivocation_records: Vec<(EquivocationProof, u64)>,
+    /// Active validator set for proposer rotation (optional).
+    pub validator_set: Vec<ValidatorAuthority>,
     /// Event log for the most recently produced block.
     pub latest_events: sccgub_types::events::BlockEventLog,
     /// Rejected transaction receipts from the most recent block production.
@@ -50,11 +114,28 @@ pub struct Chain {
     /// Per-agent responsibility state (Φ²-R causal accounting).
     pub responsibility:
         std::collections::HashMap<sccgub_types::AgentId, sccgub_types::agent::ResponsibilityState>,
+    /// Optional API bridge for local event-driven syncs.
+    pub api_bridge: Option<crate::api_bridge::ApiBridge>,
 }
 
 impl Chain {
     /// Create a new chain with a genesis block.
     pub fn init() -> Self {
+        Self::init_with_version(CURRENT_BLOCK_VERSION)
+    }
+
+    /// Create a new chain with an explicit block version.
+    pub fn init_with_version(block_version: u32) -> Self {
+        Self::init_with_consensus_params(block_version, ConsensusParams::default())
+    }
+
+    fn init_with_consensus_params(block_version: u32, consensus_params: ConsensusParams) -> Self {
+        assert!(
+            is_supported_block_version(block_version),
+            "unsupported block version {}",
+            block_version
+        );
+
         let validator_key = generate_keypair();
         let pk = *validator_key.verifying_key().as_bytes();
         // validator_id = public_key directly (Position A).
@@ -63,30 +144,18 @@ impl Chain {
         let validator_id = pk;
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
-        let mut state = ManagedWorldState::new();
-        state.state.governance_state = GovernanceState {
-            finality_mode: FinalityMode::Deterministic,
-            ..GovernanceState::default()
-        };
-
-        let genesis = build_genesis_block(chain_id, validator_id, &validator_key);
-
-        // Mint initial supply to the validator (genesis allocation).
-        let mut balances = BalanceLedger::new();
-        balances.credit(&validator_id, TensionValue::from_integer(1_000_000));
-
-        // Write genesis balances into state trie for unified commitment.
-        let balance_key = sccgub_types::namespace::balance_key(&validator_id);
-        state.apply_delta(&sccgub_types::transition::StateDelta {
-            writes: vec![sccgub_types::transition::StateWrite {
-                address: balance_key,
-                value: TensionValue::from_integer(1_000_000)
-                    .raw()
-                    .to_le_bytes()
-                    .to_vec(),
-            }],
-            deletes: vec![],
-        });
+        let genesis_consensus_params = consensus_params.to_canonical_bytes();
+        let (state, balances) =
+            initialize_genesis_state(block_version, &validator_id, consensus_params);
+        let genesis = build_genesis_block(
+            chain_id,
+            validator_id,
+            block_version,
+            &validator_key,
+            state.state_root(),
+            balance_root_from_ledger(&balances),
+            Some(genesis_consensus_params),
+        );
 
         // Initialize slashing engine with validator stake.
         let mut slashing = SlashingEngine::new(Default::default());
@@ -94,6 +163,7 @@ impl Chain {
 
         let mut chain = Chain {
             blocks: vec![genesis],
+            block_version,
             state,
             mempool: Mempool::new(10_000),
             chain_id,
@@ -107,9 +177,12 @@ impl Chain {
             finality: FinalityTracker::default(),
             finality_config: FinalityConfig::default(),
             slashing,
+            equivocation_records: Vec::new(),
+            validator_set: Vec::new(),
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
             responsibility: std::collections::HashMap::new(),
+            api_bridge: None,
         };
 
         chain.state.set_height(0);
@@ -137,39 +210,62 @@ impl Chain {
         if genesis.header.height != 0 {
             return Err(ImportError::FirstBlockNotGenesis);
         }
+        let block_version = genesis.header.version;
         verify_producer_signature(genesis).map_err(ImportError::GenesisSignature)?;
+        let genesis_consensus_params = load_genesis_consensus_params(genesis)?;
 
         // CPoG on genesis against empty state.
-        let empty_state = ManagedWorldState::new();
+        let mut empty_state =
+            ManagedWorldState::with_consensus_params(genesis_consensus_params.clone());
+        empty_state.state.governance_state = GovernanceState {
+            finality_mode: FinalityMode::Deterministic,
+            ..GovernanceState::default()
+        };
         match validate_cpog(genesis, &empty_state, &sccgub_types::ZERO_HASH) {
             CpogResult::Valid => {}
             CpogResult::Invalid { errors } => return Err(ImportError::Cpog { height: 0, errors }),
         }
 
-        let mut state = ManagedWorldState::new();
-        state.state.governance_state = GovernanceState {
-            finality_mode: FinalityMode::Deterministic,
-            ..GovernanceState::default()
-        };
-
-        // Replay genesis mint.
-        let mut balances = BalanceLedger::new();
-        balances.credit(
+        let (mut state, mut balances) = initialize_genesis_state(
+            block_version,
             &genesis.header.validator_id,
-            TensionValue::from_integer(1_000_000),
+            genesis_consensus_params,
         );
-        let balance_key = sccgub_types::namespace::balance_key(&genesis.header.validator_id);
-        state.apply_delta(&sccgub_types::transition::StateDelta {
-            writes: vec![sccgub_types::transition::StateWrite {
-                address: balance_key,
-                value: TensionValue::from_integer(1_000_000)
-                    .raw()
-                    .to_le_bytes()
-                    .to_vec(),
-            }],
-            deletes: vec![],
-        });
+        match &genesis.body.genesis_consensus_params {
+            Some(_) => {
+                let expected_state_root = state.state_root();
+                if genesis.header.state_root != expected_state_root {
+                    return Err(ImportError::GenesisStateMismatch {
+                        detail: format!(
+                            "header={}, reconstructed={}",
+                            hex::encode(genesis.header.state_root),
+                            hex::encode(expected_state_root),
+                        ),
+                    });
+                }
+                let expected_balance_root = balance_root_from_ledger(&balances);
+                if genesis.header.balance_root != expected_balance_root {
+                    return Err(ImportError::GenesisStateMismatch {
+                        detail: format!(
+                            "balance header={}, reconstructed={}",
+                            hex::encode(genesis.header.balance_root),
+                            hex::encode(expected_balance_root),
+                        ),
+                    });
+                }
+            }
+            None => {
+                if genesis.header.state_root != ZERO_HASH || genesis.header.balance_root != ZERO_HASH
+                {
+                    return Err(ImportError::MissingGenesisConsensusParams);
+                }
+            }
+        }
+        let mut treasury = Treasury::new();
         state.set_height(0);
+        let mut governance_limits = GovernanceLimits::default();
+        let mut finality_config = FinalityConfig::default();
+        let mut proposals = sccgub_governance::proposals::ProposalRegistry::default();
 
         // --- Subsequent blocks: full CPoG validation against running state ---
         for (i, block) in blocks.iter().enumerate().skip(1) {
@@ -183,6 +279,13 @@ impl Chain {
             if block.header.chain_id != chain_id {
                 return Err(ImportError::ChainIdMismatch {
                     height: block.header.height,
+                });
+            }
+            if block.header.version != block_version {
+                return Err(ImportError::VersionMismatch {
+                    height: block.header.height,
+                    expected: block_version,
+                    found: block.header.version,
                 });
             }
 
@@ -200,6 +303,25 @@ impl Chain {
             }
 
             // 4. Apply transitions to running state (after validation succeeded).
+            let gas_price = EconomicState::default().effective_fee(
+                state.state.tension_field.total,
+                state.state.tension_field.budget.current_budget,
+            );
+            sccgub_state::apply::apply_block_economics(
+                &mut state,
+                &mut balances,
+                &mut treasury,
+                &block.body.transitions,
+                &block.receipts,
+                block_version,
+                &block.header.validator_id,
+                gas_price,
+                default_block_reward(),
+            )
+            .map_err(|detail| ImportError::EconomicsViolation {
+                height: block.header.height,
+                detail: format!("Economics replay failed: {}", detail),
+            })?;
             sccgub_state::apply::apply_block_transitions(
                 &mut state,
                 &mut balances,
@@ -213,12 +335,142 @@ impl Chain {
                     });
                 }
             }
+            if block.header.height % 100 == 0 {
+                treasury.advance_epoch();
+                commit_treasury_state(&mut state, &treasury);
+            }
             state.set_height(block.header.height);
+
+            // Apply governance activations during replay (restart-safe).
+            for tx in &block.body.transitions {
+                if let sccgub_types::transition::OperationPayload::ProposeNorm {
+                    name,
+                    description,
+                } = &tx.payload
+                {
+                    if let Err(e) = proposals.submit(
+                        tx.actor.agent_id,
+                        tx.actor.governance_level,
+                        sccgub_governance::proposals::ProposalKind::AddNorm {
+                            name: name.clone(),
+                            description: description.clone(),
+                            initial_fitness: sccgub_types::tension::TensionValue::from_integer(5),
+                            enforcement_cost: sccgub_types::tension::TensionValue::from_integer(1),
+                        },
+                        block.header.height,
+                        5,
+                    ) {
+                        tracing::warn!("Replay proposal submit failed: {}", e);
+                    }
+                }
+                if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
+                    if let sccgub_types::transition::OperationPayload::Write { key, value } =
+                        &tx.payload
+                    {
+                        if key.starts_with(b"norms/governance/params/propose") {
+                            if let Some((param_key, param_value)) =
+                                parse_governance_param_write(value)
+                            {
+                                if let Err(e) = proposals.submit(
+                                    tx.actor.agent_id,
+                                    tx.actor.governance_level,
+                                    sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                        key: param_key,
+                                        value: param_value,
+                                    },
+                                    block.header.height,
+                                    5,
+                                ) {
+                                    tracing::warn!("Replay parameter proposal failed: {}", e);
+                                }
+                            }
+                        }
+                        if key.starts_with(b"governance/proposals/")
+                            || key.starts_with(b"norms/governance/proposals/")
+                        {
+                            if let Ok(proposal_id) =
+                                <[u8; 32]>::try_from(&value[..])
+                            {
+                                let _ = proposals.vote(
+                                    &proposal_id,
+                                    tx.actor.agent_id,
+                                    tx.actor.governance_level,
+                                    true,
+                                    block.header.height,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            let _accepted = proposals.finalize(block.header.height);
+            for proposal in proposals.proposals.clone() {
+                if proposal.status
+                    == sccgub_governance::proposals::ProposalStatus::Timelocked
+                    && block.header.height >= proposal.timelock_until
+                {
+                    match proposals.activate(&proposal.id, block.header.height) {
+                        Ok(Some(norm)) => {
+                            state
+                                .state
+                                .governance_state
+                                .active_norms
+                                .insert(norm.id, norm);
+                        }
+                        Ok(None) => match proposal.kind {
+                            sccgub_governance::proposals::ProposalKind::DeactivateNorm {
+                                norm_id,
+                            } => {
+                                if let Some(mut norm) =
+                                    state.state.governance_state.active_norms.get(&norm_id).cloned()
+                                {
+                                    norm.active = false;
+                                    state
+                                        .state
+                                        .governance_state
+                                        .active_norms
+                                        .insert(norm_id, norm);
+                                }
+                            }
+                            sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                ref key,
+                                ref value,
+                            } => {
+                                if let Err(e) = apply_governance_parameter_static(
+                                    &mut governance_limits,
+                                    &mut finality_config,
+                                    key,
+                                    value,
+                                ) {
+                                    tracing::warn!(
+                                        "Governance parameter update rejected: {}",
+                                        e
+                                    );
+                                }
+                            }
+                            sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
+                                state.state.governance_state.emergency_mode = true;
+                            }
+                            sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
+                                state.state.governance_state.emergency_mode = false;
+                            }
+                            sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
+                        },
+                        Err(e) => {
+                            tracing::warn!("Proposal activation failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(last) = blocks.last() {
+            governance_limits = governance_limits_from_snapshot(&last.governance.governance_limits);
+            finality_config = finality_config_from_snapshot(&last.governance.finality_config);
         }
 
         // Rebuild finality tracker.
         let mut finality = FinalityTracker::default();
-        let finality_config = FinalityConfig::default();
         if let Some(last) = blocks.last() {
             finality.on_new_block(last.header.height);
             finality.check_finality(&finality_config, |h| {
@@ -228,29 +480,255 @@ impl Chain {
 
         Ok(Chain {
             blocks,
+            block_version,
             state,
             mempool: Mempool::new(10_000),
             chain_id,
             validator_key,
             economics: EconomicState::default(),
             balances,
-            treasury: Treasury::new(),
-            governance_limits: GovernanceLimits::default(),
+            treasury,
+            governance_limits,
             power_tracker: GovernancePowerTracker::default(),
-            proposals: sccgub_governance::proposals::ProposalRegistry::default(),
+            proposals,
             finality,
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
+            equivocation_records: Vec::new(),
+            validator_set: Vec::new(),
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
             responsibility: std::collections::HashMap::new(),
+            api_bridge: None,
         })
+    }
+
+    /// Set the active validator set (used for proposer rotation).
+    pub fn set_validator_set(&mut self, mut validators: Vec<ValidatorAuthority>) {
+        validators.sort_by_key(|v| v.node_id);
+        self.validator_set = validators;
+    }
+
+    /// Attach an API bridge for local event-driven syncs.
+    pub fn set_api_bridge(&mut self, bridge: crate::api_bridge::ApiBridge) {
+        self.api_bridge = Some(bridge);
+    }
+
+    /// Record equivocation evidence (deduplicated by proof fields + epoch).
+    pub fn record_equivocation(&mut self, proof: EquivocationProof, epoch: u64) {
+        let (block_a, block_b) = if proof.block_hash_a <= proof.block_hash_b {
+            (proof.block_hash_a, proof.block_hash_b)
+        } else {
+            (proof.block_hash_b, proof.block_hash_a)
+        };
+        let duplicate = self.equivocation_records.iter().any(|(existing, existing_epoch)| {
+            *existing_epoch == epoch
+                && existing.validator_id == proof.validator_id
+                && existing.height == proof.height
+                && existing.round == proof.round
+                && existing.vote_type == proof.vote_type
+                && {
+                    let (existing_a, existing_b) =
+                        if existing.block_hash_a <= existing.block_hash_b {
+                            (existing.block_hash_a, existing.block_hash_b)
+                        } else {
+                            (existing.block_hash_b, existing.block_hash_a)
+                        };
+                    existing_a == block_a && existing_b == block_b
+                }
+        });
+
+        if !duplicate {
+            let mut normalized = proof;
+            normalized.block_hash_a = block_a;
+            normalized.block_hash_b = block_b;
+            self.equivocation_records.push((normalized, epoch));
+        }
+    }
+
+    fn sync_api_bridge(&self, pending_txs: Vec<SymbolicTransition>) {
+        let Some(bridge) = &self.api_bridge else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if !bridge.should_sync(now_ms()) {
+            return;
+        }
+
+        let bridge = bridge.clone();
+        let blocks = self.blocks.clone();
+        let state = self.state.clone();
+        let chain_id = self.chain_id;
+        let finalized_height = self.finality.finalized_height;
+        let slashing_events = self.slashing.events.clone();
+        let slashing_stakes: Vec<(Hash, i128)> = self
+            .slashing
+            .stakes
+            .iter()
+            .map(|(k, v)| (*k, v.raw()))
+            .collect();
+        let slashing_removed = self.slashing.removed.clone();
+        let equivocation_records = self.equivocation_records.clone();
+
+        handle.spawn(async move {
+            let mut app = bridge.app_state.write().await;
+            app.blocks = blocks;
+            app.state = state;
+            app.chain_id = chain_id;
+            app.finalized_height = finalized_height;
+            app.slashing_events = slashing_events;
+            app.slashing_stakes = slashing_stakes;
+            app.slashing_removed = slashing_removed;
+            app.equivocation_records = equivocation_records;
+            app.pending_txs = pending_txs.clone();
+            app.seen_tx_ids = pending_txs.iter().map(|tx| tx.tx_id).collect();
+        });
+    }
+
+    fn maybe_sync_api_bridge(&self, pending_txs: Vec<SymbolicTransition>) {
+        if self.api_bridge.is_some() {
+            self.sync_api_bridge(pending_txs);
+        }
+    }
+
+    fn local_validator_id(&self) -> Hash {
+        *self.validator_key.verifying_key().as_bytes()
+    }
+
+    /// Check whether this node is the designated proposer for a height.
+    pub fn is_proposer_for_height(&self, height: u64) -> bool {
+        if self.validator_set.is_empty() {
+            return true;
+        }
+        let proposer =
+            sccgub_governance::validator::round_robin_proposer(&self.validator_set, height);
+        match proposer {
+            Some(authority) => authority.node_id == self.local_validator_id(),
+            None => false,
+        }
+    }
+
+    /// Validate an externally produced block without mutating state.
+    pub fn validate_candidate_block(&self, block: &Block) -> Result<(), String> {
+        let parent = self.blocks.last().ok_or("No blocks in chain")?;
+        if block.header.height != parent.header.height + 1 {
+            return Err(format!(
+                "Block height mismatch: expected {}, got {}",
+                parent.header.height + 1,
+                block.header.height
+            ));
+        }
+        if block.header.parent_id != parent.header.block_id {
+            return Err("Parent hash mismatch".into());
+        }
+        if block.header.chain_id != self.chain_id {
+            return Err("Chain ID mismatch".into());
+        }
+        if block.header.version != self.block_version {
+            return Err("Block version mismatch".into());
+        }
+        if !self.validator_set.is_empty() {
+            let expected = sccgub_governance::validator::round_robin_proposer(
+                &self.validator_set,
+                block.header.height,
+            )
+            .ok_or("No active proposer for height")?;
+            if expected.node_id != block.header.validator_id {
+                return Err(format!(
+                    "Proposer mismatch: expected {}, got {}",
+                    hex::encode(expected.node_id),
+                    hex::encode(block.header.validator_id)
+                ));
+            }
+        }
+        verify_producer_signature(block)?;
+
+        match validate_cpog(block, &self.state, &parent.header.block_id) {
+            CpogResult::Valid => Ok(()),
+            CpogResult::Invalid { errors } => {
+                Err(format!("CPoG validation failed: {}", errors.join("; ")))
+            }
+        }
+    }
+
+    /// Import an externally produced block (validated and applied).
+    pub fn import_block(&mut self, block: Block) -> Result<(), String> {
+        self.validate_candidate_block(&block)?;
+
+        let gas_price = self.economics.effective_fee(
+            self.state.state.tension_field.total,
+            self.state.state.tension_field.budget.current_budget,
+        );
+        sccgub_state::apply::apply_block_economics(
+            &mut self.state,
+            &mut self.balances,
+            &mut self.treasury,
+            &block.body.transitions,
+            &block.receipts,
+            self.block_version,
+            &block.header.validator_id,
+            gas_price,
+            default_block_reward(),
+        )
+        .map_err(|e| format!("Economics replay failed: {}", e))?;
+        sccgub_state::apply::apply_block_transitions(
+            &mut self.state,
+            &mut self.balances,
+            &block.body.transitions,
+        );
+        for tx in &block.body.transitions {
+            self.state
+                .check_nonce(&tx.actor.agent_id, tx.nonce)
+                .map_err(|e| format!("Nonce violation: {}", e))?;
+        }
+        if block.header.height % 100 == 0 {
+            self.treasury.advance_epoch();
+            commit_treasury_state(&mut self.state, &self.treasury);
+        }
+        self.state.set_height(block.header.height);
+
+        // Mark included tx IDs as confirmed in mempool.
+        let confirmed: Vec<_> = block.body.transitions.iter().map(|tx| tx.tx_id).collect();
+        self.mempool.mark_confirmed(&confirmed);
+
+        // Record proposer for anti-concentration tracking.
+        self.power_tracker.record_proposal(&block.header.validator_id);
+        if block.header.height % 100 == 0 {
+            self.power_tracker.reset_epoch();
+            self.economics.reset_epoch();
+        }
+
+        // Update finality tracker.
+        self.finality.on_new_block(block.header.height);
+        let blocks_ref = &self.blocks;
+        self.finality.check_finality(&self.finality_config, |h| {
+            blocks_ref.get(h as usize).map(|b| b.header.block_id)
+        });
+
+        // Record validator presence (resets absence counter).
+        self.slashing.record_presence(&block.header.validator_id);
+
+        self.blocks.push(block);
+        self.maybe_sync_api_bridge(self.mempool.pending_snapshot());
+        Ok(())
     }
 
     /// Submit a transition to the mempool.
     /// Returns Err if the agent is quarantined or the tx is a duplicate.
     pub fn submit_transition(&mut self, tx: SymbolicTransition) -> Result<(), String> {
-        self.mempool.add(tx)
+        self.mempool.add(tx)?;
+        self.maybe_sync_api_bridge(self.mempool.pending_snapshot());
+        Ok(())
+    }
+
+    /// Build a candidate block without mutating the live chain state.
+    /// Used by the p2p proposer loop to avoid committing pre-consensus.
+    pub fn build_candidate_block(&self) -> Result<Block, String> {
+        let mut scratch = self.clone();
+        let block = scratch.produce_block()?.clone();
+        Ok(block)
     }
 
     /// Produce a new block from mempool transactions.
@@ -264,6 +742,13 @@ impl Chain {
         // Anti-concentration: check consecutive proposal limit.
         // validator_id = public_key directly (Position A).
         let validator_id_for_check: [u8; 32] = *self.validator_key.verifying_key().as_bytes();
+        if !self.is_proposer_for_height(height) {
+            return Err(format!(
+                "Not proposer for height {} (validator {})",
+                height,
+                hex::encode(validator_id_for_check)
+            ));
+        }
         if let Err(e) = self
             .power_tracker
             .check_proposal(&validator_id_for_check, &self.governance_limits)
@@ -275,10 +760,11 @@ impl Chain {
         let transitions = self.mempool.drain_validated(&self.state);
 
         // Gas-metered admission: validate each tx with gas accounting,
-        // enforce per-block gas limit, reject failed transfers and bad nonces.
-        let mut block_gas = BlockGasMeter::default_block();
-        let filter_state = self.state.clone();
-        let filter_balances = self.balances.clone();
+        // enforce per-block gas limit, and reject txs that cannot pay their
+        // fee plus payload effects against the evolving in-block balance view.
+        let mut block_gas = BlockGasMeter::new(self.state.consensus_params.default_block_gas_limit);
+        let mut filter_state = self.state.clone();
+        let mut filter_balances = self.balances.clone();
         let mut accepted_transitions = Vec::new();
         let mut metered_receipts = Vec::new();
         let mut rejected_receipts = Vec::new();
@@ -292,25 +778,7 @@ impl Chain {
         let gas_price = self.economics.effective_fee(prior_tension, budget);
 
         for tx in transitions {
-            // Pre-filter: check transfer solvency.
-            if let sccgub_types::transition::OperationPayload::AssetTransfer { from, to, amount } =
-                &tx.payload
-            {
-                let mut test_bal = filter_balances.clone();
-                if test_bal.transfer(from, to, TensionValue(*amount)).is_err() {
-                    // N-17: produce reject receipt instead of silent continue.
-                    rejected_receipts.push(make_prefilter_reject_receipt(
-                        &tx,
-                        self.state.state_root(),
-                        "Transfer solvency check failed: insufficient balance",
-                    ));
-                    continue;
-                }
-            }
             // Pre-filter: nonce must be valid (READ-ONLY check).
-            // Do NOT call check_nonce here — it mutates filter_state, which
-            // would advance the nonce before validate_transition re-checks it.
-            // That was the TOCTOU bug the audit caught.
             {
                 let last = filter_state
                     .agent_nonces
@@ -333,8 +801,11 @@ impl Chain {
             }
 
             // Gas-metered validation — produces a typed receipt for every tx.
-            let (receipt, gas_used) =
-                validate_transition_metered(&tx, &filter_state, gas::costs::DEFAULT_TX_LIMIT);
+            let (receipt, gas_used) = validate_transition_metered(
+                &tx,
+                &filter_state,
+                filter_state.consensus_params.default_tx_gas_limit,
+            );
 
             // Only include if the block gas limit allows it.
             if !block_gas.can_fit(gas_used) {
@@ -342,12 +813,54 @@ impl Chain {
             }
 
             if receipt.verdict.is_accepted() {
-                block_gas.record_tx(gas_used);
-
-                // Charge fee: gas_used * gas_price → treasury.
                 let fee = TensionValue((gas_used as i128).saturating_mul(gas_price.raw()));
-                self.treasury.collect_fee(fee);
-                self.economics.record_fee(fee);
+                let fee_payer = match sccgub_state::apply::resolve_fee_payer(
+                    self.block_version,
+                    &filter_balances,
+                    &tx,
+                    fee,
+                ) {
+                    Ok(payer) => payer,
+                    Err(e) => {
+                        rejected_receipts.push(make_metered_reject_receipt(
+                            receipt,
+                            &format!("Fee solvency check failed: {}", e),
+                        ));
+                        continue;
+                    }
+                };
+
+                let mut post_tx_balances = filter_balances.clone();
+                if fee.raw() > 0 {
+                    if let Err(e) = post_tx_balances.debit(&fee_payer, fee) {
+                        rejected_receipts.push(make_metered_reject_receipt(
+                            receipt,
+                            &format!("Fee debit failed: {}", e),
+                        ));
+                        continue;
+                    }
+                }
+
+                if let sccgub_types::transition::OperationPayload::AssetTransfer {
+                    from,
+                    to,
+                    amount,
+                } = &tx.payload
+                {
+                    if let Err(e) = post_tx_balances.transfer(from, to, TensionValue(*amount)) {
+                        rejected_receipts.push(make_metered_reject_receipt(
+                            receipt,
+                            &format!("Transfer solvency check failed: {}", e),
+                        ));
+                        continue;
+                    }
+                }
+
+                block_gas.record_tx(gas_used);
+                filter_balances = post_tx_balances;
+                if let Err(e) = filter_state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                    tracing::error!("Nonce filter drift during block production: {}", e);
+                }
 
                 accepted_transitions.push(tx);
                 metered_receipts.push(receipt);
@@ -359,18 +872,21 @@ impl Chain {
         }
         let transitions = accepted_transitions;
 
-        // Apply accepted transitions using shared function (single source of truth).
-        // N-9: capture per-tx deltas for what_actual attribution.
-        //
-        // Block reward is NOT included in the speculative state. It's credited
-        // to self.balances after CPoG validation passes (in the commit phase).
-        // This ensures CPoG replay produces the same state root as produce_block,
-        // because CPoG doesn't have access to the fee/reward logic.
-        let block_reward = TensionValue::from_integer(10); // 10 tokens per block.
-        let actual_reward = self.treasury.distribute_reward(block_reward);
-
         let mut speculative_state = self.state.clone();
         let mut speculative_balances = self.balances.clone();
+        let mut speculative_treasury = self.treasury.clone();
+        let economics_outcome = sccgub_state::apply::apply_block_economics(
+            &mut speculative_state,
+            &mut speculative_balances,
+            &mut speculative_treasury,
+            &transitions,
+            &metered_receipts,
+            self.block_version,
+            &validator_id_for_check,
+            gas_price,
+            default_block_reward(),
+        )
+        .map_err(|e| format!("Economics invariant violation: {}", e))?;
         let per_tx_deltas = sccgub_state::apply::apply_block_transitions(
             &mut speculative_state,
             &mut speculative_balances,
@@ -381,11 +897,19 @@ impl Chain {
                 tracing::error!("Nonce invariant violation in block production: {}", e);
             }
         }
+        if height % 100 == 0 {
+            speculative_treasury.advance_epoch();
+            commit_treasury_state(&mut speculative_state, &speculative_treasury);
+        }
         speculative_state.set_height(height);
 
         // N-9: wire per-tx deltas into receipt what_actual before sealing.
-        // per_tx_deltas[i] corresponds to metered_receipts[i] (same input order).
-        for (receipt, delta) in metered_receipts.iter_mut().zip(per_tx_deltas.iter()) {
+        let actual_deltas = sccgub_state::apply::combine_receipt_deltas(
+            &economics_outcome.tx_deltas,
+            &per_tx_deltas,
+        )
+        .map_err(|e| format!("Receipt delta merge failed: {}", e))?;
+        for (receipt, delta) in metered_receipts.iter_mut().zip(actual_deltas.iter()) {
             receipt.wh_binding.what_actual = delta.clone();
         }
 
@@ -426,11 +950,14 @@ impl Chain {
             parent_id,
             parent_timestamp: &parent.header.timestamp,
             validator_id,
+            version: self.block_version,
             validator_key: &self.validator_key,
             transitions,
             receipts: metered_receipts,
             state: &speculative_state,
             balance_root,
+            governance_limits: governance_limits_snapshot_from(&self.governance_limits),
+            finality_config: finality_config_snapshot_from(&self.finality_config),
         });
 
         // Validate via CPoG against pre-transition state (governance checks).
@@ -447,19 +974,83 @@ impl Chain {
                 // Record proposal for anti-concentration tracking.
                 self.power_tracker.record_proposal(&validator_id_for_check);
 
-                // Commit speculative state and balances.
+                // Commit speculative state, balances, and treasury.
                 self.state = speculative_state;
                 self.balances = speculative_balances;
-
-                // Credit block reward AFTER CPoG validation and commit.
-                // The reward is not in the state root (CPoG doesn't replicate it).
-                // It's applied to self.balances and will be included in the NEXT
-                // block's state root when apply_block_transitions writes all balances.
-                if actual_reward.raw() > 0 {
-                    self.balances.credit(&validator_id_for_check, actual_reward);
-                }
+                self.treasury = speculative_treasury;
+                self.economics.record_fee(economics_outcome.total_fees);
+                self.economics
+                    .distribute_reward(economics_outcome.actual_reward);
 
                 self.blocks.push(block);
+                self.maybe_sync_api_bridge(self.mempool.pending_snapshot());
+
+                // Apply governance transitions from block payloads (live chain).
+                for tx in &self.blocks.last().unwrap().body.transitions {
+                    if let sccgub_types::transition::OperationPayload::ProposeNorm {
+                        name,
+                        description,
+                    } = &tx.payload
+                    {
+                        if let Err(e) = self.proposals.submit(
+                            tx.actor.agent_id,
+                            tx.actor.governance_level,
+                            sccgub_governance::proposals::ProposalKind::AddNorm {
+                                name: name.clone(),
+                                description: description.clone(),
+                                initial_fitness: sccgub_types::tension::TensionValue::from_integer(
+                                    5,
+                                ),
+                                enforcement_cost: sccgub_types::tension::TensionValue::from_integer(
+                                    1,
+                                ),
+                            },
+                            height,
+                            5,
+                        ) {
+                            tracing::warn!("Proposal submit failed: {}", e);
+                        }
+                    }
+                    if tx.intent.kind
+                        == sccgub_types::transition::TransitionKind::GovernanceUpdate
+                    {
+                        if let sccgub_types::transition::OperationPayload::Write { key, value } =
+                            &tx.payload
+                        {
+                            if key.starts_with(b"norms/governance/params/propose") {
+                                if let Some((param_key, param_value)) =
+                                    parse_governance_param_write(value)
+                                {
+                                    if let Err(e) = self.proposals.submit(
+                                        tx.actor.agent_id,
+                                        tx.actor.governance_level,
+                                        sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                            key: param_key,
+                                            value: param_value,
+                                        },
+                                        height,
+                                        5,
+                                    ) {
+                                        tracing::warn!("Parameter proposal failed: {}", e);
+                                    }
+                                }
+                            }
+                            if key.starts_with(b"governance/proposals/")
+                                || key.starts_with(b"norms/governance/proposals/")
+                            {
+                                if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
+                                    let _ = self.proposals.vote(
+                                        &proposal_id,
+                                        tx.actor.agent_id,
+                                        tx.actor.governance_level,
+                                        true,
+                                        height,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Finalize governance proposals whose voting period has ended.
                 // Accepted proposals enter timelock, then activate after the delay.
@@ -469,13 +1060,57 @@ impl Chain {
                     if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
                         && height >= proposal.timelock_until
                     {
-                        if let Ok(Some(norm)) = self.proposals.activate(&proposal.id, height) {
-                            // Register the activated norm in governance state.
-                            self.state
-                                .state
-                                .governance_state
-                                .active_norms
-                                .insert(norm.id, norm);
+                        match self.proposals.activate(&proposal.id, height) {
+                            Ok(Some(norm)) => {
+                                // Register the activated norm in governance state.
+                                self.state
+                                    .state
+                                    .governance_state
+                                    .active_norms
+                                    .insert(norm.id, norm);
+                            }
+                            Ok(None) => match proposal.kind {
+                                sccgub_governance::proposals::ProposalKind::DeactivateNorm {
+                                    norm_id,
+                                } => {
+                                    if let Some(mut norm) = self
+                                        .state
+                                        .state
+                                        .governance_state
+                                        .active_norms
+                                        .get(&norm_id)
+                                        .cloned()
+                                    {
+                                        norm.active = false;
+                                        self.state
+                                            .state
+                                            .governance_state
+                                            .active_norms
+                                            .insert(norm_id, norm);
+                                    }
+                                }
+                                sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                    ref key,
+                                    ref value,
+                                } => {
+                                    if let Err(e) = self.apply_governance_parameter(key, value) {
+                                        tracing::warn!(
+                                            "Governance parameter update rejected: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                                sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
+                                    self.state.state.governance_state.emergency_mode = true;
+                                }
+                                sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
+                                    self.state.state.governance_state.emergency_mode = false;
+                                }
+                                sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
+                            },
+                            Err(e) => {
+                                tracing::warn!("Proposal activation failed: {}", e);
+                            }
                         }
                     }
                 }
@@ -494,6 +1129,7 @@ impl Chain {
                 // Reset epoch counters every 100 blocks.
                 if height % 100 == 0 {
                     self.power_tracker.reset_epoch();
+                    self.economics.reset_epoch();
                 }
 
                 // Update finality tracker.
@@ -537,19 +1173,36 @@ impl Chain {
                 }
 
                 // Emit fee and reward events.
-                if self.treasury.epoch_fees.raw() > 0 {
+                for ((tx, receipt), (payer, fee)) in self
+                    .blocks
+                    .last()
+                    .unwrap()
+                    .body
+                    .transitions
+                    .iter()
+                    .zip(self.blocks.last().unwrap().receipts.iter())
+                    .zip(
+                        economics_outcome
+                            .tx_fee_payers
+                            .iter()
+                            .zip(economics_outcome.tx_fees.iter()),
+                    )
+                {
+                    if fee.raw() <= 0 {
+                        continue;
+                    }
                     events.emit(sccgub_types::events::ChainEvent::FeeCharged {
-                        tx_id: [0u8; 32], // Block-level aggregate.
-                        payer: validator_id_for_check,
-                        amount: self.treasury.epoch_fees,
-                        gas_used: block_gas.used,
+                        tx_id: tx.tx_id,
+                        payer: *payer,
+                        amount: *fee,
+                        gas_used: receipt.resource_used.compute_steps,
                     });
                 }
-                if actual_reward.raw() > 0 {
+                if economics_outcome.actual_reward.raw() > 0 {
                     events.emit(sccgub_types::events::ChainEvent::RewardDistributed {
                         block_height: height,
                         validator: validator_id_for_check,
-                        amount: actual_reward,
+                        amount: economics_outcome.actual_reward,
                     });
                 }
 
@@ -640,6 +1293,23 @@ impl Chain {
             treasury_burned_raw: self.treasury.total_burned.raw(),
             treasury_epoch: self.treasury.epoch,
             finalized_height: self.finality.finalized_height,
+            slashing_events: self.slashing.events.clone(),
+            slashing_stakes: self
+                .slashing
+                .stakes
+                .iter()
+                .map(|(k, v)| (*k, v.raw()))
+                .collect(),
+            slashing_removed: self.slashing.removed.clone(),
+            slashing_absence: self
+                .slashing
+                .absence_counter
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect(),
+            equivocation_records: self.equivocation_records.clone(),
+            governance_limits: self.governance_limits.clone(),
+            finality_config: self.finality_config.clone(),
         }
     }
 
@@ -654,6 +1324,9 @@ impl Chain {
         for (key, value) in &snapshot.trie_entries {
             self.state.trie.insert(key.clone(), value.clone());
         }
+        self.state.consensus_params = consensus_params_from_trie(&self.state)
+            .unwrap_or_else(|_| None)
+            .unwrap_or_default();
         for (agent_id, nonce) in &snapshot.agent_nonces {
             self.state.agent_nonces.insert(*agent_id, *nonce);
         }
@@ -662,18 +1335,41 @@ impl Chain {
         // Restore balances.
         self.balances = BalanceLedger::new();
         for (agent_id, raw_balance) in &snapshot.balances {
-            self.balances.credit(agent_id, TensionValue(*raw_balance));
+            self.balances
+                .import_balance(*agent_id, TensionValue(*raw_balance));
         }
 
-        // Restore treasury.
-        self.treasury.pending_fees = TensionValue(snapshot.treasury_pending_raw);
-        self.treasury.total_fees_collected = TensionValue(snapshot.treasury_collected_raw);
-        self.treasury.total_rewards_distributed = TensionValue(snapshot.treasury_distributed_raw);
-        self.treasury.total_burned = TensionValue(snapshot.treasury_burned_raw);
-        self.treasury.epoch = snapshot.treasury_epoch;
+        // Restore treasury from the trie when available, with snapshot-field
+        // fallback for older snapshots created before treasury keys were committed.
+        self.treasury = treasury_from_trie(&self.state).unwrap_or_else(|_| Treasury {
+            pending_fees: TensionValue(snapshot.treasury_pending_raw),
+            total_fees_collected: TensionValue(snapshot.treasury_collected_raw),
+            total_rewards_distributed: TensionValue(snapshot.treasury_distributed_raw),
+            total_burned: TensionValue(snapshot.treasury_burned_raw),
+            epoch: snapshot.treasury_epoch,
+            epoch_fees: TensionValue::ZERO,
+            epoch_rewards: TensionValue::ZERO,
+        });
 
         // Restore finality.
         self.finality.finalized_height = snapshot.finalized_height;
+
+        // Restore slashing state.
+        let mut slashing = SlashingEngine::new(Default::default());
+        for (validator, raw_stake) in &snapshot.slashing_stakes {
+            slashing.set_stake(*validator, TensionValue(*raw_stake));
+        }
+        slashing.events = snapshot.slashing_events.clone();
+        slashing.removed = snapshot.slashing_removed.clone();
+        slashing.absence_counter = snapshot
+            .slashing_absence
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        self.slashing = slashing;
+        self.equivocation_records = snapshot.equivocation_records.clone();
+        self.governance_limits = snapshot.governance_limits.clone();
+        self.finality_config = snapshot.finality_config.clone();
     }
 
     /// Get the latest block.
@@ -691,6 +1387,168 @@ impl Chain {
     pub fn height(&self) -> u64 {
         self.blocks.last().map_or(0, |b| b.header.height)
     }
+
+    fn apply_governance_parameter(&mut self, key: &str, value: &str) -> Result<(), String> {
+        apply_governance_parameter_static(
+            &mut self.governance_limits,
+            &mut self.finality_config,
+            key,
+            value,
+        )
+    }
+}
+
+fn governance_limits_snapshot_from(
+    limits: &GovernanceLimits,
+) -> GovernanceLimitsSnapshot {
+    GovernanceLimitsSnapshot {
+        max_actions_per_agent_pct: limits.max_actions_per_agent_pct,
+        safety_change_min_signers: limits.safety_change_min_signers,
+        genesis_change_min_signers: limits.genesis_change_min_signers,
+        max_consecutive_proposals: limits.max_consecutive_proposals,
+        max_authority_term_epochs: limits.max_authority_term_epochs,
+        authority_cooldown_epochs: limits.authority_cooldown_epochs,
+    }
+}
+
+fn finality_config_snapshot_from(config: &FinalityConfig) -> FinalityConfigSnapshot {
+    FinalityConfigSnapshot {
+        confirmation_depth: config.confirmation_depth,
+        max_finality_ms: config.max_finality_ms,
+        target_block_time_ms: config.target_block_time_ms,
+    }
+}
+
+fn governance_limits_from_snapshot(snapshot: &GovernanceLimitsSnapshot) -> GovernanceLimits {
+    GovernanceLimits {
+        max_actions_per_agent_pct: snapshot.max_actions_per_agent_pct,
+        safety_change_min_signers: snapshot.safety_change_min_signers,
+        genesis_change_min_signers: snapshot.genesis_change_min_signers,
+        max_consecutive_proposals: snapshot.max_consecutive_proposals,
+        max_authority_term_epochs: snapshot.max_authority_term_epochs,
+        authority_cooldown_epochs: snapshot.authority_cooldown_epochs,
+    }
+}
+
+fn finality_config_from_snapshot(snapshot: &FinalityConfigSnapshot) -> FinalityConfig {
+    FinalityConfig {
+        confirmation_depth: snapshot.confirmation_depth,
+        max_finality_ms: snapshot.max_finality_ms,
+        target_block_time_ms: snapshot.target_block_time_ms,
+    }
+}
+
+fn apply_governance_parameter_static(
+    governance_limits: &mut GovernanceLimits,
+    finality_config: &mut FinalityConfig,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    match key {
+        "governance.max_consecutive_proposals" => {
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| "max_consecutive_proposals must be u32".to_string())?;
+            if parsed == 0 {
+                return Err("max_consecutive_proposals must be >= 1".into());
+            }
+            governance_limits.max_consecutive_proposals = parsed;
+            Ok(())
+        }
+        "governance.max_actions_per_agent_pct" => {
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| "max_actions_per_agent_pct must be u32".to_string())?;
+            if !(1..=100).contains(&parsed) {
+                return Err("max_actions_per_agent_pct must be 1..=100".into());
+            }
+            governance_limits.max_actions_per_agent_pct = parsed;
+            Ok(())
+        }
+        "governance.safety_change_min_signers" => {
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| "safety_change_min_signers must be u32".to_string())?;
+            if parsed == 0 {
+                return Err("safety_change_min_signers must be >= 1".into());
+            }
+            governance_limits.safety_change_min_signers = parsed;
+            Ok(())
+        }
+        "governance.genesis_change_min_signers" => {
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| "genesis_change_min_signers must be u32".to_string())?;
+            if parsed == 0 {
+                return Err("genesis_change_min_signers must be >= 1".into());
+            }
+            governance_limits.genesis_change_min_signers = parsed;
+            Ok(())
+        }
+        "governance.max_authority_term_epochs" => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| "max_authority_term_epochs must be u64".to_string())?;
+            if parsed == 0 {
+                return Err("max_authority_term_epochs must be >= 1".into());
+            }
+            governance_limits.max_authority_term_epochs = parsed;
+            Ok(())
+        }
+        "governance.authority_cooldown_epochs" => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| "authority_cooldown_epochs must be u64".to_string())?;
+            governance_limits.authority_cooldown_epochs = parsed;
+            Ok(())
+        }
+        "finality.confirmation_depth" => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| "confirmation_depth must be u64".to_string())?;
+            if parsed == 0 {
+                return Err("confirmation_depth must be >= 1".into());
+            }
+            finality_config.confirmation_depth = parsed;
+            Ok(())
+        }
+        "finality.max_finality_ms" => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| "max_finality_ms must be u64".to_string())?;
+            finality_config.max_finality_ms = parsed;
+            Ok(())
+        }
+        "finality.target_block_time_ms" => {
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| "target_block_time_ms must be u64".to_string())?;
+            if parsed == 0 {
+                return Err("target_block_time_ms must be >= 1".into());
+            }
+            finality_config.target_block_time_ms = parsed;
+            Ok(())
+        }
+        _ => Err(format!("Unknown governance parameter key: {}", key)),
+    }
+}
+
+fn parse_governance_param_write(value: &[u8]) -> Option<(String, String)> {
+    let decoded = std::str::from_utf8(value).ok()?;
+    let mut parts = decoded.splitn(2, '=');
+    let key = parts.next()?.trim();
+    let value = parts.next()?.trim();
+    if key.is_empty() || value.is_empty() {
+        return None;
+    }
+    Some((key.to_string(), value.to_string()))
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| std::time::Duration::from_millis(0))
+        .as_millis() as u64
 }
 
 /// Errors that can occur during chain import. Every variant is fatal —
@@ -699,11 +1557,36 @@ impl Chain {
 pub enum ImportError {
     Empty,
     FirstBlockNotGenesis,
+    MissingGenesisConsensusParams,
+    GenesisConsensusParams(String),
+    GenesisStateMismatch {
+        detail: String,
+    },
     GenesisSignature(String),
-    ProducerSignature { height: u64, reason: String },
-    ChainIdMismatch { height: u64 },
-    Cpog { height: u64, errors: Vec<String> },
-    NonceViolation { height: u64, detail: String },
+    ProducerSignature {
+        height: u64,
+        reason: String,
+    },
+    ChainIdMismatch {
+        height: u64,
+    },
+    VersionMismatch {
+        height: u64,
+        expected: u32,
+        found: u32,
+    },
+    Cpog {
+        height: u64,
+        errors: Vec<String>,
+    },
+    EconomicsViolation {
+        height: u64,
+        detail: String,
+    },
+    NonceViolation {
+        height: u64,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for ImportError {
@@ -711,6 +1594,16 @@ impl std::fmt::Display for ImportError {
         match self {
             Self::Empty => write!(f, "cannot import an empty block list"),
             Self::FirstBlockNotGenesis => write!(f, "first block is not genesis"),
+            Self::MissingGenesisConsensusParams => write!(
+                f,
+                "genesis block is missing embedded consensus params for a non-legacy state root"
+            ),
+            Self::GenesisConsensusParams(reason) => {
+                write!(f, "invalid embedded genesis consensus params: {}", reason)
+            }
+            Self::GenesisStateMismatch { detail } => {
+                write!(f, "genesis state reconstruction mismatch: {}", detail)
+            }
             Self::GenesisSignature(e) => write!(f, "genesis signature invalid: {}", e),
             Self::ProducerSignature { height, reason } => {
                 write!(f, "producer sig invalid at height {}: {}", height, reason)
@@ -718,8 +1611,24 @@ impl std::fmt::Display for ImportError {
             Self::ChainIdMismatch { height } => {
                 write!(f, "chain_id mismatch at height {}", height)
             }
+            Self::VersionMismatch {
+                height,
+                expected,
+                found,
+            } => write!(
+                f,
+                "block version mismatch at height {}: expected {}, found {}",
+                height, expected, found
+            ),
             Self::Cpog { height, errors } => {
                 write!(f, "CPoG failed at height {}: {}", height, errors.join("; "))
+            }
+            Self::EconomicsViolation { height, detail } => {
+                write!(
+                    f,
+                    "economics replay failed at height {}: {}",
+                    height, detail
+                )
             }
             Self::NonceViolation { height, detail } => {
                 write!(f, "nonce violation at height {}: {}", height, detail)
@@ -760,6 +1669,20 @@ fn make_prefilter_reject_receipt(
         phi_phase_reached: 0,
         tension_delta: TensionValue::ZERO,
     }
+}
+
+fn make_metered_reject_receipt(mut receipt: CausalReceipt, reason: &str) -> CausalReceipt {
+    receipt.verdict = sccgub_types::receipt::Verdict::Reject {
+        reason: reason.to_string(),
+    };
+    receipt.post_state_root = receipt.pre_state_root;
+    receipt.write_set.clear();
+    receipt.emitted_events.clear();
+    receipt.wh_binding.what_actual = sccgub_types::transition::StateDelta::default();
+    receipt.wh_binding.whether = sccgub_types::transition::ValidationResult::Invalid {
+        reason: reason.to_string(),
+    };
+    receipt
 }
 
 /// The canonical signing payload for a block. Both producers and verifiers
@@ -803,7 +1726,11 @@ fn verify_producer_signature(block: &Block) -> Result<(), String> {
 fn build_genesis_block(
     chain_id: Hash,
     validator_id: Hash,
+    version: u32,
     validator_key: &ed25519_dalek::SigningKey,
+    state_root: Hash,
+    balance_root: Hash,
+    genesis_consensus_params: Option<Vec<u8>>,
 ) -> Block {
     let timestamp = CausalTimestamp::genesis();
     let seal = MfidelAtomicSeal::from_height(0);
@@ -812,6 +1739,8 @@ fn build_genesis_block(
         active_norm_count: 0,
         emergency_mode: false,
         finality_mode: FinalityMode::Deterministic,
+        governance_limits: GovernanceLimitsSnapshot::default(),
+        finality_config: FinalityConfigSnapshot::default(),
     };
 
     let header_data = sccgub_crypto::canonical::canonical_bytes(&("genesis", &chain_id));
@@ -823,7 +1752,7 @@ fn build_genesis_block(
         parent_id: ZERO_HASH,
         height: 0,
         timestamp,
-        state_root: ZERO_HASH,
+        state_root,
         transition_root: ZERO_HASH,
         receipt_root: ZERO_HASH,
         causal_root: ZERO_HASH,
@@ -832,9 +1761,9 @@ fn build_genesis_block(
         tension_before: TensionValue::ZERO,
         tension_after: TensionValue::ZERO,
         mfidel_seal: seal,
-        balance_root: ZERO_HASH, // No balances at genesis block creation time.
+        balance_root,
         validator_id,
-        version: 1,
+        version,
     };
 
     // Build proof without signature, then sign the (header, proof) pair.
@@ -861,6 +1790,7 @@ fn build_genesis_block(
             transition_count: 0,
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
+            genesis_consensus_params,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -875,11 +1805,14 @@ struct BlockBuildParams<'a> {
     parent_id: Hash,
     parent_timestamp: &'a CausalTimestamp,
     validator_id: Hash,
+    version: u32,
     validator_key: &'a ed25519_dalek::SigningKey,
     transitions: Vec<SymbolicTransition>,
     receipts: Vec<CausalReceipt>,
     state: &'a ManagedWorldState,
     balance_root: Hash,
+    governance_limits: GovernanceLimitsSnapshot,
+    finality_config: FinalityConfigSnapshot,
 }
 
 fn build_block(params: BlockBuildParams<'_>) -> Block {
@@ -889,11 +1822,14 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         parent_id,
         parent_timestamp,
         validator_id,
+        version,
         validator_key,
         transitions,
         receipts,
         state,
         balance_root,
+        governance_limits,
+        finality_config,
     } = params;
     let wall_hint = sccgub_types::timestamp::CausalTimestamp::now_secs();
     let timestamp =
@@ -910,6 +1846,8 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         active_norm_count: state.state.governance_state.active_norms.len() as u32,
         emergency_mode: state.state.governance_state.emergency_mode,
         finality_mode: state.state.governance_state.finality_mode,
+        governance_limits,
+        finality_config,
     };
 
     let tension_before = state.state.tension_field.total;
@@ -977,7 +1915,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         mfidel_seal: seal,
         balance_root,
         validator_id,
-        version: 1,
+        version,
     };
     // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
     let header_bytes = canonical_bytes(&header);
@@ -1007,6 +1945,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             transition_count,
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
+            genesis_consensus_params: None,
         },
         receipts,
         causal_delta: CausalGraphDelta {
@@ -1022,6 +1961,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sccgub_types::governance::PrecedenceLevel;
 
     #[test]
     fn test_chain_init_produces_genesis() {
@@ -1031,7 +1971,94 @@ mod tests {
         let genesis = chain.latest_block().unwrap();
         assert_eq!(genesis.header.height, 0);
         assert_eq!(genesis.header.parent_id, ZERO_HASH);
+        assert_eq!(genesis.header.version, CURRENT_BLOCK_VERSION);
         assert!(chain.balances.total_supply().raw() > 0);
+    }
+
+    #[test]
+    fn test_chain_genesis_embeds_consensus_params() {
+        let chain = Chain::init();
+        let genesis = chain.latest_block().expect("genesis block must exist");
+        let embedded = genesis
+            .body
+            .genesis_consensus_params
+            .as_ref()
+            .expect("new genesis must embed consensus params");
+        let parsed =
+            ConsensusParams::from_canonical_bytes(embedded).expect("embedded params must parse");
+
+        assert_eq!(parsed, chain.state.consensus_params);
+        assert_eq!(
+            chain.state.get(&ConsensusParams::TRIE_KEY.to_vec()),
+            Some(embedded)
+        );
+        assert_eq!(genesis.header.state_root, chain.state.state_root());
+        assert_eq!(
+            genesis.header.balance_root,
+            balance_root_from_ledger(&chain.balances)
+        );
+    }
+
+    #[test]
+    fn test_chain_from_blocks_replays_genesis_consensus_params() {
+        let params = ConsensusParams {
+            default_tx_gas_limit: 1_234,
+            default_block_gas_limit: 9_876,
+            max_state_entry_size: 2_048,
+            ..ConsensusParams::default()
+        };
+        let chain = Chain::init_with_consensus_params(CURRENT_BLOCK_VERSION, params.clone());
+        let embedded = params.to_canonical_bytes();
+
+        let replayed = Chain::from_blocks(chain.blocks.clone())
+            .expect("from_blocks should load embedded consensus params");
+
+        assert_eq!(replayed.state.consensus_params, params);
+        assert_eq!(replayed.state.state_root(), chain.state.state_root());
+        assert_eq!(
+            replayed.state.get(&ConsensusParams::TRIE_KEY.to_vec()),
+            Some(&embedded)
+        );
+        assert_eq!(
+            replayed.latest_block().unwrap().body.genesis_consensus_params,
+            chain.latest_block().unwrap().body.genesis_consensus_params
+        );
+    }
+
+    #[test]
+    fn test_chain_snapshot_restores_consensus_params_from_trie() {
+        let params = ConsensusParams {
+            max_proof_depth: 99,
+            default_tx_gas_limit: 2_222,
+            ..ConsensusParams::default()
+        };
+        let chain = Chain::init_with_consensus_params(CURRENT_BLOCK_VERSION, params.clone());
+        let snapshot = chain.create_snapshot();
+        let embedded = params.to_canonical_bytes();
+
+        let mut restored = Chain::init();
+        restored.restore_from_snapshot(&snapshot);
+
+        assert_eq!(restored.state.consensus_params, params);
+        assert_eq!(restored.state.state_root(), chain.state.state_root());
+        assert_eq!(
+            restored.state.get(&ConsensusParams::TRIE_KEY.to_vec()),
+            Some(&embedded)
+        );
+        assert_eq!(restored.balances.total_supply(), chain.balances.total_supply());
+    }
+
+    #[test]
+    fn test_from_blocks_rejects_stripped_embedded_genesis_consensus_params() {
+        let chain = Chain::init();
+        let mut stripped = chain.blocks.clone();
+        stripped[0].body.genesis_consensus_params = None;
+
+        match Chain::from_blocks(stripped) {
+            Err(ImportError::MissingGenesisConsensusParams) => {}
+            Err(other) => panic!("expected missing genesis consensus params, got {}", other),
+            Ok(_) => panic!("import must fail when embedded genesis params are stripped"),
+        }
     }
 
     #[test]
@@ -1044,6 +2071,109 @@ mod tests {
             result.err()
         );
         assert_eq!(chain.height(), 1);
+    }
+
+    #[test]
+    fn test_build_candidate_block_does_not_mutate_chain() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let start_height = chain.height();
+        let block = chain.build_candidate_block().unwrap();
+        assert_eq!(chain.height(), start_height);
+        assert_eq!(block.header.height, start_height + 1);
+    }
+
+    #[test]
+    fn test_proposer_rotation_allows_expected_validator() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let local = *chain.validator_key.verifying_key().as_bytes();
+        let validators = vec![
+            ValidatorAuthority {
+                node_id: [0u8; 32],
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            },
+            ValidatorAuthority {
+                node_id: local,
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            },
+        ];
+        chain.set_validator_set(validators);
+
+        assert!(chain.is_proposer_for_height(1));
+        assert!(!chain.is_proposer_for_height(2));
+    }
+
+    #[test]
+    fn test_produce_block_rejects_non_proposer() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let validators = vec![ValidatorAuthority {
+            node_id: [1u8; 32],
+            governance_level: PrecedenceLevel::Safety,
+            norm_compliance: TensionValue::from_integer(1),
+            causal_reliability: TensionValue::from_integer(1),
+            active: true,
+        }];
+        chain.set_validator_set(validators);
+
+        let result = chain.produce_block();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_candidate_block_rejects_wrong_proposer() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let local = *chain.validator_key.verifying_key().as_bytes();
+        let validators = vec![
+            ValidatorAuthority {
+                node_id: local,
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            },
+            ValidatorAuthority {
+                node_id: [255u8; 32],
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            },
+        ];
+        chain.set_validator_set(validators);
+
+        let parent = chain.latest_block().unwrap();
+        let balance_root = balance_root_from_ledger(&chain.balances);
+        let block = build_block(BlockBuildParams {
+            chain_id: chain.chain_id,
+            height: parent.header.height + 1,
+            parent_id: parent.header.block_id,
+            parent_timestamp: &parent.header.timestamp,
+            validator_id: local,
+            version: chain.block_version,
+            validator_key: &chain.validator_key,
+            transitions: Vec::new(),
+            receipts: Vec::new(),
+            state: &chain.state,
+            balance_root,
+            governance_limits: governance_limits_snapshot_from(&chain.governance_limits),
+            finality_config: finality_config_snapshot_from(&chain.finality_config),
+        });
+
+        let err = chain.validate_candidate_block(&block).unwrap_err();
+        assert!(
+            err.contains("Proposer mismatch"),
+            "Expected proposer mismatch error, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -1074,18 +2204,57 @@ mod tests {
     fn test_chain_snapshot_roundtrip() {
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
+        chain.governance_limits.max_actions_per_agent_pct = 25;
+        chain.finality_config.confirmation_depth = 4;
         chain.produce_block().unwrap();
         chain.produce_block().unwrap();
 
         let snapshot = chain.create_snapshot();
         let original_root = chain.state.state_root();
         let original_supply = chain.balances.total_supply();
+        let original_limits = chain.governance_limits.clone();
+        let original_finality = chain.finality_config.clone();
 
         let mut chain2 = Chain::init();
         chain2.restore_from_snapshot(&snapshot);
 
         assert_eq!(chain2.state.state_root(), original_root);
         assert_eq!(chain2.balances.total_supply(), original_supply);
+        assert_eq!(
+            chain2.governance_limits.max_actions_per_agent_pct,
+            original_limits.max_actions_per_agent_pct
+        );
+        assert_eq!(
+            chain2.finality_config.confirmation_depth,
+            original_finality.confirmation_depth
+        );
+    }
+
+    #[test]
+    fn test_chain_snapshot_restore_matches_tip_roots() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        for _ in 0..3 {
+            chain.produce_block().unwrap();
+        }
+
+        let snapshot = chain.create_snapshot();
+        let tip = chain.latest_block().expect("tip block");
+        assert_eq!(snapshot.height, tip.header.height);
+        assert_eq!(snapshot.state_root, tip.header.state_root);
+
+        let mut ledger = BalanceLedger::new();
+        for (agent_id, raw_balance) in &snapshot.balances {
+            ledger.import_balance(*agent_id, TensionValue(*raw_balance));
+        }
+        let snapshot_balance_root = balance_root_from_ledger(&ledger);
+        assert_eq!(snapshot_balance_root, tip.header.balance_root);
+
+        let mut replayed = Chain::from_blocks(chain.blocks.clone())
+            .expect("from_blocks should succeed for valid chain");
+        replayed.restore_from_snapshot(&snapshot);
+        assert_eq!(replayed.state.state_root(), tip.header.state_root);
+        assert_eq!(balance_root_from_ledger(&replayed.balances), tip.header.balance_root);
     }
 
     #[test]
@@ -1102,6 +2271,289 @@ mod tests {
             Chain::from_blocks(blocks).expect("from_blocks should succeed for valid chain");
         assert_eq!(replayed.state.state_root(), original_root);
         assert_eq!(replayed.height(), 2);
+    }
+
+    #[test]
+    fn test_chain_replays_fee_and_reward_state_from_blocks() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        let actor_key = chain.validator_key.clone();
+        let actor_pk = *actor_key.verifying_key().as_bytes();
+        let actor_seal = MfidelAtomicSeal::from_height(0);
+        let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+
+        let target = b"data/economics/replay".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "economics replay test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"charged".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "economics replay test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical);
+
+        chain.submit_transition(tx).expect("submit should succeed");
+
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed")
+            .clone();
+        assert_eq!(block.body.transitions.len(), 1, "tx must be included");
+        assert_eq!(block.receipts.len(), 1, "accepted tx must have a receipt");
+
+        let fee = TensionValue(
+            (block.receipts[0].resource_used.compute_steps as i128)
+                .saturating_mul(chain.economics.base_fee.raw()),
+        );
+        let expected_reward = default_block_reward();
+        let reward_account =
+            sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+        assert!(fee.raw() > 0, "accepted tx must pay a positive fee");
+        assert_eq!(chain.treasury.total_fees_collected, fee);
+        assert_eq!(chain.treasury.total_rewards_distributed, expected_reward);
+        assert_eq!(
+            chain.balances.balance_of(&reward_account),
+            TensionValue::from_integer(1_000_000) - fee + expected_reward,
+            "canonical validator spend account must reflect fee debit plus fixed reward"
+        );
+
+        let replayed =
+            Chain::from_blocks(chain.blocks.clone()).expect("from_blocks should replay economics");
+        assert_eq!(replayed.state.state_root(), chain.state.state_root());
+        assert_eq!(
+            replayed.treasury.total_fees_collected,
+            chain.treasury.total_fees_collected
+        );
+        assert_eq!(
+            replayed.treasury.total_rewards_distributed,
+            chain.treasury.total_rewards_distributed
+        );
+        assert_eq!(
+            replayed.balances.balance_of(&reward_account),
+            chain.balances.balance_of(&reward_account)
+        );
+    }
+
+    #[test]
+    fn test_chain_from_blocks_replays_governance_parameters() {
+        use sccgub_governance::proposals::ProposalKind;
+        use sccgub_types::governance::PrecedenceLevel;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 400;
+        let proposer = chain.latest_block().unwrap().header.validator_id;
+
+        let proposal_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyParameter {
+                    key: "finality.confirmation_depth".into(),
+                    value: "5".into(),
+                },
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &proposal_id,
+                proposer,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+        assert_eq!(chain.finality_config.confirmation_depth, 5);
+
+        let replayed =
+            Chain::from_blocks(chain.blocks.clone()).expect("from_blocks should succeed");
+        assert_eq!(replayed.finality_config.confirmation_depth, 5);
+    }
+
+    #[test]
+    fn test_v1_chain_accepts_transfer_from_signer_public_key_account() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init_with_version(sccgub_types::block::LEGACY_BLOCK_VERSION);
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        let sender_pk = *chain.validator_key.verifying_key().as_bytes();
+        let sender_seal = MfidelAtomicSeal::from_height(0);
+        let sender_id = blake3_hash_concat(&[
+            &sender_pk,
+            &sccgub_crypto::canonical::canonical_bytes(&sender_seal),
+        ]);
+        let recipient_key = generate_keypair();
+        let recipient_pk = *recipient_key.verifying_key().as_bytes();
+        let recipient_seal = MfidelAtomicSeal::from_height(1);
+        let recipient_id = blake3_hash_concat(&[
+            &recipient_pk,
+            &sccgub_crypto::canonical::canonical_bytes(&recipient_seal),
+        ]);
+        let transfer_amount = TensionValue::from_integer(25);
+        let sender_before = chain.balances.balance_of(&sender_pk);
+
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id: sender_id,
+                public_key: sender_pk,
+                mfidel_seal: sender_seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::AssetTransfer,
+                target: sccgub_types::namespace::balance_key(&sender_pk),
+                declared_purpose: "compat transfer".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::AssetTransfer {
+                from: sender_pk,
+                to: recipient_id,
+                amount: transfer_amount.raw(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: sender_id,
+                when: CausalTimestamp::genesis(),
+                r#where: sccgub_types::namespace::balance_key(&sender_pk),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "compat transfer".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+        chain.submit_transition(tx).expect("submit should succeed");
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed")
+            .clone();
+
+        assert_eq!(block.body.transitions.len(), 1, "transfer must be accepted");
+        assert_eq!(
+            chain.balances.balance_of(&recipient_id),
+            transfer_amount,
+            "recipient must receive transfer amount"
+        );
+        assert!(
+            chain.balances.balance_of(&sender_pk) < sender_before,
+            "sender compatibility account must be debited by transfer plus fee"
+        );
+    }
+
+    #[test]
+    fn test_v2_chain_funds_validator_agent_account() {
+        let chain = Chain::init();
+        let validator_pk = *chain.validator_key.verifying_key().as_bytes();
+        let canonical_account =
+            sccgub_state::apply::validator_spend_account(chain.block_version, &validator_pk);
+
+        assert_eq!(
+            chain.balances.balance_of(&canonical_account),
+            TensionValue::from_integer(1_000_000)
+        );
+        assert_eq!(
+            chain.balances.balance_of(&validator_pk),
+            TensionValue::ZERO,
+            "v2 must not leave genesis funds on the signer compatibility account"
+        );
+    }
+
+    #[test]
+    fn test_from_blocks_rejects_mixed_block_versions() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain
+            .produce_block()
+            .expect("block production should succeed");
+
+        let mut mixed = chain.blocks.clone();
+        mixed[1].header.version = sccgub_types::block::LEGACY_BLOCK_VERSION;
+        let signing_hash = block_signing_payload(&mixed[1].header, &mixed[1].proof);
+        mixed[1].proof.validator_signature = sign(&chain.validator_key, &signing_hash);
+
+        match Chain::from_blocks(mixed) {
+            Err(ImportError::VersionMismatch {
+                expected, found, ..
+            }) => {
+                assert_eq!(expected, CURRENT_BLOCK_VERSION);
+                assert_eq!(found, sccgub_types::block::LEGACY_BLOCK_VERSION);
+            }
+            Err(other) => panic!("expected version mismatch, got {}", other),
+            Ok(_) => panic!("mixed-version chain must be rejected"),
+        }
     }
 
     #[test]
@@ -1383,6 +2835,245 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_emergency_toggle_activation() {
+        use sccgub_governance::proposals::ProposalKind;
+        use sccgub_types::governance::PrecedenceLevel;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 500;
+        let proposer = chain.latest_block().unwrap().header.validator_id;
+
+        let activate_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Safety,
+                ProposalKind::ActivateEmergency,
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &activate_id,
+                proposer,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+        assert!(chain.state.state.governance_state.emergency_mode);
+
+        let deactivate_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Safety,
+                ProposalKind::DeactivateEmergency,
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &deactivate_id,
+                proposer,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+        assert!(!chain.state.state.governance_state.emergency_mode);
+    }
+
+    #[test]
+    fn test_governance_parameter_update_activation() {
+        use sccgub_governance::proposals::ProposalKind;
+        use sccgub_types::governance::PrecedenceLevel;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 300;
+        let proposer = chain.latest_block().unwrap().header.validator_id;
+
+        let proposal_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyParameter {
+                    key: "finality.confirmation_depth".into(),
+                    value: "4".into(),
+                },
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &proposal_id,
+                proposer,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+
+        assert_eq!(chain.finality_config.confirmation_depth, 4);
+    }
+
+    #[test]
+    fn test_governance_parameter_update_via_transitions() {
+        use sccgub_governance::proposals::ProposalStatus;
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 300;
+
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(0);
+        let agent_id = blake3_hash_concat(&[&pk, &canonical_bytes(&seal)]);
+        let agent = AgentIdentity {
+            agent_id,
+            public_key: pk,
+            mfidel_seal: seal,
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Safety,
+            norm_set: HashSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        let propose_key = b"norms/governance/params/propose".to_vec();
+        let propose_value = b"finality.confirmation_depth=5".to_vec();
+        let mut propose_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: agent.clone(),
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: propose_key.clone(),
+                declared_purpose: "Propose finality depth update".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: propose_key.clone(),
+                value: propose_value,
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: propose_key.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Safety,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "Propose finality depth update".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let propose_canonical = sccgub_execution::validate::canonical_tx_bytes(&propose_tx);
+        propose_tx.tx_id = blake3_hash(&propose_canonical);
+        propose_tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &propose_canonical);
+
+        chain.submit_transition(propose_tx).expect("proposal submit should succeed");
+        let proposal_block = chain.produce_block().expect("proposal block should succeed");
+        assert!(
+            !proposal_block.body.transitions.is_empty(),
+            "proposal transition must be included in produced block"
+        );
+
+        let proposal_id = chain
+            .proposals
+            .proposals
+            .iter()
+            .find(|proposal| matches!(proposal.kind, sccgub_governance::proposals::ProposalKind::ModifyParameter { .. }))
+            .map(|proposal| proposal.id)
+            .expect("proposal registry should contain parameter proposal");
+
+        let vote_key = b"norms/governance/proposals/vote".to_vec();
+        let mut vote_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: agent,
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: vote_key.clone(),
+                declared_purpose: "Vote for governance proposal".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: vote_key.clone(),
+                value: proposal_id.to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: vote_key.clone(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Safety,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "Vote for governance proposal".into(),
+            },
+            nonce: 2,
+            signature: vec![],
+        };
+        let vote_canonical = sccgub_execution::validate::canonical_tx_bytes(&vote_tx);
+        vote_tx.tx_id = blake3_hash(&vote_canonical);
+        vote_tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &vote_canonical);
+
+        chain.submit_transition(vote_tx).expect("vote submit should succeed");
+        let vote_block = chain.produce_block().expect("vote block should succeed");
+        assert!(
+            !vote_block.body.transitions.is_empty(),
+            "vote transition must be included in produced block"
+        );
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+
+        let proposal = chain
+            .proposals
+            .proposals
+            .iter()
+            .find(|proposal| proposal.id == proposal_id)
+            .expect("proposal should remain in registry");
+        assert_eq!(proposal.status, ProposalStatus::Activated);
+        assert_eq!(chain.finality_config.confirmation_depth, 5);
+    }
+
+    #[test]
     fn test_phase8_rejects_payload_target_mismatch() {
         // End-to-end witness: proves Phase 8 payload consistency check
         // is wired into the production path. If check_payload_consistency
@@ -1512,9 +3203,8 @@ mod tests {
 
         // Build a properly signed Write transaction.
         let pk = *chain.validator_key.verifying_key().as_bytes();
-        let seal = MfidelAtomicSeal::from_height(1);
-        let agent_id =
-            blake3_hash_concat(&[&pk, &sccgub_crypto::canonical::canonical_bytes(&seal)]);
+        let seal = MfidelAtomicSeal::from_height(0);
+        let agent_id = sccgub_state::apply::validator_spend_account(chain.block_version, &pk);
         let agent = AgentIdentity {
             agent_id,
             public_key: pk,
@@ -1594,13 +3284,15 @@ mod tests {
             !receipt.wh_binding.what_actual.writes.is_empty(),
             "N-9: what_actual.writes must be populated for accepted Write tx"
         );
+        let payload_write = receipt
+            .wh_binding
+            .what_actual
+            .writes
+            .iter()
+            .find(|write| write.address == b"data/n9/test".to_vec())
+            .expect("N-9: what_actual must include the payload write alongside economics writes");
         assert_eq!(
-            receipt.wh_binding.what_actual.writes[0].address,
-            b"data/n9/test".to_vec(),
-            "N-9: what_actual must record the actual write address"
-        );
-        assert_eq!(
-            receipt.wh_binding.what_actual.writes[0].value,
+            payload_write.value,
             b"hello_n9".to_vec(),
             "N-9: what_actual must record the actual write value"
         );
