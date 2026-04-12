@@ -396,6 +396,33 @@ pub struct SlashingEvidenceListResponse {
     pub evidence: Vec<SlashingEvidenceResponse>,
 }
 
+/// Safety certificate signature entry.
+#[derive(Debug, Serialize)]
+pub struct SafetyCertificateSignatureResponse {
+    pub validator_id: String,
+    pub signature: String,
+}
+
+/// Safety certificate summary.
+#[derive(Debug, Serialize)]
+pub struct SafetyCertificateResponse {
+    pub chain_id: String,
+    pub epoch: u64,
+    pub height: u64,
+    pub block_hash: String,
+    pub round: u32,
+    pub quorum: u32,
+    pub validator_count: u32,
+    pub precommit_signatures: Vec<SafetyCertificateSignatureResponse>,
+}
+
+/// Safety certificate list response.
+#[derive(Debug, Serialize)]
+pub struct FinalityCertificatesResponse {
+    pub count: u64,
+    pub certificates: Vec<SafetyCertificateResponse>,
+}
+
 #[cfg(test)]
 mod tests {
     const RESPONSES_SOURCE: &str = include_str!("responses.rs");

@@ -53,6 +53,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthApiResponse"
+  /api/v1/finality/certificates:
+    get:
+      operationId: getFinalityCertificates
+      summary: Finality safety certificates
+      responses:
+        "200":
+          description: Finality certificates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinalityCertificatesApiResponse"
   /api/v1/governance/params:
     get:
       operationId: getGovernanceParams
@@ -758,6 +769,37 @@ components:
         total_transactions: { type: integer, format: uint64 }
         state_entries: { type: integer, format: uint64 }
         causal_edges: { type: integer, format: uint64 }
+    SafetyCertificateSignatureResponse:
+      type: object
+      required: [validator_id, signature]
+      properties:
+        validator_id: { type: string }
+        signature: { type: string }
+    SafetyCertificateResponse:
+      type: object
+      required:
+        [chain_id, epoch, height, block_hash, round, quorum, validator_count, precommit_signatures]
+      properties:
+        chain_id: { type: string }
+        epoch: { type: integer, format: uint64 }
+        height: { type: integer, format: uint64 }
+        block_hash: { type: string }
+        round: { type: integer, format: uint32 }
+        quorum: { type: integer, format: uint32 }
+        validator_count: { type: integer, format: uint32 }
+        precommit_signatures:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyCertificateSignatureResponse"
+    FinalityCertificatesResponse:
+      type: object
+      required: [count, certificates]
+      properties:
+        count: { type: integer, format: uint64 }
+        certificates:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyCertificateResponse"
     TxDetailResponse:
       type: object
       required: [tx_id, block_height, block_id, kind, target, purpose, actor, nonce]
@@ -978,6 +1020,20 @@ components:
           const: true
         data:
           $ref: "#/components/schemas/HealthResponse"
+        error:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+    FinalityCertificatesApiResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: "#/components/schemas/FinalityCertificatesResponse"
         error:
           nullable: true
         request_id:

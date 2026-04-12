@@ -1414,6 +1414,7 @@ async fn cmd_serve(
         .collect();
     let slashing_removed = chain_snapshot.slashing.removed.clone();
     let equivocation_records = chain_snapshot.equivocation_records.clone();
+    let safety_certificates = chain_snapshot.safety_certificates.clone();
     let governance_limits = chain_snapshot.governance_limits.clone();
     let finality_config = chain_snapshot.finality_config.clone();
     let proposals = chain_snapshot.proposals.proposals.clone();
@@ -1432,6 +1433,7 @@ async fn cmd_serve(
             slashing_stakes,
             slashing_removed,
             equivocation_records,
+            safety_certificates,
             bandwidth_inbound_bytes: 0,
             bandwidth_outbound_bytes: 0,
             peer_stats: std::collections::HashMap::new(),
@@ -1510,6 +1512,7 @@ async fn cmd_serve(
     println!("Endpoints (v1):");
     println!("  GET  /api/v1/status                  - chain summary");
     println!("  GET  /api/v1/health                  - system health + finality");
+    println!("  GET  /api/v1/finality/certificates   - finality safety certificates");
     println!("  GET  /api/v1/slashing                - slashing summary");
     println!("  GET  /api/v1/slashing/{{validator_id}} - validator slashing detail");
     println!("  GET  /api/v1/slashing/evidence       - equivocation evidence list");

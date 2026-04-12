@@ -587,6 +587,7 @@ impl Chain {
             .collect();
         let slashing_removed = self.slashing.removed.clone();
         let equivocation_records = self.equivocation_records.clone();
+        let safety_certificates = self.safety_certificates.clone();
 
         handle.spawn(async move {
             let mut app = bridge.app_state.write().await;
@@ -598,6 +599,7 @@ impl Chain {
             app.slashing_stakes = slashing_stakes;
             app.slashing_removed = slashing_removed;
             app.equivocation_records = equivocation_records;
+            app.safety_certificates = safety_certificates;
             app.pending_txs = pending_txs.clone();
             app.seen_tx_ids = pending_txs.iter().map(|tx| tx.tx_id).collect();
         });

@@ -96,6 +96,7 @@ impl ApiBridge {
             .collect();
         app.slashing_removed = chain.slashing.removed.clone();
         app.equivocation_records = chain.equivocation_records.clone();
+        app.safety_certificates = chain.safety_certificates.clone();
         app.pending_txs = chain.mempool.pending_snapshot();
         app.seen_tx_ids = app.pending_txs.iter().map(|tx| tx.tx_id).collect();
         app.bandwidth_inbound_bytes = self.bandwidth_inbound.load(Ordering::Relaxed);

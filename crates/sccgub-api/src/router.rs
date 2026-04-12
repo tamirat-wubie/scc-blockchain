@@ -34,6 +34,7 @@ use crate::handlers::{self, SharedState};
 ///   GET  /api/v1/status                    - chain summary
 ///   GET  /api/v1/status/schema             - status JSON schema
 ///   GET  /api/v1/health                    - system health + finality
+///   GET  /api/v1/finality/certificates     - finality safety certificates
 ///   GET  /api/v1/governance/params         - governed parameter values
 ///   GET  /api/v1/governance/params/schema  - governed JSON schema
 ///   GET  /api/v1/governance/proposals      - governance proposal registry
@@ -57,6 +58,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/v1/status/schema", get(handlers::get_status_schema))
         .route("/api/v1/openapi", get(handlers::get_openapi_spec))
         .route("/api/v1/health", get(handlers::get_health))
+        .route(
+            "/api/v1/finality/certificates",
+            get(handlers::get_finality_certificates),
+        )
         .route(
             "/api/v1/governance/params",
             get(handlers::get_governance_params),
@@ -109,6 +114,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/status/schema", get(handlers::get_status_schema))
         .route("/api/openapi", get(handlers::get_openapi_spec))
         .route("/api/health", get(handlers::get_health))
+        .route(
+            "/api/finality/certificates",
+            get(handlers::get_finality_certificates),
+        )
         .route(
             "/api/governance/params",
             get(handlers::get_governance_params),
@@ -200,6 +209,7 @@ mod tests {
             slashing_stakes: Vec::new(),
             slashing_removed: Vec::new(),
             equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
             bandwidth_inbound_bytes: 0,
             bandwidth_outbound_bytes: 0,
             peer_stats: std::collections::HashMap::new(),
@@ -371,6 +381,7 @@ mod tests {
                 slashing_stakes: vec![([9u8; 32], 1000)],
                 slashing_removed: Vec::new(),
                 equivocation_records: Vec::new(),
+                safety_certificates: Vec::new(),
                 bandwidth_inbound_bytes: 0,
                 bandwidth_outbound_bytes: 0,
                 peer_stats: std::collections::HashMap::new(),
@@ -426,6 +437,7 @@ mod tests {
             slashing_stakes: Vec::new(),
             slashing_removed: Vec::new(),
             equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
             bandwidth_inbound_bytes: 0,
             bandwidth_outbound_bytes: 0,
             peer_stats: std::collections::HashMap::new(),
@@ -995,8 +1007,8 @@ mod tests {
         let router_count = router_paths.len();
         let spec_count = openapi_spec().matches("\n  /api/v1/").count();
 
-        assert_eq!(router_count, 21, "router must expose 21 versioned routes");
-        assert_eq!(spec_count, 21, "OpenAPI must list 21 versioned routes");
+        assert_eq!(router_count, 22, "router must expose 22 versioned routes");
+        assert_eq!(spec_count, 22, "OpenAPI must list 22 versioned routes");
         assert_eq!(
             spec_count, router_count,
             "OpenAPI path count must match router path count"
@@ -1005,6 +1017,7 @@ mod tests {
         for path in [
             "/api/v1/status",
             "/api/v1/health",
+            "/api/v1/finality/certificates",
             "/api/v1/network/peers",
             "/api/v1/network/peers/{validator_id}",
             "/api/v1/slashing",
@@ -1037,6 +1050,7 @@ mod tests {
         assert_openapi_path_has_status("/api/v1/status/schema", 200);
         assert_openapi_path_has_status("/api/v1/openapi", 200);
         assert_openapi_path_has_status("/api/v1/health", 200);
+        assert_openapi_path_has_status("/api/v1/finality/certificates", 200);
         assert_openapi_path_has_status("/api/v1/governance/params", 200);
         assert_openapi_path_has_status("/api/v1/governance/params/schema", 200);
         assert_openapi_path_has_status("/api/v1/governance/proposals", 200);

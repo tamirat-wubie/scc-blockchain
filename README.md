@@ -15,7 +15,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Genesis -> submit tx -> produce blocks -> import/replay with full verification.
 - Deterministic validation: every rejection has a reason (receipts).
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
-- REST API with 21 versioned endpoints for state, blocks, receipts, and governance.
+- REST API with 22 versioned endpoints for state, blocks, receipts, governance, and finality.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
 - Hardening posture: 608 tests, CI green on Ubuntu + Windows + security audit.
 
@@ -50,7 +50,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 | Layer | Crate | Description |
 |-------|-------|-------------|
 | 7 | `sccgub-node` | 23 CLI commands, chain lifecycle, mempool, block log + snapshots, observability |
-| 6 | `sccgub-api` | REST API (21 versioned endpoints), CORS, structured error codes, versioned routes |
+| 6 | `sccgub-api` | REST API (22 versioned endpoints), CORS, structured error codes, versioned routes |
 | 5 | `sccgub-governance` | Norms, precedence, proposals with timelocks, anti-concentration, symbolic intelligence agent policy |
 | 4 | `sccgub-consensus` | Two-round BFT voting, bounded finality, slashing, partition recovery, safety proofs |
 | 3 | `sccgub-execution` | 13-phase Phi traversal (all real), CPoG, gas metering, runtime invariant monitor |
@@ -85,13 +85,14 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Artifacts:** External artifact governance layer (provenance, attestations, lineage, rights, sessions, disputes)
 - **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
-## REST API (21 versioned endpoints)
+## REST API (22 versioned endpoints)
 
 ```
 GET  /api/v1/status                  Chain summary (height, finality, tension, governance)
 GET  /api/v1/status/schema           JSON schema for status output
 GET  /api/v1/openapi                 OpenAPI spec (YAML string payload)
 GET  /api/v1/health                  System health + finality SLA
+GET  /api/v1/finality/certificates   Finality safety certificates
 GET  /api/v1/governance/params       Governed parameter values
 GET  /api/v1/governance/params/schema JSON schema for governed parameters
 GET  /api/v1/governance/proposals    Governance proposal registry summary (?offset=&limit=&status=)

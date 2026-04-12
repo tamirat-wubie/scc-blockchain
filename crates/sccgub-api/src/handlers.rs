@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use sccgub_consensus::protocol::EquivocationProof;
+use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_consensus::slashing::{SlashingEvent, SlashingEvidence};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub slashing_stakes: Vec<(Hash, i128)>,
     pub slashing_removed: Vec<Hash>,
     pub equivocation_records: Vec<(EquivocationProof, u64)>,
+    pub safety_certificates: Vec<SafetyCertificate>,
     pub bandwidth_inbound_bytes: u64,
     pub bandwidth_outbound_bytes: u64,
     pub peer_stats: HashMap<String, PeerStatsSnapshot>,
@@ -171,6 +173,41 @@ pub async fn get_governance_params_schema() -> axum::Json<ApiResponse<serde_json
     let schema = serde_json::from_str(include_str!("../../../specs/GOVERNED_JSON_SCHEMA.json"))
         .unwrap_or_else(|_| serde_json::json!({ "error": "invalid governed schema" }));
     axum::Json(ApiResponse::ok(schema))
+}
+
+/// GET /finality/certificates — safety certificates for finalized blocks.
+pub async fn get_finality_certificates(
+    state: axum::extract::State<SharedState>,
+) -> axum::Json<ApiResponse<FinalityCertificatesResponse>> {
+    let app = state.read().await;
+    let certificates = app
+        .safety_certificates
+        .iter()
+        .map(|cert| SafetyCertificateResponse {
+            chain_id: hex::encode(cert.chain_id),
+            epoch: cert.epoch,
+            height: cert.height,
+            block_hash: hex::encode(cert.block_hash),
+            round: cert.round,
+            quorum: cert.quorum,
+            validator_count: cert.validator_count,
+            precommit_signatures: cert
+                .precommit_signatures
+                .iter()
+                .map(
+                    |(validator_id, signature)| SafetyCertificateSignatureResponse {
+                        validator_id: hex::encode(validator_id),
+                        signature: hex::encode(signature),
+                    },
+                )
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let resp = FinalityCertificatesResponse {
+        count: certificates.len() as u64,
+        certificates,
+    };
+    axum::Json(ApiResponse::ok(resp))
 }
 
 /// GET /governance/proposals — governance proposal registry summary.
