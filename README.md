@@ -208,7 +208,7 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 | Replay determinism | Verified | Identical operations produce identical state roots |
 | Keystore crypto | Argon2id + ChaCha20-Poly1305 | AEAD tamper detection, memory-hard KDF |
 | Custody roles | 6 roles | Validator/Treasury/Governance separation with rotation and revocation |
-| Structured API errors | 13 error codes | Machine-readable rejection for every failure path |
+| Structured API errors | 14 error codes | Machine-readable rejection for every failure path |
 | Escrow attack surface | 5 tests | Double-release, premature refund, self-escrow, zero-amount |
 | Gas metering | Wired | Chain-bound gas schedule + limits, trie-backed fee/reward replay |
 | Governance timelocks | Enforced | Ordinary 50 blocks, constitutional 200 blocks, activated in live chain lifecycle |
