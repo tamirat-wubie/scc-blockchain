@@ -6,7 +6,7 @@ All notable changes to SCCGUB are documented here.
 
 ### Production Hardening Release
 
-**610 tests, 9 crates, persistent block log + snapshots, all CI green.**
+**614 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
 - Argon2id + ChaCha20-Poly1305 keystore with constant-time comparison (subtle crate)
@@ -90,7 +90,7 @@ All notable changes to SCCGUB are documented here.
 - Autonomy budgets for off-chain decision authority
 
 #### Testing
-- 610 tests across 9 crates
+- 614 tests across 9 crates
 - Property-based tests (3000+ random scenarios)
 - Adversarial consensus tests (Byzantine, partition, equivocation)
 - Full-pipeline integration tests (treasury, escrow, artifacts, delegation, events)

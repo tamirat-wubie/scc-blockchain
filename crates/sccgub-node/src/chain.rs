@@ -515,6 +515,41 @@ impl Chain {
         self.api_bridge = Some(bridge);
     }
 
+    /// Execute a slashing penalty: debit the validator's real balance and burn
+    /// the penalty to the treasury. This connects the SlashingEngine's internal
+    /// stake tracking to the actual on-chain balance ledger.
+    ///
+    /// Returns the actual penalty applied (capped at available balance).
+    pub fn execute_slashing_penalty(
+        &mut self,
+        validator_id: &[u8; 32],
+        penalty: TensionValue,
+    ) -> TensionValue {
+        // Debit from real balance (capped at available).
+        let available = self.balances.balance_of(validator_id);
+        let actual_penalty = if penalty.raw() > available.raw() {
+            available
+        } else {
+            penalty
+        };
+        if actual_penalty.raw() > 0 {
+            if let Err(e) = self.balances.debit(validator_id, actual_penalty) {
+                tracing::error!(
+                    "Slashing debit failed for {}: {}",
+                    hex::encode(validator_id),
+                    e
+                );
+                return TensionValue::ZERO;
+            }
+            // Burn the slashed amount (removed from circulating supply).
+            self.treasury.collect_fee(actual_penalty);
+            if let Err(e) = self.treasury.burn(actual_penalty) {
+                tracing::error!("Slashing burn failed: {}", e);
+            }
+        }
+        actual_penalty
+    }
+
     /// Record equivocation evidence (deduplicated by proof fields + epoch).
     pub fn record_equivocation(&mut self, proof: EquivocationProof, epoch: u64) {
         let (block_a, block_b) = if proof.block_hash_a <= proof.block_hash_b {
@@ -672,6 +707,32 @@ impl Chain {
     }
 
     /// Import an externally produced block (validated and applied).
+    /// Fork choice: should we switch to a competing chain?
+    #[allow(dead_code)] // Infrastructure for network fork resolution.
+    ///
+    /// BFT fork choice rule: prefer the chain with:
+    /// 1. Higher finalized height (backed by safety certificates)
+    /// 2. If equal, higher total height
+    /// 3. If equal, reject (keep current chain — incumbency advantage)
+    ///
+    /// Returns true if `other` should replace the current chain.
+    pub fn should_switch_to(&self, other: &Chain) -> bool {
+        // Different chain — never switch.
+        if other.chain_id != self.chain_id {
+            return false;
+        }
+        let self_finalized = self.finality.finalized_height;
+        let other_finalized = other.finality.finalized_height;
+        if other_finalized > self_finalized {
+            return true;
+        }
+        if other_finalized < self_finalized {
+            return false;
+        }
+        // Equal finalized height — prefer higher total height.
+        other.height() > self.height()
+    }
+
     pub fn import_block(&mut self, block: Block) -> Result<(), String> {
         self.validate_candidate_block(&block)?;
 
@@ -3357,6 +3418,93 @@ mod tests {
             payload_write.value,
             b"hello_n9".to_vec(),
             "N-9: what_actual must record the actual write value"
+        );
+    }
+
+    #[test]
+    fn test_execute_slashing_penalty_debits_balance() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let spend_account = sccgub_state::apply::validator_spend_account(chain.block_version, &pk);
+        let initial_balance = chain.balances.balance_of(&spend_account);
+        assert!(
+            initial_balance.raw() > 0,
+            "Validator must have genesis balance"
+        );
+
+        // Execute a slashing penalty of 100 tokens.
+        let penalty = TensionValue::from_integer(100);
+        let actual = chain.execute_slashing_penalty(&spend_account, penalty);
+        assert_eq!(actual, penalty, "Full penalty should be applied");
+
+        let after = chain.balances.balance_of(&spend_account);
+        assert_eq!(
+            after,
+            initial_balance - penalty,
+            "Balance must decrease by penalty amount"
+        );
+    }
+
+    #[test]
+    fn test_execute_slashing_penalty_capped_at_balance() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let spend_account = sccgub_state::apply::validator_spend_account(chain.block_version, &pk);
+        let initial_balance = chain.balances.balance_of(&spend_account);
+
+        // Request penalty larger than balance.
+        let huge_penalty = initial_balance + TensionValue::from_integer(999_999);
+        let actual = chain.execute_slashing_penalty(&spend_account, huge_penalty);
+        assert_eq!(
+            actual, initial_balance,
+            "Penalty must be capped at available balance"
+        );
+
+        let after = chain.balances.balance_of(&spend_account);
+        assert_eq!(after, TensionValue::ZERO, "Balance must be zeroed");
+    }
+
+    #[test]
+    fn test_fork_choice_prefers_higher_finalized_height() {
+        let mut chain_a = Chain::init();
+        chain_a.governance_limits.max_consecutive_proposals = 100;
+        let mut chain_b = Chain::init();
+        chain_b.governance_limits.max_consecutive_proposals = 100;
+        // Make chain_b same chain_id as chain_a.
+        chain_b.chain_id = chain_a.chain_id;
+
+        // Both at height 0, finalized 0. No switch.
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "Equal chains: no switch"
+        );
+
+        // Advance chain_b's finalized height.
+        chain_b.finality.finalized_height = 5;
+        assert!(
+            chain_a.should_switch_to(&chain_b),
+            "Higher finalized height: should switch"
+        );
+
+        // Chain_a has higher finalized.
+        chain_a.finality.finalized_height = 10;
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "Lower finalized height: no switch"
+        );
+    }
+
+    #[test]
+    fn test_fork_choice_rejects_different_chain_id() {
+        let chain_a = Chain::init();
+        let chain_b = Chain::init(); // Different chain_id (random keys).
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "Different chain_id: never switch"
         );
     }
 }

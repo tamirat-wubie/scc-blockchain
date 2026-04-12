@@ -653,7 +653,16 @@ impl NetworkRuntime {
         };
         {
             let mut chain = self.chain.write().await;
-            let _ = chain.slashing.slash_double_sign(proof.clone(), epoch);
+            // Execute slashing: deduct from internal stakes AND real balance.
+            if let Ok(event) = chain.slashing.slash_double_sign(proof.clone(), epoch) {
+                let actual = chain.execute_slashing_penalty(&event.validator_id, event.penalty);
+                tracing::warn!(
+                    "Slashed validator {} for double-signing: penalty={}, actual_deducted={}",
+                    hex::encode(event.validator_id),
+                    event.penalty,
+                    actual,
+                );
+            }
             chain.record_equivocation(proof, epoch);
         }
 

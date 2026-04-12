@@ -4,7 +4,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 610 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
+**Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 614 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
 
 ## Where It Stands (Executive Summary)
 
@@ -17,7 +17,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
 - REST API with 22 versioned endpoints for state, blocks, receipts, governance, and finality.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 610 tests, CI green on Ubuntu + Windows + security audit.
+- Hardening posture: 614 tests, CI green on Ubuntu + Windows + security audit.
 
 **What it cannot do yet**  
 - Multi-validator consensus is not wired into the live runtime; default mode is single proposer.
