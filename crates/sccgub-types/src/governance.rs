@@ -111,6 +111,52 @@ pub struct GovernanceSnapshot {
     pub active_norm_count: u32,
     pub emergency_mode: bool,
     pub finality_mode: FinalityMode,
+    #[serde(default)]
+    pub governance_limits: GovernanceLimitsSnapshot,
+    #[serde(default)]
+    pub finality_config: FinalityConfigSnapshot,
+}
+
+/// Snapshot of governance anti-concentration limits included in each block.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceLimitsSnapshot {
+    pub max_actions_per_agent_pct: u32,
+    pub safety_change_min_signers: u32,
+    pub genesis_change_min_signers: u32,
+    pub max_consecutive_proposals: u32,
+    pub max_authority_term_epochs: u64,
+    pub authority_cooldown_epochs: u64,
+}
+
+impl Default for GovernanceLimitsSnapshot {
+    fn default() -> Self {
+        Self {
+            max_actions_per_agent_pct: 33,
+            safety_change_min_signers: 3,
+            genesis_change_min_signers: 5,
+            max_consecutive_proposals: 3,
+            max_authority_term_epochs: 100,
+            authority_cooldown_epochs: 10,
+        }
+    }
+}
+
+/// Snapshot of finality configuration included in each block.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FinalityConfigSnapshot {
+    pub confirmation_depth: u64,
+    pub max_finality_ms: u64,
+    pub target_block_time_ms: u64,
+}
+
+impl Default for FinalityConfigSnapshot {
+    fn default() -> Self {
+        Self {
+            confirmation_depth: 2,
+            max_finality_ms: 6_000,
+            target_block_time_ms: 2_000,
+        }
+    }
 }
 
 #[cfg(test)]

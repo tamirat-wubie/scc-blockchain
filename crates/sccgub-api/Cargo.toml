@@ -15,5 +15,6 @@ sccgub-crypto = { path = "../sccgub-crypto" }
 sccgub-state = { path = "../sccgub-state" }
 sccgub-execution = { path = "../sccgub-execution" }
 sccgub-consensus = { path = "../sccgub-consensus" }
+sccgub-governance = { path = "../sccgub-governance" }
 tower = { workspace = true }
 tower-http = { workspace = true }
