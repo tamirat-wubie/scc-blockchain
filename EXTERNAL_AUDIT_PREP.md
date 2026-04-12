@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 602 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 607 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Known Limits (MVP) Summary:**
 - Default single-proposer mode when no validator set is configured
