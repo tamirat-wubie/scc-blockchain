@@ -6,7 +6,7 @@ All notable changes to SCCGUB are documented here.
 
 ### Production Hardening Release
 
-**607 tests, 9 crates, persistent block log + snapshots, all CI green.**
+**608 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
 - Argon2id + ChaCha20-Poly1305 keystore with constant-time comparison (subtle crate)
