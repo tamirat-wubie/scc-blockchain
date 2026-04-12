@@ -1096,6 +1096,8 @@ mod tests {
 
     #[test]
     fn test_generated_openapi_matches_checked_in_artifact() {
-        assert_eq!(render_openapi_yaml(), include_str!("../openapi.yaml"));
+        let generated = render_openapi_yaml().replace("\r\n", "\n");
+        let checked_in = include_str!("../openapi.yaml").replace("\r\n", "\n");
+        assert_eq!(generated, checked_in);
     }
 }
