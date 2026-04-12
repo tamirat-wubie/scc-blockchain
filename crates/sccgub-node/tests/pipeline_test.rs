@@ -7,7 +7,6 @@
 use sccgub_state::balances::BalanceLedger;
 use sccgub_state::escrow::{EscrowCondition, EscrowRegistry};
 use sccgub_state::treasury::Treasury;
-use sccgub_state::world::ManagedWorldState;
 use sccgub_types::artifact::{ArtifactKind, ArtifactRef, SchemaEntry, SchemaStatus, StorageScheme};
 use sccgub_types::attestation::{ArtifactAttestation, AttestationKind};
 use sccgub_types::delegation::{

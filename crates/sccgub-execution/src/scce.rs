@@ -143,13 +143,11 @@ pub struct ConstraintWeights {
 
 // --- Internal helpers ---
 
-/// Maximum activated symbols to prevent DoS from deeply nested paths.
-const MAX_ACTIVATED_SYMBOLS: usize = 16;
-
 fn activate_symbols(target: &[u8], state: &ManagedWorldState) -> Vec<Vec<u8>> {
+    let max_activated_symbols = state.consensus_params.max_activated_symbols.max(1) as usize;
     let mut symbols = vec![target.to_vec()];
     let mut path = target.to_vec();
-    while symbols.len() < MAX_ACTIVATED_SYMBOLS {
+    while symbols.len() < max_activated_symbols {
         match path.iter().rposition(|&b| b == b'/') {
             Some(pos) => {
                 path.truncate(pos);
@@ -163,15 +161,12 @@ fn activate_symbols(target: &[u8], state: &ManagedWorldState) -> Vec<Vec<u8>> {
     symbols
 }
 
-/// Maximum entries to scan per symbol to prevent O(n*m) DoS.
-const MAX_SCAN_PER_SYMBOL: u64 = 1000;
-
 fn select_relevant_subgraph(
     active_symbols: &[Vec<u8>],
     state: &ManagedWorldState,
     _weights: &ConstraintWeights,
 ) -> u64 {
-    let total_cap = MAX_SCAN_PER_SYMBOL * active_symbols.len() as u64;
+    let total_cap = state.consensus_params.max_scan_per_symbol * active_symbols.len() as u64;
     let mut count = 0u64;
     for symbol in active_symbols {
         // Use efficient prefix range scan instead of full trie iteration.
@@ -191,9 +186,6 @@ struct PropagationResult {
     steps: u64,
     conflict_detail: String,
 }
-
-/// Maximum constraints evaluated per symbol before the walker advances.
-const MAX_CONSTRAINTS_PER_SYMBOL: u64 = 64;
 
 /// Constraint storage root prefix.
 const CONSTRAINT_PREFIX: &[u8] = b"constraints/";
@@ -282,7 +274,8 @@ fn propagate_constraints(
         for (key, value) in state.trie.prefix_iter(&prefix) {
             steps = steps.saturating_add(1);
             per_symbol = per_symbol.saturating_add(1);
-            if per_symbol > MAX_CONSTRAINTS_PER_SYMBOL || steps >= max_steps {
+            if per_symbol > state.consensus_params.max_constraints_per_symbol || steps >= max_steps
+            {
                 break;
             }
 
@@ -473,6 +466,41 @@ mod tests {
     }
 
     #[test]
+    fn test_activate_symbols_respects_consensus_param_cap() {
+        let mut state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                max_activated_symbols: 1,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+        state.trie.insert(b"alpha".to_vec(), b"root".to_vec());
+        state.trie.insert(b"alpha/beta".to_vec(), b"child".to_vec());
+
+        let activated = activate_symbols(b"alpha/beta/gamma", &state);
+
+        assert_eq!(activated.len(), 1);
+        assert_eq!(activated[0], b"alpha/beta/gamma".to_vec());
+    }
+
+    #[test]
+    fn test_select_relevant_subgraph_respects_consensus_scan_cap() {
+        let mut state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                max_scan_per_symbol: 1,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+        state.trie.insert(b"alpha/one".to_vec(), b"1".to_vec());
+        state.trie.insert(b"alpha/two".to_vec(), b"2".to_vec());
+        state.trie.insert(b"alpha/three".to_vec(), b"3".to_vec());
+
+        let count =
+            select_relevant_subgraph(&[b"alpha".to_vec()], &state, &ConstraintWeights::default());
+
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn test_governance_value_check() {
         // Agent with Meaning level trying governance update (requires Meaning) — ok.
         let tx = test_transition(TransitionKind::GovernanceUpdate, b"gov/test");
@@ -558,6 +586,27 @@ mod tests {
             result.consistent,
             "child constraint must be UNREACHABLE at depth 0"
         );
+    }
+
+    #[test]
+    fn test_propagation_respects_consensus_constraint_cap() {
+        let mut state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                max_constraints_per_symbol: 1,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+        state
+            .trie
+            .insert(constraint_key(b"alpha", b"c0"), b"true".to_vec());
+        state
+            .trie
+            .insert(constraint_key(b"alpha", b"c1"), b"true".to_vec());
+        let result = propagate_constraints(&[b"alpha".to_vec()], &state, 4, 1000);
+
+        assert!(result.consistent);
+        assert_eq!(result.steps, 2);
+        assert_eq!(result.tension_delta, TensionValue::from_integer(1));
     }
 
     #[test]

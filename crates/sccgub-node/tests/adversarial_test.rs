@@ -1121,7 +1121,7 @@ fn test_chain_init_produce_verify_roundtrip() {
     use sccgub_state::apply::{apply_block_transitions, apply_genesis_mint, balances_from_trie};
     use sccgub_state::balances::BalanceLedger;
     use sccgub_state::world::ManagedWorldState;
-    use sccgub_types::transition::{OperationPayload, StateDelta, StateWrite};
+    use sccgub_types::transition::{StateDelta, StateWrite};
 
     let validator = [1u8; 32];
 

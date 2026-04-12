@@ -4,8 +4,26 @@ use sccgub_types::receipt::Verdict;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{StateDelta, StateWrite, SymbolicTransition};
 
-/// Maximum computation steps for contract execution (decidability bound).
+/// Legacy fallback computation-step bound preserved for compatibility.
+/// New runtime callers should use `default_max_steps_for_state()`.
 pub const DEFAULT_MAX_STEPS: u64 = 10_000;
+
+pub fn default_max_steps_for_state(state: &ManagedWorldState) -> u64 {
+    state.consensus_params.default_max_steps
+}
+
+pub fn execute_contract_with_state_params(
+    contract: &SymbolicCausalContract,
+    transition: &SymbolicTransition,
+    state: &ManagedWorldState,
+) -> ContractExecutionResult {
+    execute_contract(
+        contract,
+        transition,
+        state,
+        default_max_steps_for_state(state),
+    )
+}
 
 /// Execute a Symbolic Causal Contract.
 /// Contracts are decidable — they terminate within bounded steps by construction.
@@ -81,10 +99,11 @@ pub fn execute_contract(
                     tension_delta: TensionValue::ZERO,
                 };
             }
-            if args.len() > 1_048_576 {
+            let max_arg_size = state.consensus_params.max_state_entry_size as usize;
+            if args.len() > max_arg_size {
                 return ContractExecutionResult {
                     verdict: Verdict::Reject {
-                        reason: "Method args exceed 1MB limit".into(),
+                        reason: format!("Method args exceed {} byte limit", max_arg_size),
                     },
                     state_delta: StateDelta::default(),
                     steps_used: steps,
@@ -346,5 +365,50 @@ mod tests {
         let state = ManagedWorldState::new();
         let result = execute_contract(&contract, &tx, &state, 0);
         assert!(!result.verdict.is_accepted());
+    }
+
+    #[test]
+    fn test_execute_contract_with_state_params_uses_consensus_default() {
+        let contract = test_contract();
+        let agent = test_agent(PrecedenceLevel::Meaning);
+        let tx = test_tx(agent, &contract);
+        let state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                default_max_steps: 0,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+        let result = execute_contract_with_state_params(&contract, &tx, &state);
+
+        assert!(!result.verdict.is_accepted());
+        assert_eq!(default_max_steps_for_state(&state), 0);
+        assert_eq!(result.steps_used, 1);
+    }
+
+    #[test]
+    fn test_execute_contract_respects_consensus_arg_limit() {
+        let contract = test_contract();
+        let agent = test_agent(PrecedenceLevel::Meaning);
+        let mut tx = test_tx(agent, &contract);
+        tx.payload = sccgub_types::transition::OperationPayload::InvokeContract {
+            contract_id: contract.contract_id,
+            method: "run".into(),
+            args: vec![1, 2, 3, 4, 5],
+        };
+        let state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                max_state_entry_size: 4,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+
+        let result = execute_contract_with_state_params(&contract, &tx, &state);
+
+        assert!(!result.verdict.is_accepted());
+        assert!(matches!(
+            &result.verdict,
+            Verdict::Reject { reason } if reason.contains("4 byte limit")
+        ));
+        assert_eq!(result.steps_used, 2);
     }
 }

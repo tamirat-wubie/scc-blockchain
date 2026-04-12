@@ -1,15 +1,14 @@
 use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::merkle::merkle_root_of_bytes;
-use sccgub_state::apply::{apply_block_transitions, balances_from_trie};
+use sccgub_state::apply::{apply_block_economics, apply_block_transitions, balances_from_trie};
+use sccgub_state::treasury::{commit_treasury_state, default_block_reward, treasury_from_trie};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
+use sccgub_types::economics::EconomicState;
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::ZERO_HASH;
 
 use crate::phi::phi_traversal_block;
-
-/// Maximum recursion depth for causal proofs.
-pub const MAX_PROOF_DEPTH: u32 = 256;
 
 /// Causal Proof-of-Governance (CPoG) validation.
 /// A block is valid if and only if all structural, governance, Phi, and
@@ -45,10 +44,10 @@ pub fn validate_cpog(
     }
 
     // 3. Proof recursion depth.
-    if block.proof.recursion_depth > MAX_PROOF_DEPTH {
+    if block.proof.recursion_depth > state.consensus_params.max_proof_depth {
         errors.push(format!(
             "Proof recursion depth {} exceeds max {}",
-            block.proof.recursion_depth, MAX_PROOF_DEPTH
+            block.proof.recursion_depth, state.consensus_params.max_proof_depth
         ));
     }
 
@@ -118,6 +117,13 @@ pub fn validate_cpog(
     // Clone the state, apply all transitions, and verify the resulting root
     // matches what the block header claims. This is the key integrity check.
     if block.header.height > 0 {
+        if block.header.tension_before != state.state.tension_field.total {
+            errors.push(format!(
+                "tension_before mismatch: header={}, parent_state={}",
+                block.header.tension_before, state.state.tension_field.total
+            ));
+        }
+
         // Speculative replay using shared apply function (single source of truth).
         let mut speculative = state.clone();
         let mut spec_balances = match balances_from_trie(&speculative) {
@@ -127,6 +133,31 @@ pub fn validate_cpog(
                 return CpogResult::Invalid { errors };
             }
         };
+        let mut spec_treasury = match treasury_from_trie(&speculative) {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(format!("Malformed treasury trie: {}", e));
+                return CpogResult::Invalid { errors };
+            }
+        };
+        let gas_price = EconomicState::default().effective_fee(
+            state.state.tension_field.total,
+            state.state.tension_field.budget.current_budget,
+        );
+        if let Err(e) = apply_block_economics(
+            &mut speculative,
+            &mut spec_balances,
+            &mut spec_treasury,
+            &block.body.transitions,
+            &block.receipts,
+            block.header.version,
+            &block.header.validator_id,
+            gas_price,
+            default_block_reward(),
+        ) {
+            errors.push(format!("Economics replay failed: {}", e));
+            return CpogResult::Invalid { errors };
+        }
         apply_block_transitions(
             &mut speculative,
             &mut spec_balances,
@@ -136,6 +167,11 @@ pub fn validate_cpog(
             if let Err(e) = speculative.check_nonce(&tx.actor.agent_id, tx.nonce) {
                 errors.push(format!("Nonce violation during replay: {}", e));
             }
+        }
+
+        if block.header.height.is_multiple_of(100) {
+            spec_treasury.advance_epoch();
+            commit_treasury_state(&mut speculative, &spec_treasury);
         }
 
         let computed_state_root = speculative.state_root();
@@ -197,6 +233,8 @@ mod tests {
             active_norm_count: 0,
             emergency_mode: false,
             finality_mode: FinalityMode::Deterministic,
+            governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+            finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
         };
         Block {
             header: BlockHeader {
@@ -223,6 +261,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -276,7 +315,7 @@ mod tests {
     fn test_excessive_proof_depth_fails() {
         let state = ManagedWorldState::new();
         let mut block = genesis_block([1u8; 32]);
-        block.proof.recursion_depth = MAX_PROOF_DEPTH + 1;
+        block.proof.recursion_depth = state.consensus_params.max_proof_depth + 1;
         let result = validate_cpog(&block, &state, &ZERO_HASH);
         assert!(!result.is_valid());
     }

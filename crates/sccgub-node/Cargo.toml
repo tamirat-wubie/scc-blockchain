@@ -22,6 +22,7 @@ sccgub-execution = { path = "../sccgub-execution" }
 sccgub-governance = { path = "../sccgub-governance" }
 sccgub-consensus = { path = "../sccgub-consensus" }
 sccgub-api = { path = "../sccgub-api" }
+sccgub-network = { path = "../sccgub-network" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tracing = { workspace = true }

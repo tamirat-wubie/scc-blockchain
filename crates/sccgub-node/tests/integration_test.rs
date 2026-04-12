@@ -136,6 +136,8 @@ fn build_test_block(
         active_norm_count: 0,
         emergency_mode: false,
         finality_mode: FinalityMode::Deterministic,
+        governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+        finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
     };
 
     let tension_before = state.state.tension_field.total;
@@ -183,6 +185,7 @@ fn build_test_block(
             transition_count: transitions.len() as u32,
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
+            genesis_consensus_params: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -1380,7 +1383,9 @@ fn test_inv4_no_fork_deterministic_finality() {
 #[test]
 fn test_inv8_contract_decidability_bound() {
     // INV-8: No contract beyond decidability bound.
-    use sccgub_execution::contract::{execute_contract, DEFAULT_MAX_STEPS};
+    use sccgub_execution::contract::{
+        default_max_steps_for_state, execute_contract, execute_contract_with_state_params,
+    };
     use sccgub_types::contract::SymbolicCausalContract;
     use sccgub_types::transition::Constraint;
 
@@ -1409,10 +1414,10 @@ fn test_inv8_contract_decidability_bound() {
         "INV-8: step limit must be enforced"
     );
 
-    // With DEFAULT_MAX_STEPS, should have room to execute.
-    let result = execute_contract(&contract, &tx, &state, DEFAULT_MAX_STEPS);
+    // With the chain-bound default, should have room to execute.
+    let result = execute_contract_with_state_params(&contract, &tx, &state);
     // Passes or fails on precondition, but does NOT exceed step limit.
-    assert!(result.steps_used <= DEFAULT_MAX_STEPS);
+    assert!(result.steps_used <= default_max_steps_for_state(&state));
 }
 
 #[test]

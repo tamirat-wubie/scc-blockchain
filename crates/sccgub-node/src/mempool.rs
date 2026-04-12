@@ -8,6 +8,7 @@ use sccgub_types::transition::SymbolicTransition;
 use sccgub_types::Hash;
 
 /// Transaction mempool with admission, dedup, validation, and containment.
+#[derive(Clone)]
 pub struct Mempool {
     pending: VecDeque<SymbolicTransition>,
     seen_ids: HashSet<Hash>,
@@ -121,6 +122,10 @@ impl Mempool {
 
     pub fn len(&self) -> usize {
         self.pending.len()
+    }
+
+    pub fn pending_snapshot(&self) -> Vec<SymbolicTransition> {
+        self.pending.iter().cloned().collect()
     }
 
     #[allow(dead_code)]

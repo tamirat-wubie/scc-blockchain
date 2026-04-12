@@ -265,6 +265,21 @@ BlockHeader := {
 }
 ```
 
+**Version boundary:**
+- `proposer_id` remains the Ed25519 block-signing public key in every supported version.
+- `version = 1` credits genesis mint and validator rewards to the signer public-key account directly.
+- `version = 2` credits genesis mint and validator rewards to the canonical validator agent account:
+
+```
+validator_spend_account(version, proposer_public_key) =
+  if version == 1:
+    proposer_public_key
+  else:
+    Hash(proposer_public_key ++ canonical_bytes(MfidelAtomicSeal::from_height(0)))
+```
+
+- Chain version is fixed by genesis; mixed-version block histories are invalid.
+
 ### 3.3 CausalTimestamp
 
 Causal ordering, not wall-clock.
@@ -917,7 +932,7 @@ FeeModel := {
 Tension modulates economics:
 
 ```
-effective_fee(t) = base_fee(t) × (1 + α · T_total / T_budget)
+effective_fee(t, Block_n) = base_fee(t) × (1 + α · T_total(Block_{n-1}) / T_budget)
 
 When T_total approaches T_budget:
   Fees increase → back-pressure on throughput
@@ -936,6 +951,15 @@ ValidatorReward := {
   responsibility_adj  : R_net × responsibility_multiplier
 }
 ```
+
+Reward delivery is version-dependent:
+- v1 -> reward committed to `proposer_id`
+- v2 -> reward committed to `validator_spend_account(version, proposer_id)`
+
+Fee charging is also version-dependent:
+- Canonical path: charge `tx.actor.agent_id`
+- Legacy replay fallback: if `version = 1` and the actor account cannot cover the fee, `tx.actor.public_key` may pay instead
+- Otherwise the transition is rejected
 
 Slashing occurs when:
 - Equivocation detected (two blocks at same height)

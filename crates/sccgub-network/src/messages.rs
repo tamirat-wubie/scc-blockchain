@@ -18,6 +18,8 @@ pub enum NetworkMessage {
     BlockProposal(BlockProposalMessage),
     /// Cast a consensus vote (prevote or precommit).
     ConsensusVote(Vote),
+    /// Equivocation evidence (two conflicting votes).
+    EquivocationEvidence(EquivocationEvidenceMessage),
     /// Propagate a transaction to the mempool.
     TransactionGossip(TransactionGossipMessage),
     /// Request a specific block by height.
@@ -40,6 +42,8 @@ pub struct HelloMessage {
     pub current_height: u64,
     pub finalized_height: u64,
     pub protocol_version: u32,
+    #[serde(default)]
+    pub known_peers: Vec<String>,
     pub signature: Vec<u8>,
 }
 
@@ -50,6 +54,15 @@ pub struct BlockProposalMessage {
     pub block: Block,
     pub round: u32,
     pub signature: Vec<u8>,
+}
+
+/// Equivocation evidence -- two conflicting votes from the same validator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquivocationEvidenceMessage {
+    pub vote_a: Vote,
+    pub vote_b: Vote,
+    /// Validator set epoch used in vote signatures.
+    pub epoch: u64,
 }
 
 /// Transaction gossip — propagate unconfirmed transactions.
@@ -108,6 +121,7 @@ impl NetworkMessage {
             Self::Hello(_) => "Hello",
             Self::BlockProposal(_) => "BlockProposal",
             Self::ConsensusVote(_) => "ConsensusVote",
+            Self::EquivocationEvidence(_) => "EquivocationEvidence",
             Self::TransactionGossip(_) => "TransactionGossip",
             Self::BlockRequest(_) => "BlockRequest",
             Self::BlockResponse(_) => "BlockResponse",
@@ -130,6 +144,7 @@ mod tests {
             current_height: 100,
             finalized_height: 95,
             protocol_version: 1,
+            known_peers: vec!["127.0.0.1:9000".to_string()],
             signature: vec![0u8; 64],
         });
 
@@ -162,5 +177,25 @@ mod tests {
         let bytes = msg.to_bytes();
         let restored = NetworkMessage::from_bytes(&bytes).unwrap();
         assert_eq!(restored.message_type(), "BlockRequest");
+    }
+
+    #[test]
+    fn test_equivocation_evidence_roundtrip() {
+        let vote = Vote {
+            validator_id: [9u8; 32],
+            block_hash: [7u8; 32],
+            height: 12,
+            round: 0,
+            vote_type: sccgub_consensus::protocol::VoteType::Precommit,
+            signature: vec![0u8; 64],
+        };
+        let msg = NetworkMessage::EquivocationEvidence(EquivocationEvidenceMessage {
+            vote_a: vote.clone(),
+            vote_b: vote,
+            epoch: 1,
+        });
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "EquivocationEvidence");
     }
 }

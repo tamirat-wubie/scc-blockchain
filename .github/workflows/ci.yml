@@ -22,8 +22,13 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Build
         run: cargo build --verbose
+      - name: Verify generated OpenAPI artifact
+        run: cargo test -p sccgub-api openapi::tests::test_generated_openapi_matches_checked_in_artifact -- --exact
       - name: Run tests
         run: cargo test --verbose
+      - name: Verify repo truth
+        shell: pwsh
+        run: ./scripts/verify-repo-truth.ps1
       - name: Clippy
         run: cargo clippy -- -D warnings
 
@@ -45,6 +50,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build (Windows)
+        env:
+          CARGO_TARGET_DIR: target-windows-${{ github.run_id }}-build
         run: cargo build
       - name: Test (Windows)
+        env:
+          CARGO_TARGET_DIR: target-windows-${{ github.run_id }}-test
         run: cargo test

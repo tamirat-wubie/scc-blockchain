@@ -73,6 +73,31 @@ The block ID commits to all header fields including state_root, transition_root,
 - `causal_root`: Merkle tree over `[bincode(edge) for edge in causal_edges]`
 - Empty sections use `ZERO_HASH` (not the Merkle root of an empty list)
 
+### Block version and validator identity
+
+- `header.validator_id` is the Ed25519 public key used to verify the producer signature.
+- `header.version` is consensus-critical and fixed by genesis for the life of the chain.
+- Supported versions:
+  - `1`: legacy replay mode. Genesis mint and validator rewards are committed to the signer public-key account (`validator_id`) directly.
+  - `2`: canonical replay mode. `validator_id` remains the block-signing public key, but validator-controlled liquidity is committed to the canonical agent account:
+
+```
+validator_spend_account(version, validator_public_key) =
+  if version == 1:
+    validator_public_key
+  else:
+    BLAKE3(validator_public_key || canonical_bytes(MfidelAtomicSeal::from_height(0)))
+```
+
+- New chains default to version `2`.
+- Any non-genesis block whose `header.version` differs from the genesis version is invalid.
+- Genesis may embed canonical `ConsensusParams` bytes in `body.genesis_consensus_params`.
+  When present, import/replay MUST deserialize those bytes, commit them under
+  `system/consensus_params`, and use those values for consensus-critical bounds,
+  including proof depth, SCCE propagation limits, contract default step limits,
+  gas pricing, gas limits, address length, and state-entry size caps.
+  Legacy genesis blocks without the field replay with the v0.3.0 default parameter set.
+
 ## 6. Consensus: Two-Round BFT
 
 ### Quorum:
@@ -128,6 +153,10 @@ value = balance.raw().to_le_bytes()  (16 bytes, i128 little-endian)
 ```
 This ensures the state_root commits to both symbolic state and economic state.
 
+For validator-controlled balances, the credited account is version-dependent:
+- Genesis mint -> `validator_spend_account(genesis.header.version, genesis.header.validator_id)`
+- Block reward -> `validator_spend_account(block.header.version, block.header.validator_id)`
+
 ## 9. Fee Model
 
 ```
@@ -137,7 +166,7 @@ tx_fee = gas_used * gas_price
 
 Where `T_prior` is the PRIOR block's tension (not the current block, to avoid circularity).
 
-### Gas costs (consensus-critical constants):
+### Gas costs (genesis-bound default parameter values):
 | Operation | Gas |
 |-----------|-----|
 | TX base overhead | 1,000 |
@@ -149,9 +178,27 @@ Where `T_prior` is the PRIOR block's tension (not the current block, to avoid ci
 | Proof byte | 5 |
 | Payload byte | 2 |
 
-Per-transaction limit: 1,000,000 gas. Per-block limit: 50,000,000 gas.
+These values are the default `ConsensusParams` schedule. Conforming nodes MUST
+read the active gas schedule from `system/consensus_params`, not from local
+compile-time constants.
 
-Fees flow to Treasury. Block reward (10 tokens) distributed from Treasury to block producer.
+Default per-transaction limit: 1,000,000 gas. Default per-block limit: 50,000,000 gas.
+
+Fee payer resolution is consensus-critical:
+
+```
+fee_payer(version, tx, balances, tx_fee) =
+  if tx_fee <= 0:
+    tx.actor.agent_id
+  else if balances[tx.actor.agent_id] >= tx_fee:
+    tx.actor.agent_id
+  else if version == 1 and balances[tx.actor.public_key] >= tx_fee:
+    tx.actor.public_key
+  else:
+    REJECT
+```
+
+Fees flow to Treasury. Block reward (10 tokens) distributed from Treasury to `validator_spend_account(block.header.version, block.header.validator_id)`.
 
 ## 10. Validation: 13-Phase Phi Traversal
 
@@ -177,7 +224,7 @@ Every block passes all 13 phases. Failure at any phase rejects the block.
 
 1. Parent linkage (genesis parent = ZERO_HASH)
 2. Mfidel seal matches `from_height(block.height)`
-3. Proof recursion depth <= 256
+3. Proof recursion depth <= `state.consensus_params.max_proof_depth`
 4. Tension within budget
 5. Transition root Merkle verification
 6. Transition count matches body
@@ -204,12 +251,50 @@ Submitted -> Voting -> Timelocked -> Activated
 Any conforming node MUST produce identical state roots when replaying blocks from genesis. The replay function is:
 
 ```
-for each block in chain:
+genesis = chain[0]
+chain_version = genesis.header.version
+params =
+  if genesis.body.genesis_consensus_params exists:
+    decode_consensus_params(genesis.body.genesis_consensus_params)
+  else:
+    ConsensusParams::default()
+state.consensus_params = params
+state["system/consensus_params"] = canonical_bytes(params)
+apply_genesis_mint(
+    state,
+    balances,
+    validator_spend_account(chain_version, genesis.header.validator_id)
+)
+state.set_height(0)
+
+for each block in chain[1..]:
+    reject if block.header.version != chain_version
+    gas_price = effective_fee(T_prior, T_budget)
+    apply_block_economics(
+        state,
+        balances,
+        treasury,
+        block.body.transitions,
+        block.receipts,
+        block.header.version,
+        block.header.validator_id,
+        gas_price,
+        block_reward
+    )
     apply_block_transitions(state, balances, block.body.transitions)
     for each tx in block.body.transitions:
         state.check_nonce(tx.actor.agent_id, tx.nonce)
     state.set_height(block.header.height)
 ```
+
+The imported `params` are also the source of truth for:
+- SCCE propagation depth and step budgets
+- SCCE activated-symbol, scan, and constraint caps
+- Contract default step bound
+- Contract invoke argument-size bound
+- Per-tx and per-block gas limits
+- Gas cost schedule
+- Address-length and state-entry size caps
 
 ## 14. Conservation Laws
 

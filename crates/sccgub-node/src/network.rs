@@ -256,7 +256,7 @@ impl NetworkRuntime {
         self: Arc<Self>,
         stream: TcpStream,
         peer_addr: String,
-        inbound: bool,
+        _inbound: bool,
     ) {
         let (mut reader, mut writer) = stream.into_split();
         let (tx, mut rx) = mpsc::channel::<NetworkMessage>(128);
@@ -282,11 +282,7 @@ impl NetworkRuntime {
             }
         });
 
-        if inbound {
-            let _ = self.send_hello(&peer_addr).await;
-        } else {
-            let _ = self.send_hello(&peer_addr).await;
-        }
+        let _ = self.send_hello(&peer_addr).await;
 
         loop {
             match read_frame(&mut reader).await {
@@ -1052,10 +1048,7 @@ impl NetworkRuntime {
                 if !chain.is_proposer_for_height(next_height) {
                     None
                 } else {
-                    match chain.build_candidate_block() {
-                        Ok(block) => Some(block),
-                        Err(_) => None,
-                    }
+                    chain.build_candidate_block().ok()
                 }
             };
             if let Some(block) = maybe_block {

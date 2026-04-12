@@ -43,7 +43,8 @@ pub fn check_payload_consistency(tx: &SymbolicTransition) -> PayloadConsistency 
     match (&tx.payload, kind) {
         // Write: key must equal declared target.
         (OperationPayload::Write { key, .. }, TransitionKind::StateWrite)
-        | (OperationPayload::Write { key, .. }, TransitionKind::ContractInvoke) => {
+        | (OperationPayload::Write { key, .. }, TransitionKind::ContractInvoke)
+        | (OperationPayload::Write { key, .. }, TransitionKind::GovernanceUpdate) => {
             if key != target {
                 return PayloadConsistency::Inconsistent {
                     reason: format!(
@@ -346,6 +347,34 @@ mod tests {
             OperationPayload::ProposeNorm {
                 name: "x".into(),
                 description: "y".into(),
+            },
+        );
+        assert!(!check_payload_consistency(&tx).is_consistent());
+    }
+
+    #[test]
+    fn governance_update_write_matching_target_consistent() {
+        let target = b"norms/governance/proposals/vote".to_vec();
+        let tx = tx_with(
+            TransitionKind::GovernanceUpdate,
+            target.clone(),
+            OperationPayload::Write {
+                key: target,
+                value: vec![1, 2, 3],
+            },
+        );
+        assert!(check_payload_consistency(&tx).is_consistent());
+    }
+
+    #[test]
+    fn governance_update_write_target_mismatch_rejected() {
+        let target = b"norms/governance/proposals/vote".to_vec();
+        let tx = tx_with(
+            TransitionKind::GovernanceUpdate,
+            target,
+            OperationPayload::Write {
+                key: b"norms/governance/params/propose".to_vec(),
+                value: vec![1, 2, 3],
             },
         );
         assert!(!check_payload_consistency(&tx).is_consistent());

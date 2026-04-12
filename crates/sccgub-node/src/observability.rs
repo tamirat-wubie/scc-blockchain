@@ -75,6 +75,8 @@ pub struct ChainMetrics {
     // --- Security ---
     /// Total slashing events.
     pub slashing_events: u64,
+    /// API sync events.
+    pub api_sync_events: u64,
     /// Containment quarantines.
     pub quarantine_count: u64,
     /// Emergency mode activations.
@@ -111,6 +113,12 @@ impl ChainMetrics {
     #[allow(dead_code)]
     pub fn record_slashing(&mut self) {
         self.slashing_events += 1;
+    }
+
+    /// Record an API sync event.
+    #[allow(dead_code)]
+    pub fn record_api_sync(&mut self) {
+        self.api_sync_events += 1;
     }
 
     /// Display metrics as a formatted report.
@@ -195,6 +203,10 @@ impl ChainMetrics {
         s.push_str(&format!(
             "    Slashing events:       {}\n",
             self.slashing_events
+        ));
+        s.push_str(&format!(
+            "    API sync events:       {}\n",
+            self.api_sync_events
         ));
         s.push_str(&format!(
             "    Quarantines:           {}\n",

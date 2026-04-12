@@ -719,6 +719,33 @@ effective_fee(τ, Block_n) = base_fee(τ.intent.kind) × (1 + α · T_total(Bloc
 -- Predictable for transaction submitters (they can query current tension)
 ```
 
+**Section 13.4 / replay rule — Add:**
+
+```
+Versioned validator spend-account boundary:
+
+  validator_id / proposer_id := Ed25519 public key used for block-signature verification
+
+  validator_spend_account(version, validator_public_key) =
+    if version == 1:
+      validator_public_key
+    else:
+      Hash(validator_public_key ++ canonical_bytes(MfidelAtomicSeal::from_height(0)))
+
+Replay rules:
+  - Genesis fixes the chain version
+  - Mixed-version block histories are invalid
+  - Genesis mint and validator rewards credit validator_spend_account(version, validator_id)
+  - Fee payer resolution is:
+      1. charge tx.actor.agent_id if it covers the fee
+      2. else, if version == 1, charge tx.actor.public_key if it covers the fee
+      3. else reject
+
+This preserves deterministic replay for legacy v1 chains while allowing new v2 chains
+to keep validator liquidity on the canonical agent account instead of the signer
+compatibility account.
+```
+
 ---
 
 ### FIX-10: Discrete-time replicator dynamics (B-11)

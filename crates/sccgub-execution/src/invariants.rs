@@ -198,6 +198,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: sccgub_types::causal::CausalGraphDelta::default(),
@@ -218,6 +219,8 @@ mod tests {
                 active_norm_count: 0,
                 emergency_mode: false,
                 finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+                governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+                finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
             },
         };
 
@@ -267,6 +270,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: sccgub_types::causal::CausalGraphDelta::default(),
@@ -287,6 +291,8 @@ mod tests {
                 active_norm_count: 0,
                 emergency_mode: false,
                 finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+                governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+                finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
             },
         };
 

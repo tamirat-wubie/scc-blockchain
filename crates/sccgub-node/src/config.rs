@@ -9,6 +9,10 @@ pub struct NodeConfig {
     pub chain: ChainConfig,
     /// API server parameters.
     pub api: ApiConfig,
+    /// API sync parameters.
+    pub api_sync: ApiSyncConfig,
+    /// Network (p2p) parameters.
+    pub network: NetworkConfig,
     /// Storage parameters.
     pub storage: StorageConfig,
     /// Validator parameters.
@@ -38,9 +42,71 @@ pub struct ApiConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiSyncConfig {
+    /// Minimum milliseconds between API state syncs.
+    pub min_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    /// Whether p2p networking is enabled.
+    pub enable: bool,
+    /// Bind address for the p2p listener.
+    pub bind: String,
+    /// Port for the p2p listener.
+    pub port: u16,
+    /// Known peer addresses (host:port).
+    pub peers: Vec<String>,
+    /// Optional allowlist for inbound peers (host or host:port).
+    pub allowed_peers: Vec<String>,
+    /// Validator public keys (hex) for proposer rotation.
+    pub validators: Vec<String>,
+    /// Target block interval (ms) for proposer loop.
+    pub block_interval_ms: u64,
+    /// Consensus round timeout (ms) before advancing to next round.
+    pub round_timeout_ms: u64,
+    /// Maximum rounds before aborting a height.
+    pub max_rounds: u32,
+    /// Validator set epoch (binds vote signatures).
+    pub epoch: u64,
+    /// Protocol version advertised in Hello.
+    pub protocol_version: u32,
+    /// Inbound message rate window (ms).
+    pub inbound_msg_window_ms: u64,
+    /// Maximum inbound messages per window per peer.
+    pub inbound_msg_limit: u32,
+    /// Initial peer score on first handshake.
+    pub peer_score_initial: i32,
+    /// Score penalty per violation.
+    pub peer_score_penalty: i32,
+    /// Score threshold at or below which a peer is banned.
+    pub peer_score_ban_threshold: i32,
+    /// Maximum recorded violations before banning a peer.
+    pub peer_max_violations: u32,
+    /// Score decay interval for connected peers (ms).
+    pub peer_score_decay_interval_ms: u64,
+    /// Score increment applied during decay.
+    pub peer_score_decay_amount: i32,
+    /// Violation forgiveness interval (ms).
+    pub peer_violation_forgive_interval_ms: u64,
+    /// Bandwidth accounting window (ms).
+    pub bandwidth_window_ms: u64,
+    /// Maximum inbound bytes per window per peer.
+    pub inbound_bytes_limit: u64,
+    /// Maximum outbound bytes per window per peer.
+    pub outbound_bytes_limit: u64,
+    /// Minimum number of distinct connected peers required for finality.
+    pub min_connected_peers: usize,
+    /// Maximum percent of connected peers allowed from the same /16 subnet.
+    pub max_same_subnet_pct: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Data directory path.
     pub data_dir: PathBuf,
+    /// Whether to restore chain state from snapshots on boot.
+    pub snapshot_restore_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,8 +129,39 @@ impl Default for NodeConfig {
                 bind: "127.0.0.1".into(),
                 page_size: 100,
             },
+            api_sync: ApiSyncConfig {
+                min_interval_ms: 250,
+            },
+            network: NetworkConfig {
+                enable: false,
+                bind: "0.0.0.0".into(),
+                port: 9000,
+                peers: Vec::new(),
+                allowed_peers: Vec::new(),
+                validators: Vec::new(),
+                block_interval_ms: 5_000,
+                round_timeout_ms: 4_000,
+                max_rounds: 3,
+                epoch: 0,
+                protocol_version: 1,
+                inbound_msg_window_ms: 1_000,
+                inbound_msg_limit: 50,
+                peer_score_initial: 100,
+                peer_score_penalty: 10,
+                peer_score_ban_threshold: 0,
+                peer_max_violations: 5,
+                peer_score_decay_interval_ms: 10_000,
+                peer_score_decay_amount: 1,
+                peer_violation_forgive_interval_ms: 30_000,
+                bandwidth_window_ms: 1_000,
+                inbound_bytes_limit: 64 * 1024,
+                outbound_bytes_limit: 64 * 1024,
+                min_connected_peers: 3,
+                max_same_subnet_pct: 50,
+            },
             storage: StorageConfig {
                 data_dir: PathBuf::from(".sccgub"),
+                snapshot_restore_enabled: true,
             },
             validator: ValidatorConfig {
                 key_passphrase: String::new(), // Must be set by operator.
@@ -112,6 +209,13 @@ mod tests {
         assert_eq!(config.chain.genesis_supply, 1_000_000);
         assert_eq!(config.api.port, 3000);
         assert_eq!(config.api.bind, "127.0.0.1");
+        assert_eq!(config.api_sync.min_interval_ms, 250);
+        assert!(config.storage.snapshot_restore_enabled);
+        assert_eq!(config.network.port, 9000);
+        assert_eq!(config.network.bind, "0.0.0.0");
+        assert!(config.network.allowed_peers.is_empty());
+        assert_eq!(config.network.min_connected_peers, 3);
+        assert_eq!(config.network.max_same_subnet_pct, 50);
         assert!(config.validator.key_passphrase.is_empty());
     }
 
@@ -122,5 +226,9 @@ mod tests {
         let parsed: NodeConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.chain.genesis_supply, config.chain.genesis_supply);
         assert_eq!(parsed.api.port, config.api.port);
+        assert_eq!(
+            parsed.api_sync.min_interval_ms,
+            config.api_sync.min_interval_ms
+        );
     }
 }

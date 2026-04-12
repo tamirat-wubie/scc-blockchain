@@ -113,6 +113,7 @@ pub struct BlockEconomicsOutcome {
 /// the resolved fee payer account before payload transitions run. The treasury
 /// state is committed into the trie whenever economics changed, or whenever the
 /// trie already contains treasury keys and must remain stable across replay.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_block_economics(
     state: &mut ManagedWorldState,
     balances: &mut BalanceLedger,
