@@ -86,13 +86,13 @@ impl SafetyCertificate {
             }
 
             // Reconstruct the signed message using consensus domain separation.
-            let vote_data = super::protocol::vote_sign_data(
+            let vote_data = crate::protocol::vote_sign_data(
                 &self.chain_id,
                 self.epoch,
                 &self.block_hash,
                 self.height,
                 self.round,
-                super::protocol::VoteType::Precommit,
+                crate::protocol::VoteType::Precommit,
             );
 
             if !sccgub_crypto::signature::verify(public_key, &vote_data, signature) {
@@ -113,7 +113,7 @@ impl SafetyCertificate {
         block_hash: Hash,
         height: u64,
         round: u32,
-        precommits: &HashMap<Hash, super::protocol::Vote>,
+        precommits: &HashMap<Hash, crate::protocol::Vote>,
         validator_count: u32,
     ) -> Self {
         let quorum = (2 * validator_count) / 3 + 1;
@@ -375,6 +375,7 @@ pub enum ForkProofResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol;
     use sccgub_crypto::keys::generate_keypair;
 
     const TEST_CHAIN_ID: Hash = [0xCC; 32];
@@ -432,13 +433,13 @@ mod tests {
         // Create properly signed precommits.
         let mut precommit_signatures = Vec::new();
         for (id, key) in &signers[..3] {
-            let data = super::protocol::vote_sign_data(
+            let data = protocol::vote_sign_data(
                 &TEST_CHAIN_ID,
                 TEST_EPOCH,
                 &block,
                 height,
                 round,
-                super::protocol::VoteType::Precommit,
+                crate::protocol::VoteType::Precommit,
             );
             let sig = sccgub_crypto::signature::sign(key, &data);
             precommit_signatures.push((*id, sig));
