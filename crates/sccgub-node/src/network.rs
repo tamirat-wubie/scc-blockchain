@@ -961,6 +961,9 @@ impl NetworkRuntime {
                             if let Some(cert) = cert_to_broadcast.clone() {
                                 chain.record_safety_certificate(cert);
                             }
+                            if let Err(e) = chain.state.flush_store() {
+                                eprintln!("Warning: state store flush failed: {}", e);
+                            }
                             if let Some(bridge) = &self.app_state {
                                 let _ = bridge.sync_from_chain(&chain).await;
                             }

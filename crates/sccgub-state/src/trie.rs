@@ -61,6 +61,16 @@ impl StateTrie {
         self.durable_error.take()
     }
 
+    pub fn flush_durable(&mut self) -> Result<(), String> {
+        if let Some(store) = &self.durable {
+            if let Err(err) = store.flush() {
+                self.durable_error = Some(err.clone());
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
     pub fn get(&self, key: &SymbolAddress) -> Option<&Vec<u8>> {
         self.store.get(key)
     }

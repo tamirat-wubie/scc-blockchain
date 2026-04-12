@@ -479,6 +479,10 @@ fn cmd_produce(
         }
     };
 
+    if let Err(e) = chain.state.flush_store() {
+        eprintln!("Warning: state store flush failed: {}", e);
+    }
+
     // Save state snapshot every 10 blocks for fast reload.
     if produced_height % 10 == 0 && produced_height > 0 {
         let snapshot = chain.create_snapshot();

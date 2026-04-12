@@ -63,6 +63,10 @@ impl ManagedWorldState {
         Ok(())
     }
 
+    pub fn flush_store(&mut self) -> Result<(), String> {
+        self.trie.flush_durable()
+    }
+
     /// Apply a state delta to the world state.
     /// Rejects oversized entries (fail-closed, not silent skip).
     /// Returns list of rejected addresses.
