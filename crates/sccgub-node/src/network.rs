@@ -2331,6 +2331,9 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        let quorum = runtime_peer.consensus_quorum().await;
+        assert_eq!(quorum, 3);
+        assert_eq!(runtime_peer.validator_set.len(), 3);
         let block = {
             let guard = chain_proposer.read().await;
             guard.build_candidate_block().unwrap()
@@ -2463,12 +2466,18 @@ mod tests {
             let mut guard = chain_proposer.write().await;
             guard.governance_limits.max_consecutive_proposals = 100;
             guard.validator_key = proposer_key;
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
             guard.set_validator_set(validators.clone());
         }
         {
             let mut guard = chain_peer.write().await;
             guard.governance_limits.max_consecutive_proposals = 100;
             guard.validator_key = key2.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
             guard.set_validator_set(validators);
         }
 
@@ -2556,6 +2565,190 @@ mod tests {
             chain.safety_certificates[0].block_hash,
             block.header.block_id
         );
+    }
+
+    #[tokio::test]
+    async fn test_three_validator_timeout_then_finalize_next_round() {
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let key3 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+        let pk3 = *key3.verifying_key().as_bytes();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
+        config.round_timeout_ms = 1_000;
+        config.max_rounds = 3;
+
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+        let base_chain = Chain::init();
+        let height = base_chain.height().saturating_add(1);
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
+            .expect("validator set must pick proposer");
+
+        let (proposer_key, proposer_pk) = if proposer.node_id == pk1 {
+            (key1.clone(), pk1)
+        } else if proposer.node_id == pk2 {
+            (key2.clone(), pk2)
+        } else {
+            (key3.clone(), pk3)
+        };
+
+        let chain_proposer = Arc::new(RwLock::new(base_chain.clone()));
+        let chain_peer = Arc::new(RwLock::new(base_chain));
+        {
+            let mut guard = chain_proposer.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = proposer_key;
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+        {
+            let mut guard = chain_peer.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key2.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
+            guard.set_validator_set(validators);
+        }
+
+        let runtime_peer = Arc::new(
+            NetworkRuntime::new(chain_peer.clone(), config)
+                .await
+                .unwrap(),
+        );
+        let quorum = runtime_peer.consensus_quorum().await;
+        assert_eq!(quorum, 3);
+        assert_eq!(runtime_peer.validator_set.len(), 3);
+        let block = {
+            let guard = chain_proposer.read().await;
+            guard.build_candidate_block().unwrap()
+        };
+
+        runtime_peer
+            .handle_message(
+                NetworkMessage::BlockProposal(BlockProposalMessage {
+                    proposer_id: proposer_pk,
+                    block: block.clone(),
+                    round: 0,
+                    signature: Vec::new(),
+                }),
+                "127.0.0.1:9301",
+            )
+            .await
+            .unwrap();
+
+        let epoch = runtime_peer.current_epoch().await;
+        let prevote_round0 = vote_sign_data(
+            &runtime_peer.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Prevote,
+        );
+        let validators_keys = [(pk1, &key1), (pk2, &key2), (pk3, &key3)];
+        for (idx, (pk, key)) in validators_keys.iter().enumerate() {
+            let vote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: sign(key, &prevote_round0),
+            };
+            let addr = format!("127.0.0.1:93{:02}", idx + 2);
+            runtime_peer
+                .handle_message(NetworkMessage::ConsensusVote(vote), &addr)
+                .await
+                .unwrap();
+        }
+
+        let chain_height = { chain_peer.read().await.height() };
+        assert!(chain_height < block.header.height);
+
+        {
+            let desired_quorum = runtime_peer.consensus_quorum().await;
+            let mut rounds = runtime_peer.consensus_rounds.lock().await;
+            let state = rounds
+                .entry(block.header.height)
+                .or_insert_with(|| RoundState {
+                    round: ConsensusRound::new(
+                        runtime_peer.chain_id,
+                        epoch,
+                        block.header.block_id,
+                        block.header.height,
+                        0,
+                        runtime_peer.validator_set.clone(),
+                        runtime_peer.config.max_rounds,
+                    ),
+                    last_round_ms: now_ms(),
+                });
+            state.round.quorum = desired_quorum;
+            state.last_round_ms = 0;
+            advance_round_if_timed_out(state, &runtime_peer.config, 2_000);
+            assert_eq!(state.round.round, 1);
+        }
+
+        let prevote_round1 = vote_sign_data(
+            &runtime_peer.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            1,
+            VoteType::Prevote,
+        );
+        for (idx, (pk, key)) in validators_keys.iter().enumerate() {
+            let vote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 1,
+                vote_type: VoteType::Prevote,
+                signature: sign(key, &prevote_round1),
+            };
+            let addr = format!("127.0.0.1:93{:02}", idx + 5);
+            runtime_peer
+                .handle_message(NetworkMessage::ConsensusVote(vote), &addr)
+                .await
+                .unwrap();
+        }
+
+        let precommit_round1 = vote_sign_data(
+            &runtime_peer.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            1,
+            VoteType::Precommit,
+        );
+        for (idx, (pk, key)) in validators_keys.iter().enumerate() {
+            let vote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 1,
+                vote_type: VoteType::Precommit,
+                signature: sign(key, &precommit_round1),
+            };
+            let addr = format!("127.0.0.1:93{:02}", idx + 8);
+            runtime_peer
+                .handle_message(NetworkMessage::ConsensusVote(vote), &addr)
+                .await
+                .unwrap();
+        }
+
+        let chain = chain_peer.read().await;
+        assert_eq!(chain.height(), block.header.height);
+        assert_eq!(
+            chain.latest_block().unwrap().header.validator_id,
+            proposer_pk
+        );
+        assert_eq!(chain.safety_certificates.len(), 1);
     }
 
     #[tokio::test]
