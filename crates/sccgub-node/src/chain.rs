@@ -3093,6 +3093,28 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_snapshot_reflects_live_limits_and_finality() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 123;
+        chain.governance_limits.max_actions_per_agent_pct = 42;
+        chain.finality_config.confirmation_depth = 7;
+        chain.finality_config.max_finality_ms = 9_000;
+
+        let block = chain.produce_block().expect("block should succeed");
+
+        assert_eq!(
+            block.governance.governance_limits.max_consecutive_proposals,
+            123
+        );
+        assert_eq!(
+            block.governance.governance_limits.max_actions_per_agent_pct,
+            42
+        );
+        assert_eq!(block.governance.finality_config.confirmation_depth, 7);
+        assert_eq!(block.governance.finality_config.max_finality_ms, 9_000);
+    }
+
+    #[test]
     fn test_phase8_rejects_payload_target_mismatch() {
         // End-to-end witness: proves Phase 8 payload consistency check
         // is wired into the production path. If check_payload_consistency
