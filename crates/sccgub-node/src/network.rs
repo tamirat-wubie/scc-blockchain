@@ -2432,6 +2432,133 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_three_validator_quorum_finalizes() {
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let key3 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+        let pk3 = *key3.verifying_key().as_bytes();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
+
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+        let base_chain = Chain::init();
+        let height = base_chain.height().saturating_add(1);
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
+            .expect("validator set must pick proposer");
+
+        let (proposer_key, proposer_pk) = if proposer.node_id == pk1 {
+            (key1.clone(), pk1)
+        } else if proposer.node_id == pk2 {
+            (key2.clone(), pk2)
+        } else {
+            (key3.clone(), pk3)
+        };
+
+        let chain_proposer = Arc::new(RwLock::new(base_chain.clone()));
+        let chain_peer = Arc::new(RwLock::new(base_chain));
+        {
+            let mut guard = chain_proposer.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = proposer_key;
+            guard.set_validator_set(validators.clone());
+        }
+        {
+            let mut guard = chain_peer.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key2.clone();
+            guard.set_validator_set(validators);
+        }
+
+        let runtime_peer = Arc::new(
+            NetworkRuntime::new(chain_peer.clone(), config)
+                .await
+                .unwrap(),
+        );
+        let block = {
+            let guard = chain_proposer.read().await;
+            guard.build_candidate_block().unwrap()
+        };
+
+        runtime_peer
+            .handle_message(
+                NetworkMessage::BlockProposal(BlockProposalMessage {
+                    proposer_id: proposer_pk,
+                    block: block.clone(),
+                    round: 0,
+                    signature: Vec::new(),
+                }),
+                "127.0.0.1:9201",
+            )
+            .await
+            .unwrap();
+
+        let epoch = runtime_peer.current_epoch().await;
+        let data = vote_sign_data(
+            &runtime_peer.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Prevote,
+        );
+        let votes = [(pk1, &key1), (pk2, &key2), (pk3, &key3)];
+        for (idx, (pk, key)) in votes.iter().enumerate() {
+            let vote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: sign(key, &data),
+            };
+            let addr = format!("127.0.0.1:92{:02}", idx + 2);
+            runtime_peer
+                .handle_message(NetworkMessage::ConsensusVote(vote), &addr)
+                .await
+                .unwrap();
+        }
+
+        let data_commit = vote_sign_data(
+            &runtime_peer.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Precommit,
+        );
+        for (idx, (pk, key)) in votes.iter().enumerate() {
+            let vote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Precommit,
+                signature: sign(key, &data_commit),
+            };
+            let addr = format!("127.0.0.1:92{:02}", idx + 5);
+            runtime_peer
+                .handle_message(NetworkMessage::ConsensusVote(vote), &addr)
+                .await
+                .unwrap();
+        }
+
+        let chain = chain_peer.read().await;
+        assert_eq!(chain.height(), block.header.height);
+        assert_eq!(
+            chain.latest_block().unwrap().header.validator_id,
+            proposer_pk
+        );
+        assert_eq!(chain.safety_certificates.len(), 1);
+        assert_eq!(
+            chain.safety_certificates[0].block_hash,
+            block.header.block_id
+        );
+    }
+
+    #[tokio::test]
     async fn test_peer_diversity_gate_blocks_finality() {
         let chain = Arc::new(RwLock::new(Chain::init()));
         let local_pk = {
