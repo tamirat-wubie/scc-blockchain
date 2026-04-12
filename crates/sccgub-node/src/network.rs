@@ -15,6 +15,7 @@ use tokio::time::{interval, Duration};
 use sccgub_consensus::protocol::{
     vote_sign_data, ConsensusResult, ConsensusRound, EquivocationProof, Vote, VoteType,
 };
+use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_crypto::canonical::canonical_bytes;
 use sccgub_crypto::signature::{sign, verify};
 use sccgub_network::messages::{
@@ -332,7 +333,9 @@ impl NetworkRuntime {
             NetworkMessage::EquivocationEvidence(msg) => {
                 self.handle_equivocation_evidence(msg).await
             }
-            NetworkMessage::FinalityCertificate(_) => Ok(()),
+            NetworkMessage::FinalityCertificate(cert) => {
+                self.handle_finality_certificate(cert).await
+            }
             NetworkMessage::LawSync(_) => Ok(()),
         }
     }
@@ -553,6 +556,23 @@ impl NetworkRuntime {
     ) -> Result<(), String> {
         self.record_equivocation(msg.vote_a, msg.vote_b, msg.epoch, false)
             .await
+    }
+
+    async fn handle_finality_certificate(
+        &self,
+        cert: SafetyCertificate,
+    ) -> Result<(), String> {
+        cert.verify_cryptographic(&self.validator_set)?;
+        let mut chain = self.chain.write().await;
+        let known = chain
+            .block_at(cert.height)
+            .map(|b| b.header.block_id == cert.block_hash)
+            .unwrap_or(false);
+        if !known {
+            return Err("Finality certificate references unknown block".into());
+        }
+        chain.record_safety_certificate(cert);
+        Ok(())
     }
 
     async fn record_equivocation(
@@ -809,6 +829,7 @@ impl NetworkRuntime {
         }
         let mut should_finalize = false;
         let mut block_hash = None;
+        let mut cert_to_broadcast: Option<SafetyCertificate> = None;
         {
             let mut rounds = self.consensus_rounds.lock().await;
             let Some(state) = rounds.get_mut(&height) else {
@@ -832,6 +853,15 @@ impl NetworkRuntime {
                 ConsensusResult::Finalized { .. } => {
                     should_finalize = true;
                     block_hash = Some(state.round.block_hash);
+                    cert_to_broadcast = Some(SafetyCertificate::from_round(
+                        self.chain_id,
+                        state.round.epoch,
+                        state.round.block_hash,
+                        height,
+                        state.round.round,
+                        &state.round.precommits,
+                        state.round.validator_count,
+                    ));
                 }
                 ConsensusResult::NextRound { .. } => {
                     if quorum {
@@ -850,10 +880,15 @@ impl NetworkRuntime {
             if let Some(hash) = block_hash {
                 let block = { self.pending_blocks.lock().await.remove(&hash) };
                 if let Some(block) = block {
+                    let mut imported = false;
                     let (block_to_persist, snapshot_to_persist) = {
                         let mut chain = self.chain.write().await;
                         let import = chain.import_block(block);
                         if import.is_ok() {
+                            imported = true;
+                            if let Some(cert) = cert_to_broadcast.clone() {
+                                chain.record_safety_certificate(cert);
+                            }
                             if let Some(bridge) = &self.app_state {
                                 let _ = bridge.sync_from_chain(&chain).await;
                             }
@@ -885,6 +920,12 @@ impl NetworkRuntime {
                                 }
                             }
                         });
+                    }
+                    if imported {
+                        if let Some(cert) = cert_to_broadcast {
+                            self.broadcast(NetworkMessage::FinalityCertificate(cert))
+                                .await;
+                        }
                     }
                 }
             }

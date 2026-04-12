@@ -13,6 +13,12 @@ use sccgub_types::Hash;
 /// the validator set before the certificate is considered valid.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SafetyCertificate {
+    /// Chain identifier for vote domain separation.
+    #[serde(default)]
+    pub chain_id: Hash,
+    /// Validator set epoch used when signing votes.
+    #[serde(default)]
+    pub epoch: u64,
     pub height: u64,
     pub block_hash: Hash,
     /// Round in which consensus was achieved.
@@ -79,13 +85,15 @@ impl SafetyCertificate {
                 ));
             }
 
-            // Reconstruct the signed message: (block_hash, height, round, PRECOMMIT).
-            let vote_data = sccgub_crypto::canonical::canonical_bytes(&(
+            // Reconstruct the signed message using consensus domain separation.
+            let vote_data = super::protocol::vote_sign_data(
+                &self.chain_id,
+                self.epoch,
                 &self.block_hash,
                 self.height,
                 self.round,
-                2u8, // VoteType::Precommit
-            ));
+                super::protocol::VoteType::Precommit,
+            );
 
             if !sccgub_crypto::signature::verify(public_key, &vote_data, signature) {
                 return Err(format!(
@@ -100,6 +108,8 @@ impl SafetyCertificate {
 
     /// Build a certificate from a finalized ConsensusRound.
     pub fn from_round(
+        chain_id: Hash,
+        epoch: u64,
         block_hash: Hash,
         height: u64,
         round: u32,
@@ -114,6 +124,8 @@ impl SafetyCertificate {
             .collect();
 
         Self {
+            chain_id,
+            epoch,
             height,
             block_hash,
             round,
@@ -365,8 +377,13 @@ mod tests {
     use super::*;
     use sccgub_crypto::keys::generate_keypair;
 
+    const TEST_CHAIN_ID: Hash = [0xCC; 32];
+    const TEST_EPOCH: u64 = 1;
+
     fn make_cert(height: u64, block: Hash, signers: &[u8], n: u32) -> SafetyCertificate {
         SafetyCertificate {
+            chain_id: TEST_CHAIN_ID,
+            epoch: TEST_EPOCH,
             height,
             block_hash: block,
             round: 0,
@@ -415,12 +432,21 @@ mod tests {
         // Create properly signed precommits.
         let mut precommit_signatures = Vec::new();
         for (id, key) in &signers[..3] {
-            let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, 2u8));
+            let data = super::protocol::vote_sign_data(
+                &TEST_CHAIN_ID,
+                TEST_EPOCH,
+                &block,
+                height,
+                round,
+                super::protocol::VoteType::Precommit,
+            );
             let sig = sccgub_crypto::signature::sign(key, &data);
             precommit_signatures.push((*id, sig));
         }
 
         let cert = SafetyCertificate {
+            chain_id: TEST_CHAIN_ID,
+            epoch: TEST_EPOCH,
             height,
             block_hash: block,
             round,
@@ -447,6 +473,8 @@ mod tests {
 
         // Use garbage signatures.
         let cert = SafetyCertificate {
+            chain_id: TEST_CHAIN_ID,
+            epoch: TEST_EPOCH,
             height,
             block_hash: block,
             round,

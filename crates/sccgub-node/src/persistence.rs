@@ -302,6 +302,9 @@ pub struct StateSnapshot {
     /// Equivocation evidence records (proof + epoch).
     #[serde(default)]
     pub equivocation_records: Vec<(sccgub_consensus::protocol::EquivocationProof, u64)>,
+    /// Safety certificates from BFT finality (consensus proofs).
+    #[serde(default)]
+    pub safety_certificates: Vec<sccgub_consensus::safety::SafetyCertificate>,
     /// Governance limits snapshot (for restart-safe parameters).
     #[serde(default)]
     pub governance_limits: sccgub_governance::anti_concentration::GovernanceLimits,

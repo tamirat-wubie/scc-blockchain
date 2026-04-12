@@ -268,12 +268,21 @@ fn test_safety_cert_cryptographic_verification() {
 
     let mut precommit_sigs = Vec::new();
     for (id, key) in &keys[..3] {
-        let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, round, 2u8));
+        let data = sccgub_consensus::protocol::vote_sign_data(
+            &TEST_CHAIN_ID,
+            TEST_EPOCH,
+            &block,
+            height,
+            round,
+            VoteType::Precommit,
+        );
         let sig = sccgub_crypto::signature::sign(key, &data);
         precommit_sigs.push((*id, sig));
     }
 
     let cert = SafetyCertificate {
+        chain_id: TEST_CHAIN_ID,
+        epoch: TEST_EPOCH,
         height,
         block_hash: block,
         round,
@@ -291,10 +300,19 @@ fn test_safety_cert_rejects_non_member_signer() {
     let (vs, _) = make_validators(4);
     let outsider = generate_keypair();
 
-    let data = sccgub_crypto::canonical::canonical_bytes(&(&block, 5u64, 0u32, 2u8));
+    let data = sccgub_consensus::protocol::vote_sign_data(
+        &TEST_CHAIN_ID,
+        TEST_EPOCH,
+        &block,
+        5u64,
+        0u32,
+        VoteType::Precommit,
+    );
     let sig = sccgub_crypto::signature::sign(&outsider, &data);
 
     let cert = SafetyCertificate {
+        chain_id: TEST_CHAIN_ID,
+        epoch: TEST_EPOCH,
         height: 5,
         block_hash: block,
         round: 0,
@@ -321,19 +339,35 @@ fn test_conflicting_certs_detect_equivocators() {
 
     let mut sigs_a = Vec::new();
     for i in 0..5 {
-        let data = sccgub_crypto::canonical::canonical_bytes(&(&block_a, height, 0u32, 2u8));
+        let data = sccgub_consensus::protocol::vote_sign_data(
+            &TEST_CHAIN_ID,
+            TEST_EPOCH,
+            &block_a,
+            height,
+            0,
+            VoteType::Precommit,
+        );
         let sig = sccgub_crypto::signature::sign(&keys[i].1, &data);
         sigs_a.push((keys[i].0, sig));
     }
 
     let mut sigs_b = Vec::new();
     for i in 3..7 {
-        let data = sccgub_crypto::canonical::canonical_bytes(&(&block_b, height, 0u32, 2u8));
+        let data = sccgub_consensus::protocol::vote_sign_data(
+            &TEST_CHAIN_ID,
+            TEST_EPOCH,
+            &block_b,
+            height,
+            0,
+            VoteType::Precommit,
+        );
         let sig = sccgub_crypto::signature::sign(&keys[i].1, &data);
         sigs_b.push((keys[i].0, sig));
     }
 
     let cert_a = SafetyCertificate {
+        chain_id: TEST_CHAIN_ID,
+        epoch: TEST_EPOCH,
         height,
         block_hash: block_a,
         round: 0,
@@ -342,6 +376,8 @@ fn test_conflicting_certs_detect_equivocators() {
         validator_count: 7,
     };
     let cert_b = SafetyCertificate {
+        chain_id: TEST_CHAIN_ID,
+        epoch: TEST_EPOCH,
         height,
         block_hash: block_b,
         round: 0,

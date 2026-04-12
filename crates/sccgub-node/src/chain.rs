@@ -33,6 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
 use sccgub_consensus::protocol::EquivocationProof;
+use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_consensus::slashing::SlashingEngine;
 use sccgub_governance::anti_concentration::{GovernanceLimits, GovernancePowerTracker};
 
@@ -102,6 +103,8 @@ pub struct Chain {
     pub slashing: SlashingEngine,
     /// Equivocation evidence records (proof + epoch).
     pub equivocation_records: Vec<(EquivocationProof, u64)>,
+    /// Safety certificates from BFT finality (consensus proofs).
+    pub safety_certificates: Vec<SafetyCertificate>,
     /// Active validator set for proposer rotation (optional).
     pub validator_set: Vec<ValidatorAuthority>,
     /// Event log for the most recently produced block.
@@ -175,6 +178,7 @@ impl Chain {
             finality_config: FinalityConfig::default(),
             slashing,
             equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
             validator_set: Vec::new(),
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
@@ -491,6 +495,7 @@ impl Chain {
             finality_config,
             slashing: SlashingEngine::new(Default::default()),
             equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
             validator_set: Vec::new(),
             latest_events: sccgub_types::events::BlockEventLog::new(),
             latest_rejected_receipts: Vec::new(),
@@ -542,6 +547,18 @@ impl Chain {
             normalized.block_hash_a = block_a;
             normalized.block_hash_b = block_b;
             self.equivocation_records.push((normalized, epoch));
+        }
+    }
+
+    /// Record a safety certificate (deduplicated by height/block/round).
+    pub fn record_safety_certificate(&mut self, cert: SafetyCertificate) {
+        let exists = self.safety_certificates.iter().any(|existing| {
+            existing.height == cert.height
+                && existing.block_hash == cert.block_hash
+                && existing.round == cert.round
+        });
+        if !exists {
+            self.safety_certificates.push(cert);
         }
     }
 
@@ -1307,6 +1324,7 @@ impl Chain {
                 .map(|(k, v)| (*k, *v))
                 .collect(),
             equivocation_records: self.equivocation_records.clone(),
+            safety_certificates: self.safety_certificates.clone(),
             governance_limits: self.governance_limits.clone(),
             finality_config: self.finality_config.clone(),
         }
@@ -1367,6 +1385,7 @@ impl Chain {
             .collect();
         self.slashing = slashing;
         self.equivocation_records = snapshot.equivocation_records.clone();
+        self.safety_certificates = snapshot.safety_certificates.clone();
         self.governance_limits = snapshot.governance_limits.clone();
         self.finality_config = snapshot.finality_config.clone();
     }
