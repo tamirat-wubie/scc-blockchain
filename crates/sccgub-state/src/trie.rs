@@ -1,16 +1,32 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use sccgub_crypto::hash::blake3_hash_concat;
 use sccgub_crypto::merkle::compute_merkle_root;
 use sccgub_types::{Hash, MerkleRoot, SymbolAddress, ZERO_HASH};
 
+use crate::store::StateStore;
+
 /// Simplified Merkle Patricia Trie backed by a BTreeMap.
 /// Features lazy root caching — root is recomputed only when the trie is dirty.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StateTrie {
     store: BTreeMap<SymbolAddress, Vec<u8>>,
     /// Cached Merkle root. `None` means dirty (needs recomputation).
     cached_root: Option<MerkleRoot>,
+    durable: Option<Arc<dyn StateStore>>,
+    durable_error: Option<String>,
+}
+
+impl std::fmt::Debug for StateTrie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateTrie")
+            .field("entries", &self.store.len())
+            .field("cached_root", &self.cached_root)
+            .field("durable", &self.durable.is_some())
+            .field("durable_error", &self.durable_error)
+            .finish()
+    }
 }
 
 impl StateTrie {
@@ -18,7 +34,31 @@ impl StateTrie {
         Self {
             store: BTreeMap::new(),
             cached_root: Some(ZERO_HASH),
+            durable: None,
+            durable_error: None,
         }
+    }
+
+    pub fn with_store(store: Arc<dyn StateStore>) -> Result<Self, String> {
+        let entries = store.iter_all()?;
+        let mut map = BTreeMap::new();
+        for (key, value) in entries {
+            map.insert(key, value);
+        }
+        Ok(Self {
+            store: map,
+            cached_root: None,
+            durable: Some(store),
+            durable_error: None,
+        })
+    }
+
+    pub fn durable_error(&self) -> Option<&str> {
+        self.durable_error.as_deref()
+    }
+
+    pub fn take_durable_error(&mut self) -> Option<String> {
+        self.durable_error.take()
     }
 
     pub fn get(&self, key: &SymbolAddress) -> Option<&Vec<u8>> {
@@ -26,14 +66,26 @@ impl StateTrie {
     }
 
     pub fn insert(&mut self, key: SymbolAddress, value: Vec<u8>) {
-        self.store.insert(key, value);
+        self.store.insert(key.clone(), value.clone());
         self.cached_root = None; // Invalidate cache.
+        if let Some(store) = &self.durable {
+            if let Err(err) = store.put(&key, &value) {
+                self.durable_error = Some(err.clone());
+                tracing::error!("State trie durable insert failed: {}", err);
+            }
+        }
     }
 
     pub fn remove(&mut self, key: &SymbolAddress) -> Option<Vec<u8>> {
         let result = self.store.remove(key);
         if result.is_some() {
             self.cached_root = None; // Invalidate cache.
+            if let Some(store) = &self.durable {
+                if let Err(err) = store.delete(key) {
+                    self.durable_error = Some(err.clone());
+                    tracing::error!("State trie durable delete failed: {}", err);
+                }
+            }
         }
         result
     }

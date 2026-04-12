@@ -9,3 +9,5 @@ sccgub-types = { path = "../sccgub-types" }
 sccgub-crypto = { path = "../sccgub-crypto" }
 thiserror = { workspace = true }
 hex = { workspace = true }
+sled = { workspace = true }
+tracing = { workspace = true }
