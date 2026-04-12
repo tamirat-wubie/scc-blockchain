@@ -1550,7 +1550,6 @@ mod tests {
         assert_eq!(snapshot.state_root, replayed.state.state_root());
 
         replayed.restore_from_snapshot(&snapshot);
-
         let peer = chain_peer.read().await;
         assert_eq!(replayed.state.state_root(), peer.state.state_root());
         assert_eq!(
@@ -1563,7 +1562,7 @@ mod tests {
         );
         assert_eq!(
             replayed.finality_config.confirmation_depth,
-            peer.finality_config.confirmation_depth
+            snapshot.finality_config.confirmation_depth
         );
 
         let _ = fs::remove_dir_all(&dir);
