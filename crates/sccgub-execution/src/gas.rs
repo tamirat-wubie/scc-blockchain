@@ -1,3 +1,4 @@
+use sccgub_types::consensus_params::ConsensusParams;
 use sccgub_types::tension::TensionValue;
 
 /// Gas metering for deterministic resource accounting.
@@ -14,6 +15,8 @@ use sccgub_types::tension::TensionValue;
 pub struct GasMeter {
     /// Maximum gas allowed for this execution context.
     pub limit: u64,
+    /// Consensus-bound pricing table used for this execution.
+    pub pricing: GasPricing,
     /// Gas consumed so far.
     pub used: u64,
     /// Breakdown by resource category.
@@ -36,8 +39,20 @@ pub struct GasBreakdown {
     pub proof: u64,
 }
 
-/// Standard gas costs for each operation type.
-/// These are consensus-critical constants — changing them requires governance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GasPricing {
+    pub tx_base: u64,
+    pub compute_step: u64,
+    pub state_read: u64,
+    pub state_write: u64,
+    pub sig_verify: u64,
+    pub hash_op: u64,
+    pub proof_byte: u64,
+    pub payload_byte: u64,
+}
+
+/// Legacy default gas costs preserved for compatibility and test fixtures.
+/// Live runtime code should prefer `ConsensusParams` as the governing source.
 pub mod costs {
     /// Base cost for any transaction (overhead).
     pub const TX_BASE: u64 = 1_000;
@@ -59,6 +74,27 @@ pub mod costs {
     pub const DEFAULT_TX_LIMIT: u64 = 1_000_000;
     /// Default per-block gas limit.
     pub const DEFAULT_BLOCK_LIMIT: u64 = 50_000_000;
+}
+
+impl Default for GasPricing {
+    fn default() -> Self {
+        Self::from(&ConsensusParams::default())
+    }
+}
+
+impl From<&ConsensusParams> for GasPricing {
+    fn from(params: &ConsensusParams) -> Self {
+        Self {
+            tx_base: params.gas_tx_base,
+            compute_step: params.gas_compute_step,
+            state_read: params.gas_state_read,
+            state_write: params.gas_state_write,
+            sig_verify: params.gas_sig_verify,
+            hash_op: params.gas_hash_op,
+            proof_byte: params.gas_proof_byte,
+            payload_byte: params.gas_payload_byte,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +127,14 @@ impl std::fmt::Display for GasError {
 impl GasMeter {
     /// Create a new gas meter with the specified limit.
     pub fn new(limit: u64) -> Self {
+        Self::with_pricing(limit, GasPricing::default())
+    }
+
+    /// Create a gas meter with an explicit pricing table.
+    pub fn with_pricing(limit: u64, pricing: GasPricing) -> Self {
         Self {
             limit,
+            pricing,
             used: 0,
             breakdown: GasBreakdown::default(),
         }
@@ -100,7 +142,8 @@ impl GasMeter {
 
     /// Create a meter with the default transaction limit.
     pub fn default_tx() -> Self {
-        Self::new(costs::DEFAULT_TX_LIMIT)
+        let params = ConsensusParams::default();
+        Self::with_pricing(params.default_tx_gas_limit, GasPricing::from(&params))
     }
 
     /// Charge gas for an operation. Returns error if limit exceeded.
@@ -118,50 +161,50 @@ impl GasMeter {
 
     /// Charge for compute steps.
     pub fn charge_compute(&mut self, steps: u64) -> Result<(), GasError> {
-        let cost = steps.saturating_mul(costs::COMPUTE_STEP);
+        let cost = steps.saturating_mul(self.pricing.compute_step);
         self.breakdown.compute += cost;
         self.charge(cost, "compute")
     }
 
     /// Charge for a state read.
     pub fn charge_state_read(&mut self) -> Result<(), GasError> {
-        self.breakdown.state_reads += costs::STATE_READ;
-        self.charge(costs::STATE_READ, "state_read")
+        self.breakdown.state_reads += self.pricing.state_read;
+        self.charge(self.pricing.state_read, "state_read")
     }
 
     /// Charge for a state write.
     pub fn charge_state_write(&mut self) -> Result<(), GasError> {
-        self.breakdown.state_writes += costs::STATE_WRITE;
-        self.charge(costs::STATE_WRITE, "state_write")
+        self.breakdown.state_writes += self.pricing.state_write;
+        self.charge(self.pricing.state_write, "state_write")
     }
 
     /// Charge for signature verification.
     pub fn charge_sig_verify(&mut self) -> Result<(), GasError> {
-        self.breakdown.sig_verify += costs::SIG_VERIFY;
-        self.charge(costs::SIG_VERIFY, "sig_verify")
+        self.breakdown.sig_verify += self.pricing.sig_verify;
+        self.charge(self.pricing.sig_verify, "sig_verify")
     }
 
     /// Charge for hashing.
     pub fn charge_hash(&mut self) -> Result<(), GasError> {
-        self.breakdown.hashing += costs::HASH_OP;
-        self.charge(costs::HASH_OP, "hash")
+        self.breakdown.hashing += self.pricing.hash_op;
+        self.charge(self.pricing.hash_op, "hash")
     }
 
     /// Charge for proof data (per byte).
     pub fn charge_proof_bytes(&mut self, bytes: u64) -> Result<(), GasError> {
-        let cost = bytes.saturating_mul(costs::PROOF_BYTE);
+        let cost = bytes.saturating_mul(self.pricing.proof_byte);
         self.breakdown.proof += cost;
         self.charge(cost, "proof_data")
     }
 
     /// Charge base transaction overhead.
     pub fn charge_tx_base(&mut self) -> Result<(), GasError> {
-        self.charge(costs::TX_BASE, "tx_base")
+        self.charge(self.pricing.tx_base, "tx_base")
     }
 
     /// Charge for payload bytes.
     pub fn charge_payload(&mut self, bytes: u64) -> Result<(), GasError> {
-        self.charge(bytes.saturating_mul(costs::PAYLOAD_BYTE), "payload")
+        self.charge(bytes.saturating_mul(self.pricing.payload_byte), "payload")
     }
 
     /// Gas remaining before limit.
@@ -195,7 +238,7 @@ impl BlockGasMeter {
     }
 
     pub fn default_block() -> Self {
-        Self::new(costs::DEFAULT_BLOCK_LIMIT)
+        Self::new(ConsensusParams::default().default_block_gas_limit)
     }
 
     /// Check if a transaction with this gas cost fits in the block.
@@ -281,5 +324,50 @@ mod tests {
         assert!(block.can_fit(50));
         block.record_tx(50);
         assert!(!block.can_fit(1)); // Full.
+    }
+
+    #[test]
+    fn test_gas_meter_uses_custom_pricing() {
+        let pricing = GasPricing {
+            tx_base: 7,
+            compute_step: 2,
+            state_read: 3,
+            state_write: 5,
+            sig_verify: 11,
+            hash_op: 13,
+            proof_byte: 17,
+            payload_byte: 19,
+        };
+        let mut meter = GasMeter::with_pricing(10_000, pricing);
+
+        meter.charge_tx_base().unwrap();
+        meter.charge_payload(2).unwrap();
+        meter.charge_sig_verify().unwrap();
+        meter.charge_hash().unwrap();
+        meter.charge_compute(4).unwrap();
+
+        assert_eq!(meter.used, 7 + 38 + 11 + 13 + 8);
+        assert_eq!(meter.breakdown.compute, 8);
+        assert_eq!(meter.breakdown.sig_verify, 11);
+        assert_eq!(meter.pricing.payload_byte, 19);
+    }
+
+    #[test]
+    fn test_default_tx_meter_matches_consensus_defaults() {
+        let params = ConsensusParams::default();
+        let meter = GasMeter::default_tx();
+
+        assert_eq!(meter.limit, params.default_tx_gas_limit);
+        assert_eq!(meter.pricing, GasPricing::from(&params));
+    }
+
+    #[test]
+    fn test_default_block_meter_matches_consensus_defaults() {
+        let params = ConsensusParams::default();
+        let meter = BlockGasMeter::default_block();
+
+        assert_eq!(meter.limit, params.default_block_gas_limit);
+        assert_eq!(meter.used, 0);
+        assert_eq!(meter.tx_count, 0);
     }
 }
