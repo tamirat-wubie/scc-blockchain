@@ -81,7 +81,9 @@ impl NormRegistry {
         // Update population shares: p_ν(t+1) = p_ν(t) · F(ν) / F̄.
         // Uses safe division to prevent overflow.
         for id in &active_norms {
-            let norm = self.norms.get_mut(id).unwrap();
+            let Some(norm) = self.norms.get_mut(id) else {
+                continue;
+            };
             let numerator = norm.population_share.mul_fp(fitnesses[id]);
             // Safe fixed-point division: (num / mean) with SCALE preservation.
             // Restructure as (num / mean) * SCALE to avoid intermediate overflow.
@@ -104,7 +106,9 @@ impl NormRegistry {
             .sum();
         if total > 0 {
             for id in &active_norms {
-                let norm = self.norms.get_mut(id).unwrap();
+                let Some(norm) = self.norms.get_mut(id) else {
+                    continue;
+                };
                 let raw = norm
                     .population_share
                     .raw()
