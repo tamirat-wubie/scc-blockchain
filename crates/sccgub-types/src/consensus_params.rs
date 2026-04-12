@@ -111,12 +111,49 @@ impl ConsensusParams {
     }
 
     /// Deserialize from canonical bincode read out of the trie.
+    /// Runs bounds validation after deserialization (defense-in-depth).
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes)
+        let params: Self = bincode::deserialize(bytes)
             .or_else(|_| {
                 bincode::deserialize::<LegacyConsensusParamsV1>(bytes).map(ConsensusParams::from)
             })
-            .map_err(|e| format!("ConsensusParams deserialization: {}", e))
+            .map_err(|e| format!("ConsensusParams deserialization: {}", e))?;
+        params.validate()?;
+        Ok(params)
+    }
+
+    /// Bounds validation for deserialized consensus params.
+    ///
+    /// Rejects values that would make the chain unusable or create
+    /// resource-exhaustion vectors. State-root replay already protects
+    /// against tampered params from untrusted sources, but bounds
+    /// validation catches bugs in genesis construction or migration.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_proof_depth == 0 || self.max_proof_depth > 100_000 {
+            return Err(format!(
+                "max_proof_depth {} out of bounds (1..100000)",
+                self.max_proof_depth
+            ));
+        }
+        if self.default_tx_gas_limit == 0 {
+            return Err("default_tx_gas_limit must be > 0".into());
+        }
+        if self.default_block_gas_limit < self.default_tx_gas_limit {
+            return Err(format!(
+                "default_block_gas_limit {} < default_tx_gas_limit {}",
+                self.default_block_gas_limit, self.default_tx_gas_limit
+            ));
+        }
+        if self.max_state_entry_size == 0 {
+            return Err("max_state_entry_size must be > 0".into());
+        }
+        if self.max_symbol_address_len == 0 {
+            return Err("max_symbol_address_len must be > 0".into());
+        }
+        if self.max_tension_swing <= 0 {
+            return Err("max_tension_swing must be > 0".into());
+        }
+        Ok(())
     }
 }
 
@@ -249,5 +286,39 @@ mod tests {
         assert_eq!(parsed.default_tx_gas_limit, 444);
         assert_eq!(parsed.max_state_entry_size, 1234);
         assert_eq!(parsed.max_tension_swing, 2_000_000);
+    }
+
+    #[test]
+    fn default_passes_validation() {
+        assert!(ConsensusParams::default().validate().is_ok());
+    }
+
+    #[test]
+    fn zero_proof_depth_rejected() {
+        let mut p = ConsensusParams::default();
+        p.max_proof_depth = 0;
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn extreme_proof_depth_rejected() {
+        let mut p = ConsensusParams::default();
+        p.max_proof_depth = 999_999;
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn block_gas_below_tx_gas_rejected() {
+        let mut p = ConsensusParams::default();
+        p.default_block_gas_limit = 100;
+        p.default_tx_gas_limit = 1_000;
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn zero_state_entry_size_rejected() {
+        let mut p = ConsensusParams::default();
+        p.max_state_entry_size = 0;
+        assert!(p.validate().is_err());
     }
 }

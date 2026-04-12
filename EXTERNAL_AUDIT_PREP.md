@@ -154,8 +154,8 @@ Changing this table is a **hard fork**. The exhaustive test `no_kind_can_write_t
 
 ## 7. Audit Findings Summary
 
-Internal audit cycle plus 4 hardening passes identified 43 tracked findings:
-- **43 closed** (all code fixes applied and verified)
+Internal audit cycle plus 5 hardening passes identified 48 tracked findings:
+- **48 closed** (all code fixes applied and verified)
 
 ### F-5 lifecycle (worth noting for credibility)
 
@@ -189,6 +189,17 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-15: Phase 6 (Organization) drift — governance precedence enforcement missing from tx path. Medium severity: DoS surface where governance-kind txs with insufficient authority were accepted into the mempool unchecked. Fixed.
 - N-16: Phase 8 (Execution) drift — inconsistent completeness checks between paths. Unified.
 
+### Post-Patch03 hardening (5th sweep):
+- N-17: Gas loop pre-filters (solvency + nonce) produced no receipt on rejection. Fixed with `make_prefilter_reject_receipt`.
+- N-18: `admit_check` payload size check only covered Write. DeployContract/InvokeContract payloads could be unbounded. Fixed with per-variant size checks.
+- N-19: `gas.charge_compute(13)` result silently discarded. Fixed to return reject receipt.
+- N-21: `balances_from_trie` silently skipped malformed hex entries. Fixed to fail-closed on import.
+- N-23: Block reward credited before CPoG validation, causing state-root divergence. Moved to commit phase.
+- N-24: `save_metadata` used `.unwrap()` on serde_json. Replaced with `.map_err()?`.
+- N-25: `handle_block_response` silently discarded import errors. Now logs with `tracing::warn`.
+- N-26: `key_passphrase` stored plaintext in config. Added security warning, recommend env var.
+- N-13 extended: removed last 2 unwraps in governance crate (norms.rs) and 2 in consensus crate (partition.rs).
+
 ### N-3-mempool closed:
 - Mempool admission refactored to `admit_check()` (lightweight structural checks).
 - All Phi-phase semantic checks moved to the gas loop (`validate_transition_metered`),
@@ -212,17 +223,30 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
   now commit into trie-backed state and replay identically in block production, CPoG,
   `from_blocks()`, and snapshot restoration.
 
-### Dismissed false positives (6):
-Aggressive automated tooling flagged 6 items that were verified as non-issues:
+### Dismissed false positives (12):
+Aggressive automated tooling across 2 sweeps flagged 12 items verified as non-issues:
+
+**Sweep 1 (post-refactor):**
 
 | Claim | Why dismissed |
 |---|---|
-| TOCTOU in nonce check | `check_nonce` mutates `filter_state` (a clone), not real state. Intentional for same-block ordering. |
+| TOCTOU in nonce check (later reclassified) | Originally dismissed because `check_nonce` mutates a clone. **Reclassified as real bug** when N-9 test exposed it — the clone mutation caused duplicate nonce rejection in the gas loop. Fixed by making pre-filter read-only. |
 | Transfer failure corrupts state | `transfer()` returns `Err`; ledger unchanged. The `eprintln` is a consensus-bug detector. |
 | TensionValue overflow | All ops use saturating arithmetic (Add, Sub, mul_fp). Verified in type definition. |
-| Hex injection via balance/ keys | Ontology table maps `StateWrite => [data/]` only. Any Write targeting `balance/` rejected at Phase 3. |
+| Hex injection via balance/ keys | Ontology table maps `StateWrite => [data/]` only. Any Write targeting `balance/` rejected at Phase 3. Snapshot-layer concern separately closed as N-21. |
 | Module phase 7 auto-passes | By design; per-tx module checks are a future item for richer contract semantics. |
 | `unreachable!` can panic | Both callers filter via `is_per_tx_phase()` before calling. Structurally guarded. |
+
+**Sweep 2 (post-Patch03):**
+
+| Claim | Why dismissed |
+|---|---|
+| CPoG doesn't validate consensus_params | State-root replay IS the validation. Tampered params produce a different root; CPoG rejects. |
+| Malicious snapshot injects params | `from_blocks` validates every block via CPoG. Snapshot restore is local persistence recovery, not untrusted import. |
+| Uninitialized default code path | `from_blocks` loads params at genesis via `load_genesis_consensus_params`. `Chain::init()` writes them. Only test code uses `ManagedWorldState::new()` defaults. |
+| Fee multiplication overflow | `saturating_mul` is the correct choice — caps at MAX rather than wrapping. |
+| TensionValue arithmetic unchecked | Already verified saturating in previous audit sweep. |
+| Treasury key matching fragility | Design debt, same module reads and writes. Not a correctness issue. |
 
 ## 8. Test Coverage Strategy
 
