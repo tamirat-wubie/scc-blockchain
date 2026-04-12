@@ -32,6 +32,7 @@ use crate::config::NetworkConfig;
 
 const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
+const CONNECT_BACKOFF_MS: u64 = 5_000;
 
 pub struct NetworkRuntime {
     chain: Arc<RwLock<Chain>>,
@@ -47,6 +48,7 @@ pub struct NetworkRuntime {
     rate_limits: Arc<Mutex<HashMap<String, RateState>>>,
     bandwidth: Arc<Mutex<HashMap<String, BandwidthState>>>,
     peer_seeds: Arc<Mutex<HashSet<String>>>,
+    peer_connect_backoff: Arc<Mutex<HashMap<String, u64>>>,
     validator_set: HashMap<Hash, [u8; 32]>,
     validator_key: ed25519_dalek::SigningKey,
     validator_id: Hash,
@@ -113,6 +115,7 @@ impl NetworkRuntime {
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             bandwidth: Arc::new(Mutex::new(HashMap::new())),
             peer_seeds: Arc::new(Mutex::new(peer_seeds)),
+            peer_connect_backoff: Arc::new(Mutex::new(HashMap::new())),
             validator_set,
             validator_key,
             validator_id,
@@ -256,18 +259,39 @@ impl NetworkRuntime {
                 peers
             };
             for peer_addr in peers {
+                if peer_addr == format!("{}:{}", self.config.bind, self.config.port) {
+                    continue;
+                }
                 let known = { self.connections.lock().await.contains_key(&peer_addr) };
                 if known {
+                    continue;
+                }
+                let now = now_ms();
+                let backoff_until = {
+                    let backoff = self.peer_connect_backoff.lock().await;
+                    backoff
+                        .get(&peer_addr)
+                        .copied()
+                        .unwrap_or_default()
+                        .saturating_add(CONNECT_BACKOFF_MS)
+                };
+                if now < backoff_until {
                     continue;
                 }
                 let runtime = self.clone();
                 tokio::spawn(async move {
                     match TcpStream::connect(&peer_addr).await {
                         Ok(stream) => {
+                            runtime.peer_connect_backoff.lock().await.remove(&peer_addr);
                             runtime.handle_connection(stream, peer_addr, false).await;
                         }
                         Err(e) => {
                             tracing::warn!("Failed to connect to {}: {}", peer_addr, e);
+                            runtime
+                                .peer_connect_backoff
+                                .lock()
+                                .await
+                                .insert(peer_addr, now_ms());
                         }
                     }
                 });
