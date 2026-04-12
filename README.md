@@ -38,7 +38,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 ## Known Limits (MVP)
 
 - **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator.
-- **Replay-authoritative state:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts, but there is no fully durable state database.
+- **Replay-authoritative state:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional sled-backed state store can mirror the trie, but replay remains authoritative.
 - **P2P networking is minimal:** Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits.
 - **No ZK/privacy layer:** Placeholder types exist (ZkCommitment) but no implementation.
 - **ContractInvoke namespace is loose:** Maps to both `contract/` and `data/`; should tighten to per-contract namespace.
@@ -73,7 +73,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Governance transitions:** parameter proposals use `norms/governance/params/propose` with payload `key=value`, votes use `norms/governance/proposals/...`
 - **Economics:** Gas metering, treasury (fee/reward/burn lifecycle), escrow/DvP
 - **Custody:** 6 operator key roles (Genesis/Governance/Treasury/Validator/Operator/Auditor)
-- **Persistence:** Replay-authoritative world state backed by on-disk blocks, encrypted validator keystore, chain metadata, and periodic snapshots (API reads live-sync to in-process state when event hooks are active; default sync throttle 250ms via `api_sync.min_interval_ms`)
+- **Persistence:** Replay-authoritative world state backed by on-disk blocks, encrypted validator keystore, chain metadata, and periodic snapshots, with an optional sled-backed state store mirror (API reads live-sync to in-process state when event hooks are active; default sync throttle 250ms via `api_sync.min_interval_ms`)
 - **Consensus parameters:** Canonical `ConsensusParams` embedded in genesis, committed under `system/consensus_params`, restored during import + snapshot recovery, and used for proof depth, SCCE propagation bounds, contract default step limits, gas schedule + limits, and validation size caps
 - **Keystore:** Argon2id KDF + ChaCha20-Poly1305 AEAD (finance-grade)
 - **Arithmetic:** Fixed-point i128 (18 decimals) — no floating-point in consensus

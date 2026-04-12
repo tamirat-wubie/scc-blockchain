@@ -47,7 +47,7 @@ All notable changes to SCCGUB are documented here.
 
 #### Known Limits (MVP)
 - Default single-proposer mode when no validator set is configured
-- Replay-authoritative state without a fully durable state database
+- Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)
 - ContractInvoke namespace still maps to both `contract/` and `data/`
