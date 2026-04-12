@@ -7,12 +7,6 @@ use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
 
 use crate::trie::StateTrie;
 
-/// Maximum allowed key or value size (1 MB).
-///
-/// Patch 03 migration: this constant is preserved for backward compatibility.
-/// New code should prefer `state.consensus_params.max_state_entry_size`.
-pub const MAX_STATE_ENTRY_SIZE: usize = 1_048_576;
-
 /// Managed world state with an underlying Merkle trie and nonce tracking.
 #[derive(Debug, Clone)]
 pub struct ManagedWorldState {

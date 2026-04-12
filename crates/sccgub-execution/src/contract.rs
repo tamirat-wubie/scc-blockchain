@@ -4,10 +4,6 @@ use sccgub_types::receipt::Verdict;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{StateDelta, StateWrite, SymbolicTransition};
 
-/// Legacy fallback computation-step bound preserved for compatibility.
-/// New runtime callers should use `default_max_steps_for_state()`.
-pub const DEFAULT_MAX_STEPS: u64 = 10_000;
-
 pub fn default_max_steps_for_state(state: &ManagedWorldState) -> u64 {
     state.consensus_params.default_max_steps
 }
