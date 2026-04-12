@@ -558,10 +558,7 @@ impl NetworkRuntime {
             .await
     }
 
-    async fn handle_finality_certificate(
-        &self,
-        cert: SafetyCertificate,
-    ) -> Result<(), String> {
+    async fn handle_finality_certificate(&self, cert: SafetyCertificate) -> Result<(), String> {
         cert.verify_cryptographic(&self.validator_set)?;
         let mut chain = self.chain.write().await;
         let known = chain
