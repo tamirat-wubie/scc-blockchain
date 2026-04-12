@@ -70,8 +70,25 @@ impl PartitionDetector {
             };
         }
 
-        let min = *self.validator_heights.values().min().unwrap();
-        let max = *self.validator_heights.values().max().unwrap();
+        // Safe: early return on empty map above guarantees values() is non-empty.
+        let min = match self.validator_heights.values().min() {
+            Some(&v) => v,
+            None => {
+                return PartitionStatus::Healthy {
+                    min_height: 0,
+                    max_height: 0,
+                }
+            }
+        };
+        let max = match self.validator_heights.values().max() {
+            Some(&v) => v,
+            None => {
+                return PartitionStatus::Healthy {
+                    min_height: 0,
+                    max_height: 0,
+                }
+            }
+        };
 
         if max - min <= config.divergence_threshold {
             return PartitionStatus::Healthy {
