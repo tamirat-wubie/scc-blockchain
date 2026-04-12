@@ -682,7 +682,7 @@ impl Chain {
                 .check_nonce(&tx.actor.agent_id, tx.nonce)
                 .map_err(|e| format!("Nonce violation: {}", e))?;
         }
-        if block.header.height % 100 == 0 {
+        if block.header.height.is_multiple_of(100) {
             self.treasury.advance_epoch();
             commit_treasury_state(&mut self.state, &self.treasury);
         }
@@ -695,7 +695,7 @@ impl Chain {
         // Record proposer for anti-concentration tracking.
         self.power_tracker
             .record_proposal(&block.header.validator_id);
-        if block.header.height % 100 == 0 {
+        if block.header.height.is_multiple_of(100) {
             self.power_tracker.reset_epoch();
             self.economics.reset_epoch();
         }
@@ -1324,7 +1324,7 @@ impl Chain {
             self.state.trie.insert(key.clone(), value.clone());
         }
         self.state.consensus_params = consensus_params_from_trie(&self.state)
-            .unwrap_or_else(|_| None)
+            .unwrap_or(None)
             .unwrap_or_default();
         for (agent_id, nonce) in &snapshot.agent_nonces {
             self.state.agent_nonces.insert(*agent_id, *nonce);
@@ -1340,7 +1340,7 @@ impl Chain {
 
         // Restore treasury from the trie when available, with snapshot-field
         // fallback for older snapshots created before treasury keys were committed.
-        self.treasury = treasury_from_trie(&self.state).unwrap_or_else(|_| Treasury {
+        self.treasury = treasury_from_trie(&self.state).unwrap_or(Treasury {
             pending_fees: TensionValue(snapshot.treasury_pending_raw),
             total_fees_collected: TensionValue(snapshot.treasury_collected_raw),
             total_rewards_distributed: TensionValue(snapshot.treasury_distributed_raw),
