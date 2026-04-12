@@ -252,17 +252,17 @@ fn restore_snapshot_if_available(
     chain: &mut Chain,
     allow_restore: bool,
     durable_store: Option<std::sync::Arc<dyn sccgub_state::store::StateStore>>,
-) {
+) -> bool {
     if !allow_restore {
-        return;
+        return false;
     }
 
     let snapshot = match store.load_latest_snapshot() {
         Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return,
+        Ok(None) => return false,
         Err(e) => {
             eprintln!("Warning: snapshot load failed: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -272,7 +272,7 @@ fn restore_snapshot_if_available(
             snapshot.height,
             chain.height()
         );
-        return;
+        return false;
     }
 
     let Some(block) = chain.blocks.get(snapshot.height as usize) else {
@@ -280,7 +280,7 @@ fn restore_snapshot_if_available(
             "Warning: snapshot height {} is out of range; skipping restore.",
             snapshot.height
         );
-        return;
+        return false;
     };
 
     if snapshot.state_root != block.header.state_root {
@@ -288,7 +288,7 @@ fn restore_snapshot_if_available(
             "Warning: snapshot state root mismatch at height {}; skipping restore.",
             snapshot.height
         );
-        return;
+        return false;
     }
 
     let mut balances = sccgub_state::balances::BalanceLedger::new();
@@ -301,16 +301,19 @@ fn restore_snapshot_if_available(
             "Warning: snapshot balance root mismatch at height {}; skipping restore.",
             snapshot.height
         );
-        return;
+        return false;
     }
 
     if let Some(store) = durable_store {
         if let Err(e) = chain.restore_from_snapshot_with_store(&snapshot, store) {
             eprintln!("Warning: snapshot restore with store failed: {}", e);
+            return false;
         }
     } else {
         chain.restore_from_snapshot(&snapshot);
     }
+
+    true
 }
 
 fn bind_state_store_if_enabled(
@@ -366,6 +369,25 @@ fn bind_state_store_if_enabled(
     }
 
     Some(state_store)
+}
+
+fn bind_state_store_for_snapshot(
+    store: &ChainStore,
+    config: &config::NodeConfig,
+) -> Option<std::sync::Arc<dyn sccgub_state::store::StateStore>> {
+    if !config.storage.state_store_enabled {
+        return None;
+    }
+
+    match store.open_state_store(&config.storage) {
+        Ok(store) => {
+            Some(std::sync::Arc::new(store) as std::sync::Arc<dyn sccgub_state::store::StateStore>)
+        }
+        Err(e) => {
+            eprintln!("Warning: state store open failed: {}", e);
+            None
+        }
+    }
 }
 
 fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphrase: &str) {
@@ -443,8 +465,11 @@ fn cmd_produce(
         std::process::exit(1);
     });
 
-    let durable_store = bind_state_store_if_enabled(&store, &mut chain, &config);
-    restore_snapshot_if_available(&store, &mut chain, true, durable_store);
+    let durable_store = bind_state_store_for_snapshot(&store, &config);
+    let restored = restore_snapshot_if_available(&store, &mut chain, true, durable_store.clone());
+    if !restored {
+        let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
+    }
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
@@ -1460,13 +1485,16 @@ async fn cmd_serve(
             std::process::exit(1);
         }
     };
-    let durable_store = bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
-    restore_snapshot_if_available(
+    let durable_store = bind_state_store_for_snapshot(store.as_ref(), &config);
+    let restored = restore_snapshot_if_available(
         store.as_ref(),
         &mut chain,
         config.storage.snapshot_restore_enabled,
-        durable_store,
+        durable_store.clone(),
     );
+    if !restored {
+        let _ = bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
+    }
     if store.has_validator_key() {
         if let Ok(key) = store.load_validator_key(passphrase) {
             chain.set_validator_key(key);
