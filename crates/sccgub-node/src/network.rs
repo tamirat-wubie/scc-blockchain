@@ -1373,12 +1373,39 @@ mod tests {
     use sccgub_types::governance::FinalityMode;
     use sccgub_types::tension::TensionValue;
     use std::fs;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{sleep, Duration, Instant};
 
     fn default_network_config_with_validator(pk: &[u8; 32]) -> NetworkConfig {
         let mut config = crate::config::NodeConfig::default().network;
         config.validators = vec![hex::encode(pk)];
         config
+    }
+
+    async fn wait_for_persisted_height(store: &ChainStore, height: u64, timeout_ms: u64) -> bool {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if let Ok(Some(latest)) = store.latest_height() {
+                if latest >= height {
+                    return true;
+                }
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        false
+    }
+
+    async fn wait_for_snapshot(
+        store: &ChainStore,
+        timeout_ms: u64,
+    ) -> Option<crate::persistence::StateSnapshot> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if let Ok(Some(snapshot)) = store.load_latest_snapshot() {
+                return Some(snapshot);
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        None
     }
 
     #[tokio::test]
@@ -1720,16 +1747,8 @@ mod tests {
                 );
             }
 
-            let mut persisted = false;
-            for _ in 0..50 {
-                if let Ok(Some(height)) = store.latest_height() {
-                    if height >= block.header.height {
-                        persisted = true;
-                        break;
-                    }
-                }
-                sleep(Duration::from_millis(20)).await;
-            }
+            let persisted =
+                wait_for_persisted_height(store.as_ref(), block.header.height, 5_000).await;
             assert!(
                 persisted,
                 "Expected persisted block at height {}",
@@ -1738,9 +1757,8 @@ mod tests {
         }
 
         let blocks = store.load_all_blocks().unwrap();
-        let snapshot = store
-            .load_latest_snapshot()
-            .unwrap()
+        let snapshot = wait_for_snapshot(store.as_ref(), 5_000)
+            .await
             .expect("expected snapshot for restart");
         let mut replayed = Chain::from_blocks(blocks).unwrap();
 
