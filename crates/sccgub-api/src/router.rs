@@ -15,6 +15,7 @@ use crate::handlers::{self, SharedState};
 ///   GET  /api/v1/slashing/evidence/{validator_id} â€” validator evidence
 ///   GET  /api/v1/status           — chain summary
 ///   GET  /api/v1/health           — system health + finality
+///   GET  /api/v1/finality/certificates — finality safety certificates
 ///   GET  /api/v1/network/peers    — peer network stats
 ///   GET  /api/v1/network/peers/{validator_id} — peer detail
 ///   GET  /api/v1/block/:height    — block detail with transactions
