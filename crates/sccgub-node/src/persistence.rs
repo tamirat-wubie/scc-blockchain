@@ -208,6 +208,42 @@ impl ChainStore {
         self.validator_key_path().exists()
     }
 
+    /// Save consensus round state for crash recovery.
+    /// Persisted after each vote or round advancement so a restarted
+    /// validator can rejoin the current round without re-voting.
+    pub fn save_consensus_state(
+        &self,
+        rounds: &std::collections::HashMap<u64, serde_json::Value>,
+    ) -> std::io::Result<()> {
+        let path = self.base_dir.join("consensus_rounds.json");
+        let tmp_path = self.base_dir.join("consensus_rounds.json.tmp");
+        let json = serde_json::to_string(rounds).map_err(std::io::Error::other)?;
+        fs::write(&tmp_path, json)?;
+        fs::rename(&tmp_path, &path)
+    }
+
+    /// Load persisted consensus round state on restart.
+    /// Returns empty map if no state exists (clean start).
+    pub fn load_consensus_state(
+        &self,
+    ) -> std::io::Result<std::collections::HashMap<u64, serde_json::Value>> {
+        let path = self.base_dir.join("consensus_rounds.json");
+        if !path.exists() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let data = fs::read_to_string(&path)?;
+        serde_json::from_str(&data).map_err(std::io::Error::other)
+    }
+
+    /// Clear persisted consensus state (after successful finalization).
+    pub fn clear_consensus_state(&self) -> std::io::Result<()> {
+        let path = self.base_dir.join("consensus_rounds.json");
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
     /// Save a state snapshot at a given height.
     /// Snapshots contain the full state trie + nonces + balances, enabling
     /// fast chain load without replaying all blocks from genesis.

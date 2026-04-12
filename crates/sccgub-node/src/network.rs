@@ -53,6 +53,8 @@ pub struct NetworkRuntime {
     chain_id: Hash,
 }
 
+/// Consensus round state — persisted to survive validator restarts.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RoundState {
     round: ConsensusRound,
     last_round_ms: u64,
@@ -132,6 +134,21 @@ impl NetworkRuntime {
         self.store = Some(store);
         self.snapshot_interval = snapshot_interval;
         self
+    }
+
+    /// Persist current consensus round state to disk for crash recovery.
+    async fn persist_consensus_state(&self) {
+        if let Some(store) = &self.store {
+            let rounds = self.consensus_rounds.lock().await;
+            let serializable: std::collections::HashMap<u64, serde_json::Value> = rounds
+                .iter()
+                .filter_map(|(h, s)| serde_json::to_value(s).ok().map(|v| (*h, v)))
+                .collect();
+            drop(rounds);
+            if let Err(e) = store.save_consensus_state(&serializable) {
+                tracing::warn!("Failed to persist consensus state: {}", e);
+            }
+        }
     }
 
     pub async fn run(self: Arc<Self>) -> Result<(), String> {
@@ -466,6 +483,7 @@ impl NetworkRuntime {
             self.broadcast(NetworkMessage::ConsensusVote(vote)).await;
         }
         drop(rounds);
+        self.persist_consensus_state().await;
         self.maybe_advance_consensus(height).await?;
         Ok(())
     }
@@ -978,6 +996,10 @@ impl NetworkRuntime {
                 }
             }
             self.consensus_rounds.lock().await.remove(&height);
+            // Clear persisted consensus state after successful finalization.
+            if let Some(store) = &self.store {
+                let _ = store.clear_consensus_state();
+            }
         }
         Ok(())
     }

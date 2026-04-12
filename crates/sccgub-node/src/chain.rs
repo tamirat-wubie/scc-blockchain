@@ -1470,6 +1470,49 @@ impl Chain {
     }
 
     fn apply_governance_parameter(&mut self, key: &str, value: &str) -> Result<(), String> {
+        // Validator set changes are handled here (need &mut self for validator_set).
+        if key == "validators.add" {
+            let pk_hex = value.trim();
+            let pk_bytes =
+                hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
+            if pk_bytes.len() != 32 {
+                return Err("Validator pubkey must be 32 bytes".into());
+            }
+            let mut node_id = [0u8; 32];
+            node_id.copy_from_slice(&pk_bytes);
+            // Don't add duplicates.
+            if self.validator_set.iter().any(|v| v.node_id == node_id) {
+                return Ok(()); // Already present, no-op.
+            }
+            self.validator_set
+                .push(sccgub_types::agent::ValidatorAuthority {
+                    node_id,
+                    governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                    norm_compliance: sccgub_types::tension::TensionValue::from_integer(1),
+                    causal_reliability: sccgub_types::tension::TensionValue::from_integer(1),
+                    active: true,
+                });
+            self.validator_set.sort_by_key(|v| v.node_id);
+            tracing::info!("Governance: added validator {}", pk_hex);
+            return Ok(());
+        }
+        if key == "validators.remove" {
+            let pk_hex = value.trim();
+            let pk_bytes =
+                hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
+            if pk_bytes.len() != 32 {
+                return Err("Validator pubkey must be 32 bytes".into());
+            }
+            let mut node_id = [0u8; 32];
+            node_id.copy_from_slice(&pk_bytes);
+            let before = self.validator_set.len();
+            self.validator_set.retain(|v| v.node_id != node_id);
+            if self.validator_set.len() < before {
+                tracing::info!("Governance: removed validator {}", pk_hex);
+            }
+            return Ok(());
+        }
+
         apply_governance_parameter_static(
             &mut self.governance_limits,
             &mut self.finality_config,

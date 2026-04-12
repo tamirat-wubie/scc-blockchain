@@ -1304,3 +1304,90 @@ fn test_escrow_wrong_value_does_not_release() {
         "Bob must not receive funds"
     );
 }
+
+// ── Adversarial chaos tests ───────────────────────────────────────────
+
+#[test]
+fn test_double_vote_detected_and_slashed() {
+    // A validator votes for two different blocks at the same height.
+    // The system must detect the equivocation and slash the validator.
+    let mut engine = SlashingEngine::new(SlashingConfig::default());
+    let validator = [7u8; 32];
+    engine.set_stake(validator, TensionValue::from_integer(1000));
+
+    let proof = EquivocationProof {
+        validator_id: validator,
+        height: 42,
+        round: 0,
+        vote_type: VoteType::Prevote,
+        block_hash_a: [1u8; 32],
+        block_hash_b: [2u8; 32],
+    };
+
+    let event = engine.slash_double_sign(proof, 5).unwrap();
+    // 32% penalty.
+    assert_eq!(event.penalty, TensionValue::from_integer(320));
+    assert_eq!(engine.stakes[&validator], TensionValue::from_integer(680));
+}
+
+// Chain-dependent adversarial tests (corrupted block CPoG rejection,
+// replay determinism, fork choice) live in chain.rs tests module where
+// they have access to the private Chain type.
+
+#[test]
+fn test_validator_absence_accumulates_and_removes() {
+    // A validator that's offline for too many epochs gets progressively
+    // slashed and eventually removed.
+    let mut engine = SlashingEngine::new(SlashingConfig {
+        max_absence_epochs: 5,
+        absence_penalty_pct_per_epoch: 5,
+        ..Default::default()
+    });
+    let validator = [8u8; 32];
+    engine.set_stake(validator, TensionValue::from_integer(1000));
+
+    // Miss 4 epochs — should be penalized but not removed.
+    for epoch in 1..=4 {
+        engine.record_absence(validator, epoch);
+    }
+    assert!(
+        !engine.is_removed(&validator),
+        "4 absences: not yet removed"
+    );
+    assert!(
+        engine.stakes[&validator].raw() < TensionValue::from_integer(1000).raw(),
+        "Stake must decrease after absences"
+    );
+
+    // Miss 5th epoch — should be removed.
+    engine.record_absence(validator, 5);
+    assert!(engine.is_removed(&validator), "5 absences: must be removed");
+}
+
+#[test]
+fn test_presence_resets_absence_counter_prevents_removal() {
+    // A validator that comes back online before the threshold
+    // should not be removed.
+    let mut engine = SlashingEngine::new(SlashingConfig {
+        max_absence_epochs: 3,
+        absence_penalty_pct_per_epoch: 1,
+        ..Default::default()
+    });
+    let validator = [9u8; 32];
+    engine.set_stake(validator, TensionValue::from_integer(1000));
+
+    engine.record_absence(validator, 1);
+    engine.record_absence(validator, 2);
+    engine.record_presence(&validator); // Comes back online.
+    engine.record_absence(validator, 4);
+    engine.record_absence(validator, 5);
+
+    // Only 2 consecutive absences after presence reset — not removed.
+    assert!(
+        !engine.is_removed(&validator),
+        "Presence reset must prevent removal"
+    );
+}
+
+// Replay determinism and fork choice tests are in chain.rs tests module
+// (test_chain_from_blocks_replay, test_fork_choice_*).
