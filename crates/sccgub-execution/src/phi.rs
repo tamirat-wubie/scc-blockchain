@@ -25,7 +25,7 @@
 // Form(5), Organization(6), Module(7), Execution(8).
 
 use sccgub_state::world::ManagedWorldState;
-use sccgub_types::block::Block;
+use sccgub_types::block::{is_supported_block_version, Block};
 use sccgub_types::causal::CausalVertex;
 use sccgub_types::proof::{PhiPhase, PhiPhaseResult, PhiTraversalLog};
 use sccgub_types::tension::TensionValue;
@@ -66,7 +66,13 @@ pub fn phi_check_single_tx(
         // Phase 2: Constraint — SCCE validation.
         PhiPhase::Constraint => {
             let weights = ConstraintWeights::default();
-            let result = scce_validate(tx, state, &weights, 32, 10_000);
+            let result = scce_validate(
+                tx,
+                state,
+                &weights,
+                state.consensus_params.max_constraint_propagation_depth,
+                state.consensus_params.max_constraint_propagation_steps,
+            );
             PhiPhaseResult {
                 phase,
                 passed: result.valid,
@@ -113,7 +119,8 @@ pub fn phi_check_single_tx(
                     ),
                 };
             }
-            let addr_ok = tx.intent.target.len() <= sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
+            let addr_ok =
+                tx.intent.target.len() <= state.consensus_params.max_symbol_address_len as usize;
             PhiPhaseResult {
                 phase,
                 passed: addr_ok,
@@ -280,7 +287,7 @@ fn execute_block_phase(
         PhiPhase::Body => phase_body(block, state),
         PhiPhase::Architecture => phase_architecture(block),
         PhiPhase::Performance => phase_performance(block),
-        PhiPhase::Feedback => phase_feedback(block),
+        PhiPhase::Feedback => phase_feedback(block, state),
         PhiPhase::Evolution => phase_evolution(block),
         // Per-tx phases handled above; this arm is unreachable.
         _ => unreachable!(),
@@ -352,12 +359,12 @@ fn phase_architecture(block: &Block) -> PhiPhaseResult {
         };
     }
 
-    if block.header.version == 0 || block.header.version > 1 {
+    if !is_supported_block_version(block.header.version) {
         return PhiPhaseResult {
             phase: PhiPhase::Architecture,
             passed: false,
             details: format!(
-                "Unsupported block version {}, expected 1",
+                "Unsupported block version {}, expected 1 or 2",
                 block.header.version
             ),
         };
@@ -427,7 +434,7 @@ fn phase_performance(block: &Block) -> PhiPhaseResult {
     }
 }
 
-fn phase_feedback(block: &Block) -> PhiPhaseResult {
+fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     // Feedback loop stability: tension must not swing wildly between blocks.
     let delta = if block.header.tension_after >= block.header.tension_before {
         block.header.tension_after - block.header.tension_before
@@ -435,8 +442,8 @@ fn phase_feedback(block: &Block) -> PhiPhaseResult {
         block.header.tension_before - block.header.tension_after
     };
 
-    // Stability bound: delta_T < 2M units max swing.
-    let max_swing = TensionValue::from_integer(2_000_000);
+    // Stability bound: delta_T must not exceed consensus-configured max swing.
+    let max_swing = TensionValue::from_integer(state.consensus_params.max_tension_swing);
     if delta > max_swing {
         return PhiPhaseResult {
             phase: PhiPhase::Feedback,
@@ -527,6 +534,8 @@ mod tests {
             active_norm_count: 0,
             emergency_mode: false,
             finality_mode: FinalityMode::Deterministic,
+            governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+            finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
         };
         Block {
             header: BlockHeader {
@@ -553,6 +562,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -788,5 +798,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_phi_constraint_uses_consensus_param_step_budget() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::consensus_params::ConsensusParams;
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let state = ManagedWorldState::with_consensus_params(ConsensusParams {
+            max_constraint_propagation_steps: 0,
+            ..ConsensusParams::default()
+        });
+        let tx = SymbolicTransition {
+            tx_id: [1u8; 32],
+            actor: AgentIdentity {
+                agent_id: [1u8; 32],
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"data/test".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: [1u8; 32],
+                when: CausalTimestamp::genesis(),
+                r#where: b"data/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce: 1,
+            signature: vec![0u8; 64],
+        };
+
+        let result = phi_check_single_tx(PhiPhase::Constraint, &tx, &state);
+
+        assert!(!result.passed);
+        assert!(result.details.contains("Exceeded max propagation steps"));
     }
 }

@@ -31,6 +31,10 @@ pub struct ConsensusParams {
     pub max_proof_depth: u32,
 
     // ── SCCE walker bounds ─────────────────────────────────────────────
+    /// Maximum propagation depth for SCCE mesh traversal.
+    pub max_constraint_propagation_depth: u32,
+    /// Maximum SCCE propagation steps before forced termination.
+    pub max_constraint_propagation_steps: u64,
     /// Maximum number of symbols the SCCE walker may activate per transition.
     pub max_activated_symbols: u32,
     /// Maximum number of trie scans per activated symbol.
@@ -63,6 +67,8 @@ pub struct ConsensusParams {
     pub max_symbol_address_len: u32,
     /// Maximum size of a single state entry key or value (in bytes).
     pub max_state_entry_size: u32,
+    /// Maximum allowed absolute swing between tension_before and tension_after.
+    pub max_tension_swing: i64,
 }
 
 impl Default for ConsensusParams {
@@ -70,6 +76,8 @@ impl Default for ConsensusParams {
     fn default() -> Self {
         Self {
             max_proof_depth: 256,
+            max_constraint_propagation_depth: 32,
+            max_constraint_propagation_steps: 10_000,
             max_activated_symbols: 16,
             max_scan_per_symbol: 1000,
             max_constraints_per_symbol: 64,
@@ -86,6 +94,7 @@ impl Default for ConsensusParams {
             gas_payload_byte: 2,
             max_symbol_address_len: 4096,
             max_state_entry_size: 1_048_576,
+            max_tension_swing: 2_000_000,
         }
     }
 }
@@ -103,7 +112,59 @@ impl ConsensusParams {
 
     /// Deserialize from canonical bincode read out of the trie.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes).map_err(|e| format!("ConsensusParams deserialization: {}", e))
+        bincode::deserialize(bytes)
+            .or_else(|_| {
+                bincode::deserialize::<LegacyConsensusParamsV1>(bytes).map(ConsensusParams::from)
+            })
+            .map_err(|e| format!("ConsensusParams deserialization: {}", e))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConsensusParamsV1 {
+    max_proof_depth: u32,
+    max_activated_symbols: u32,
+    max_scan_per_symbol: u64,
+    max_constraints_per_symbol: u64,
+    default_max_steps: u64,
+    default_tx_gas_limit: u64,
+    default_block_gas_limit: u64,
+    gas_tx_base: u64,
+    gas_compute_step: u64,
+    gas_state_read: u64,
+    gas_state_write: u64,
+    gas_sig_verify: u64,
+    gas_hash_op: u64,
+    gas_proof_byte: u64,
+    gas_payload_byte: u64,
+    max_symbol_address_len: u32,
+    max_state_entry_size: u32,
+}
+
+impl From<LegacyConsensusParamsV1> for ConsensusParams {
+    fn from(value: LegacyConsensusParamsV1) -> Self {
+        Self {
+            max_proof_depth: value.max_proof_depth,
+            max_constraint_propagation_depth: 32,
+            max_constraint_propagation_steps: 10_000,
+            max_activated_symbols: value.max_activated_symbols,
+            max_scan_per_symbol: value.max_scan_per_symbol,
+            max_constraints_per_symbol: value.max_constraints_per_symbol,
+            default_max_steps: value.default_max_steps,
+            default_tx_gas_limit: value.default_tx_gas_limit,
+            default_block_gas_limit: value.default_block_gas_limit,
+            gas_tx_base: value.gas_tx_base,
+            gas_compute_step: value.gas_compute_step,
+            gas_state_read: value.gas_state_read,
+            gas_state_write: value.gas_state_write,
+            gas_sig_verify: value.gas_sig_verify,
+            gas_hash_op: value.gas_hash_op,
+            gas_proof_byte: value.gas_proof_byte,
+            gas_payload_byte: value.gas_payload_byte,
+            max_symbol_address_len: value.max_symbol_address_len,
+            max_state_entry_size: value.max_state_entry_size,
+            max_tension_swing: 2_000_000,
+        }
     }
 }
 
@@ -115,6 +176,8 @@ mod tests {
     fn default_matches_legacy_constants() {
         let p = ConsensusParams::default();
         assert_eq!(p.max_proof_depth, 256);
+        assert_eq!(p.max_constraint_propagation_depth, 32);
+        assert_eq!(p.max_constraint_propagation_steps, 10_000);
         assert_eq!(p.max_activated_symbols, 16);
         assert_eq!(p.max_scan_per_symbol, 1000);
         assert_eq!(p.max_constraints_per_symbol, 64);
@@ -131,6 +194,7 @@ mod tests {
         assert_eq!(p.gas_payload_byte, 2);
         assert_eq!(p.max_symbol_address_len, 4096);
         assert_eq!(p.max_state_entry_size, 1_048_576);
+        assert_eq!(p.max_tension_swing, 2_000_000);
     }
 
     #[test]
@@ -150,5 +214,40 @@ mod tests {
     #[test]
     fn trie_key_is_in_system_namespace() {
         assert!(ConsensusParams::TRIE_KEY.starts_with(b"system/"));
+    }
+
+    #[test]
+    fn from_canonical_bytes_accepts_legacy_patch03_encoding() {
+        let legacy = LegacyConsensusParamsV1 {
+            max_proof_depth: 512,
+            max_activated_symbols: 9,
+            max_scan_per_symbol: 77,
+            max_constraints_per_symbol: 12,
+            default_max_steps: 333,
+            default_tx_gas_limit: 444,
+            default_block_gas_limit: 555,
+            gas_tx_base: 11,
+            gas_compute_step: 22,
+            gas_state_read: 33,
+            gas_state_write: 44,
+            gas_sig_verify: 55,
+            gas_hash_op: 66,
+            gas_proof_byte: 77,
+            gas_payload_byte: 88,
+            max_symbol_address_len: 99,
+            max_state_entry_size: 1234,
+        };
+
+        let bytes = bincode::serialize(&legacy).expect("legacy serialization must succeed");
+        let parsed = ConsensusParams::from_canonical_bytes(&bytes)
+            .expect("legacy consensus params must still deserialize");
+
+        assert_eq!(parsed.max_proof_depth, 512);
+        assert_eq!(parsed.max_constraint_propagation_depth, 32);
+        assert_eq!(parsed.max_constraint_propagation_steps, 10_000);
+        assert_eq!(parsed.max_activated_symbols, 9);
+        assert_eq!(parsed.default_tx_gas_limit, 444);
+        assert_eq!(parsed.max_state_entry_size, 1234);
+        assert_eq!(parsed.max_tension_swing, 2_000_000);
     }
 }
