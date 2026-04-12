@@ -1,10 +1,39 @@
-﻿# SCCGUB â€” Symbolic Causal Chain General Universal Blockchain
+# SCCGUB — Symbolic Causal Chain General Universal Blockchain
 
 [![CI](https://github.com/tamirat-wubie/scc-blockchain/actions/workflows/ci.yml/badge.svg)](https://github.com/tamirat-wubie/scc-blockchain/actions/workflows/ci.yml)
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
 **Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 607 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job.
+
+## Where It Stands (Executive Summary)
+
+**What it is**  
+A Rust blockchain that enforces rules through code, not just trust. Every transition must pass the 13-phase Phi traversal and produce a causal receipt that proves what changed and why.
+
+**What works right now**  
+- Genesis -> submit tx -> produce blocks -> import/replay with full verification.
+- Deterministic validation: every rejection has a reason (receipts).
+- Governance proposals: submit -> vote -> timelock -> activate into live governance state.
+- REST API with 21 versioned endpoints for state, blocks, receipts, and governance.
+- Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
+- Hardening posture: 607 tests, CI green on Ubuntu + Windows + security audit.
+
+**What it cannot do yet**  
+- Multi-validator consensus is not wired into the live runtime; default mode is single proposer.
+- No durable state database: state is replay-authoritative from persisted blocks + snapshots.
+- Contract VM is not implemented (contract types exist, structural validation only).
+- No ZK/privacy implementation (placeholders only).
+
+**Where to work next (priority order)**  
+1. Multi-validator BFT wiring (turns the kernel into a distributed chain).
+2. Durable state database (replace replay-only state with persistent storage).
+3. Contract VM (WASM or similar) using the existing validation + gas scaffolding.
+4. Expand governed parameter surface beyond the current allowlist.
+5. Block explorer/indexer using receipts + API.
+
+**One-sentence summary**  
+The validation kernel is hardened and truthful; the next work is making it distributed, persistent, and programmable.
 
 ## Known Limits (MVP)
 
@@ -36,7 +65,7 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 - **Peer diversity gate (configurable):** `network.min_connected_peers` and `network.max_same_subnet_pct` enforce eclipse-resistance when p2p is enabled
 - **Peer seed exchange (bounded):** Hello messages exchange a bounded seed list to expand connectivity without unbounded discovery
 - **Finality:** Deterministic finality in the active runtime, with Soft/Economic/Legal settlement classes modeled in governance
-- **Validation:** 13-phase Phi traversal â€” all 13 phases enforce real invariants (Phase 3: namespace ontology, Phase 8: payload consistency)
+- **Validation:** 13-phase Phi traversal — all 13 phases enforce real invariants (Phase 3: namespace ontology, Phase 8: payload consistency)
 - **Contracts:** Decidable step-bounded symbolic programs with chain-bound gas metering and default step limits
 - **Identity:** Mfidel 34x8 Ge'ez atomic seal + cryptographic agent binding
 - **Governance:** Precedence hierarchy enforced at validation time. Accepted proposals finalize, enter timelock (ordinary 50 / constitutional 200 blocks), and activate into live governance state during block production
@@ -47,7 +76,7 @@ A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal c
 - **Persistence:** Replay-authoritative world state backed by on-disk blocks, encrypted validator keystore, chain metadata, and periodic snapshots (API reads live-sync to in-process state when event hooks are active; default sync throttle 250ms via `api_sync.min_interval_ms`)
 - **Consensus parameters:** Canonical `ConsensusParams` embedded in genesis, committed under `system/consensus_params`, restored during import + snapshot recovery, and used for proof depth, SCCE propagation bounds, contract default step limits, gas schedule + limits, and validation size caps
 - **Keystore:** Argon2id KDF + ChaCha20-Poly1305 AEAD (finance-grade)
-- **Arithmetic:** Fixed-point i128 (18 decimals) â€” no floating-point in consensus
+- **Arithmetic:** Fixed-point i128 (18 decimals) — no floating-point in consensus
 - **Signatures:** Ed25519 over canonical bincode covering all 9 semantic fields
 - **Compliance:** GDPR erasure proofs, off-chain data references, audit trails
 - **Symbolic intelligence agents:** OWASP-compliant policy enforcement (default-deny, write/read prefixes)
@@ -172,7 +201,7 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 
 | Gate | Status | Evidence |
 |------|--------|----------|
-| Protocol freeze | Done | [PROTOCOL.md](PROTOCOL.md) â€” 14-section canonical spec |
+| Protocol freeze | Done | [PROTOCOL.md](PROTOCOL.md) — 14-section canonical spec |
 | Consensus adversarial | 12 tests | Byzantine tolerance, vote forgery, equivocation, partition recovery |
 | Financial conservation | 7 tests | Transfer, treasury, escrow (release + refund), no phantom supply |
 | Replay determinism | Verified | Identical operations produce identical state roots |
@@ -196,9 +225,9 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 | INV-5: Tension budget | `execution/phi.rs` (phase 9) | `integration_test.rs` | Block rejected |
 | INV-6: Identity immutable | `execution/validate.rs` | `integration_test.rs` | agent_id mismatch rejected |
 | INV-7: WHBinding complete | `execution/wh_check.rs` | `integration_test.rs` | WHO+WHERE cross-checked, WHAT/WHEN/HOW/WHICH structural only |
-| INV-8: Contract decidability | `execution/contract.rs` | `execution` unit tests | Step limit exceeded â†’ reject |
+| INV-8: Contract decidability | `execution/contract.rs` | `execution` unit tests | Step limit exceeded → reject |
 | INV-13: Responsibility bound | `governance/responsibility.rs` | `integration_test.rs` | Contribution capped |
-| INV-17: Causal acyclicity | `execution/phi.rs` (phase 4) | `integration_test.rs` | Cycle detected â†’ reject |
+| INV-17: Causal acyclicity | `execution/phi.rs` (phase 4) | `integration_test.rs` | Cycle detected → reject |
 | Supply conservation | `state/apply.rs`, `invariants.rs` | `adversarial_test.rs` | Transfer/escrow/treasury tests |
 | Treasury conservation | `state/treasury.rs` | `adversarial_test.rs` | collected = distributed + burned + pending |
 | Escrow conservation | `state/escrow.rs` | `adversarial_test.rs` | supply = balances + locked |
@@ -235,12 +264,11 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 
 ## Specification
 
-- [PROTOCOL.md](PROTOCOL.md) â€” Frozen protocol spec (consensus, finality, fees, replay rules)
-- `specs/SCCGUB_SPEC.md` â€” v1.0 original specification
-- `specs/SCCGUB_v2_ENHANCED.md` â€” v2.0 enhanced
-- `specs/SCCGUB_v2.1_AUDIT_AND_REFINEMENT.md` â€” v2.1 audit + refinement
+- [PROTOCOL.md](PROTOCOL.md) — Frozen protocol spec (consensus, finality, fees, replay rules)
+- `specs/SCCGUB_SPEC.md` — v1.0 original specification
+- `specs/SCCGUB_v2_ENHANCED.md` — v2.0 enhanced
+- `specs/SCCGUB_v2.1_AUDIT_AND_REFINEMENT.md` — v2.1 audit + refinement
 
 ## License
 
 MIT
-
