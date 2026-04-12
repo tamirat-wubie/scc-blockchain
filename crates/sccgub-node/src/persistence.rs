@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::config::StorageConfig;
+use sccgub_state::store::SledStateStore;
 use sccgub_types::block::Block;
 
 const STORAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -151,6 +153,18 @@ impl ChainStore {
 
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
+    }
+
+    pub fn open_state_store(&self, config: &StorageConfig) -> Result<SledStateStore, String> {
+        let path = if config.state_store_dir.is_absolute() {
+            config.state_store_dir.clone()
+        } else {
+            self.base_dir.join(&config.state_store_dir)
+        };
+        if let Err(err) = fs::create_dir_all(&path) {
+            return Err(format!("state store dir create failed: {}", err));
+        }
+        SledStateStore::open(&path)
     }
 
     fn validator_key_path(&self) -> PathBuf {

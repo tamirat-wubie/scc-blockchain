@@ -185,8 +185,8 @@ async fn main() {
     let passphrase = &cli.passphrase;
 
     match cli.command {
-        Commands::Init => cmd_init(&cli.data_dir, passphrase),
-        Commands::Produce { txs } => cmd_produce(&cli.data_dir, txs, passphrase),
+        Commands::Init => cmd_init(&cli.data_dir, &cli.config, passphrase),
+        Commands::Produce { txs } => cmd_produce(&cli.data_dir, txs, &cli.config, passphrase),
         Commands::ShowBlock { height } => cmd_show_block(&cli.data_dir, height),
         Commands::Status { schema } => cmd_status(&cli.data_dir, schema),
         Commands::ShowState => cmd_show_state(&cli.data_dir),
@@ -302,7 +302,28 @@ fn restore_snapshot_if_available(store: &ChainStore, chain: &mut Chain, allow_re
     chain.restore_from_snapshot(&snapshot);
 }
 
-fn cmd_init(data_dir: &std::path::Path, passphrase: &str) {
+fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &config::NodeConfig) {
+    if !config.storage.state_store_enabled {
+        return;
+    }
+
+    let state_store = match store.open_state_store(&config.storage) {
+        Ok(store) => {
+            std::sync::Arc::new(store) as std::sync::Arc<dyn sccgub_state::store::StateStore>
+        }
+        Err(e) => {
+            eprintln!("Warning: state store open failed: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = chain.state.bind_store(state_store) {
+        eprintln!("Warning: state store bind failed: {}", e);
+    }
+}
+
+fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphrase: &str) {
+    let config = config::NodeConfig::load(config_path);
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -320,7 +341,8 @@ fn cmd_init(data_dir: &std::path::Path, passphrase: &str) {
         std::process::exit(1);
     }
 
-    let chain = Chain::init();
+    let mut chain = Chain::init();
+    bind_state_store_if_enabled(&store, &mut chain, &config);
     let genesis = chain.latest_block().unwrap();
 
     store
@@ -347,7 +369,13 @@ fn cmd_init(data_dir: &std::path::Path, passphrase: &str) {
     );
 }
 
-fn cmd_produce(data_dir: &std::path::Path, num_txs: u32, passphrase: &str) {
+fn cmd_produce(
+    data_dir: &std::path::Path,
+    num_txs: u32,
+    config_path: &std::path::Path,
+    passphrase: &str,
+) {
+    let config = config::NodeConfig::load(config_path);
     let store = match ChainStore::new(data_dir) {
         Ok(s) => s,
         Err(e) => {
@@ -371,6 +399,7 @@ fn cmd_produce(data_dir: &std::path::Path, num_txs: u32, passphrase: &str) {
 
     // Try to restore from snapshot when it matches the chain tip.
     restore_snapshot_if_available(&store, &mut chain, true);
+    bind_state_store_if_enabled(&store, &mut chain, &config);
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
@@ -1392,6 +1421,7 @@ async fn cmd_serve(
             chain.set_validator_key(key);
         }
     }
+    bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
     if config.network.enable || p2p {
         match network::NetworkRuntime::validators_from_config(&config.network) {
             Ok(validators) => chain.set_validator_set(validators),

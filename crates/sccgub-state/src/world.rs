@@ -5,6 +5,7 @@ use sccgub_types::state::{SymbolState, WorldState};
 use sccgub_types::transition::StateDelta;
 use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
 
+use crate::store::StateStore;
 use crate::trie::StateTrie;
 
 /// Managed world state with an underlying Merkle trie and nonce tracking.
@@ -37,6 +38,29 @@ impl ManagedWorldState {
             agent_nonces: HashMap::new(),
             consensus_params: params,
         }
+    }
+
+    /// Construct with explicit consensus parameters and a durable state store.
+    pub fn with_store_and_params(
+        store: std::sync::Arc<dyn StateStore>,
+        params: ConsensusParams,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            state: WorldState::default(),
+            trie: StateTrie::with_store(store)?,
+            agent_nonces: HashMap::new(),
+            consensus_params: params,
+        })
+    }
+
+    /// Bind a durable store to the trie and persist the current entries.
+    pub fn bind_store(&mut self, store: std::sync::Arc<dyn StateStore>) -> Result<(), String> {
+        for (key, value) in self.trie.iter() {
+            store.put(key, value)?;
+        }
+        store.flush()?;
+        self.trie = StateTrie::with_store(store)?;
+        Ok(())
     }
 
     /// Apply a state delta to the world state.
@@ -135,7 +159,9 @@ pub fn consensus_params_from_trie(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::SledStateStore;
     use sccgub_types::transition::{StateDelta, StateWrite};
+    use std::sync::Arc;
 
     #[test]
     fn test_apply_delta() {
@@ -207,5 +233,36 @@ mod tests {
             Some(&params.to_canonical_bytes())
         );
         assert_ne!(ws.state_root(), ZERO_HASH);
+    }
+
+    #[test]
+    fn test_bind_store_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("sccgub_state_bind_{}", std::process::id()));
+        let store = Arc::new(SledStateStore::open(&dir).expect("store open"));
+
+        let mut ws = ManagedWorldState::new();
+        ws.apply_delta(&StateDelta {
+            writes: vec![
+                StateWrite {
+                    address: b"alpha".to_vec(),
+                    value: b"one".to_vec(),
+                },
+                StateWrite {
+                    address: b"beta".to_vec(),
+                    value: b"two".to_vec(),
+                },
+            ],
+            deletes: vec![],
+        });
+        let root_before = ws.state_root();
+
+        ws.bind_store(store.clone()).expect("bind store");
+        let root_after = ws.state_root();
+        assert_eq!(root_before, root_after);
+
+        let restored = StateTrie::with_store(store).expect("reload store");
+        assert_eq!(restored.root_readonly(), root_before);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
