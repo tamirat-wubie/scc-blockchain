@@ -90,7 +90,12 @@ impl NetworkRuntime {
         let validator_key = guard.validator_key.clone();
         let chain_id = guard.chain_id;
         drop(guard);
-        let validator_set = validator_set_map(&config)?;
+        let mut validator_set = validator_set_map(&config)?;
+        if validator_set.is_empty() {
+            // Default single-proposer mode: treat the local validator as the
+            // sole authorized signer when no explicit validator set is configured.
+            validator_set.insert(validator_id, validator_id);
+        }
         let peer_seeds = config.peers.iter().cloned().collect::<HashSet<_>>();
 
         Ok(Self {
