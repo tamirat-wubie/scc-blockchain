@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use sled::Db;
 
+pub type StateEntry = (Vec<u8>, Vec<u8>);
+pub type StateEntries = Vec<StateEntry>;
+
 pub trait StateStore: Send + Sync {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String>;
     fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String>;
     fn delete(&self, key: &[u8]) -> Result<(), String>;
-    fn iter_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String>;
-    fn iter_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String>;
+    fn iter_prefix(&self, prefix: &[u8]) -> Result<StateEntries, String>;
+    fn iter_all(&self) -> Result<StateEntries, String>;
     fn flush(&self) -> Result<(), String>;
 }
 
@@ -51,7 +54,7 @@ impl StateStore for SledStateStore {
         Ok(())
     }
 
-    fn iter_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+    fn iter_prefix(&self, prefix: &[u8]) -> Result<StateEntries, String> {
         let mut entries = Vec::new();
         for item in self.db.scan_prefix(prefix) {
             let (key, value) = item.map_err(|e| format!("sled scan failed: {}", e))?;
@@ -60,7 +63,7 @@ impl StateStore for SledStateStore {
         Ok(entries)
     }
 
-    fn iter_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+    fn iter_all(&self) -> Result<StateEntries, String> {
         let mut entries = Vec::new();
         for item in self.db.iter() {
             let (key, value) = item.map_err(|e| format!("sled iter failed: {}", e))?;
