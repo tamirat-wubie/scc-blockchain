@@ -142,7 +142,10 @@ impl ChainStore {
             "version": STORAGE_VERSION,
             "spec": "SCCGUB v2.1"
         });
-        fs::write(&tmp_path, serde_json::to_string_pretty(&json).unwrap())?;
+        fs::write(
+            &tmp_path,
+            serde_json::to_string_pretty(&json).map_err(std::io::Error::other)?,
+        )?;
         fs::rename(&tmp_path, &path)
     }
 

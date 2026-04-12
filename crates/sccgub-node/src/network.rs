@@ -470,8 +470,11 @@ impl NetworkRuntime {
 
     async fn handle_block_response(&self, msg: BlockResponseMessage) -> Result<(), String> {
         if let Some(block) = msg.block {
+            let height = block.header.height;
             let mut chain = self.chain.write().await;
-            let _ = chain.import_block(block);
+            if let Err(e) = chain.import_block(block) {
+                tracing::warn!("Block import failed for height {}: {:?}", height, e);
+            }
         }
         Ok(())
     }

@@ -112,6 +112,10 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorConfig {
     /// Key passphrase (overridden by --passphrase CLI arg or SCCGUB_PASSPHRASE env var).
+    ///
+    /// SECURITY: prefer the SCCGUB_PASSPHRASE environment variable over this field.
+    /// Config files may be world-readable; storing passphrases in plaintext on disk
+    /// is a key-exposure risk. This field exists for development convenience only.
     pub key_passphrase: String,
 }
 
