@@ -1388,6 +1388,7 @@ impl Chain {
                 .collect(),
             equivocation_records: self.equivocation_records.clone(),
             safety_certificates: self.safety_certificates.clone(),
+            validator_set: self.validator_set.clone(),
             governance_limits: self.governance_limits.clone(),
             finality_config: self.finality_config.clone(),
         }
@@ -1449,6 +1450,7 @@ impl Chain {
         self.slashing = slashing;
         self.equivocation_records = snapshot.equivocation_records.clone();
         self.safety_certificates = snapshot.safety_certificates.clone();
+        self.validator_set = snapshot.validator_set.clone();
         self.governance_limits = snapshot.governance_limits.clone();
         self.finality_config = snapshot.finality_config.clone();
     }

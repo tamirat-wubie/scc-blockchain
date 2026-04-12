@@ -355,6 +355,9 @@ pub struct StateSnapshot {
     /// Safety certificates from BFT finality (consensus proofs).
     #[serde(default)]
     pub safety_certificates: Vec<sccgub_consensus::safety::SafetyCertificate>,
+    /// Active validator set snapshot (for proposer rotation).
+    #[serde(default)]
+    pub validator_set: Vec<sccgub_types::agent::ValidatorAuthority>,
     /// Governance limits snapshot (for restart-safe parameters).
     #[serde(default)]
     pub governance_limits: sccgub_governance::anti_concentration::GovernanceLimits,
