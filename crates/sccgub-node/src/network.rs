@@ -844,7 +844,6 @@ impl NetworkRuntime {
         let finality_mode = chain.state.state.governance_state.finality_mode;
         drop(chain);
         let validator_count = self.validator_set.len() as u32;
-        let default_quorum = (2 * validator_count) / 3 + 1;
         match finality_mode {
             FinalityMode::BftCertified { quorum_threshold } => {
                 let mut quorum = quorum_threshold.max(1);
@@ -853,7 +852,7 @@ impl NetworkRuntime {
                 }
                 quorum
             }
-            FinalityMode::Deterministic => default_quorum,
+            FinalityMode::Deterministic => 1,
         }
     }
 
@@ -1450,6 +1449,44 @@ mod tests {
         let rounds = runtime.consensus_rounds.lock().await;
         let state = rounds.get(&block.header.height).expect("round created");
         assert_eq!(state.round.quorum, 2);
+    }
+
+    #[tokio::test]
+    async fn test_deterministic_quorum_is_one() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let other_key = generate_keypair();
+        let third_key = generate_keypair();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![
+            hex::encode(local_pk),
+            hex::encode(*other_key.verifying_key().as_bytes()),
+            hex::encode(*third_key.verifying_key().as_bytes()),
+        ];
+
+        {
+            let mut guard = chain.write().await;
+            guard.validator_key = local_key;
+            guard.state.state.governance_state.finality_mode = FinalityMode::Deterministic;
+        }
+
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+        let block = { chain.read().await.build_candidate_block().unwrap() };
+        runtime
+            .handle_block_proposal(BlockProposalMessage {
+                proposer_id: local_pk,
+                block: block.clone(),
+                round: 0,
+                signature: Vec::new(),
+            })
+            .await
+            .unwrap();
+
+        let rounds = runtime.consensus_rounds.lock().await;
+        let state = rounds.get(&block.header.height).expect("round created");
+        assert_eq!(state.round.quorum, 1);
     }
 
     #[tokio::test]
