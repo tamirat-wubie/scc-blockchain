@@ -93,12 +93,18 @@ impl NetworkRuntime {
         let validator_id = *guard.validator_key.verifying_key().as_bytes();
         let validator_key = guard.validator_key.clone();
         let chain_id = guard.chain_id;
+        let chain_validators = guard.validator_set.clone();
         drop(guard);
         let mut validator_set = validator_set_map(&config)?;
         if validator_set.is_empty() {
-            // Default single-proposer mode: treat the local validator as the
-            // sole authorized signer when no explicit validator set is configured.
-            validator_set.insert(validator_id, validator_id);
+            for validator in chain_validators.iter().filter(|v| v.active) {
+                validator_set.insert(validator.node_id, validator.node_id);
+            }
+            if validator_set.is_empty() {
+                // Default single-proposer mode: treat the local validator as the
+                // sole authorized signer when no explicit validator set is configured.
+                validator_set.insert(validator_id, validator_id);
+            }
         }
         let peer_seeds = config.peers.iter().cloned().collect::<HashSet<_>>();
 
@@ -1565,6 +1571,43 @@ mod tests {
         let rounds = runtime.consensus_rounds.lock().await;
         let state = rounds.get(&block.header.height).expect("round created");
         assert_eq!(state.round.quorum, 2);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_uses_chain_validator_set_when_config_empty() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
+
+        {
+            let mut guard = chain.write().await;
+            guard.validator_set = vec![
+                ValidatorAuthority {
+                    node_id: local_pk,
+                    governance_level: PrecedenceLevel::Safety,
+                    norm_compliance: TensionValue::from_integer(1),
+                    causal_reliability: TensionValue::from_integer(1),
+                    active: true,
+                },
+                ValidatorAuthority {
+                    node_id: other_pk,
+                    governance_level: PrecedenceLevel::Safety,
+                    norm_compliance: TensionValue::from_integer(1),
+                    causal_reliability: TensionValue::from_integer(1),
+                    active: true,
+                },
+            ];
+        }
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = Vec::new();
+
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+        assert!(runtime.validator_set.contains_key(&local_pk));
+        assert!(runtime.validator_set.contains_key(&other_pk));
+        assert_eq!(runtime.validator_set.len(), 2);
     }
 
     #[tokio::test]
