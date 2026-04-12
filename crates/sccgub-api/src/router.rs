@@ -149,8 +149,8 @@ pub fn build_router(state: SharedState) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
     use crate::handlers::AppState;
+    use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use sccgub_crypto::canonical::canonical_bytes;
     use sccgub_crypto::hash::blake3_hash;
@@ -168,8 +168,8 @@ mod tests {
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::{
         CausalJustification, OperationPayload, StateDelta, StateWrite, SymbolicTransition,
-        TransitionIntent, TransitionKind, TransitionMechanism, ValidationResult,
-        WHBindingIntent, WHBindingResolved,
+        TransitionIntent, TransitionKind, TransitionMechanism, ValidationResult, WHBindingIntent,
+        WHBindingResolved,
     };
     use sccgub_types::ZERO_HASH;
     use serde_json::Value;
@@ -212,10 +212,8 @@ mod tests {
         let key = generate_keypair();
         let public_key = *key.verifying_key().as_bytes();
         let mfidel_seal = MfidelAtomicSeal::from_height(1);
-        let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
-            &public_key,
-            &canonical_bytes(&mfidel_seal),
-        ]);
+        let agent_id =
+            sccgub_crypto::hash::blake3_hash_concat(&[&public_key, &canonical_bytes(&mfidel_seal)]);
         let actor = AgentIdentity {
             agent_id,
             public_key,
@@ -366,7 +364,8 @@ mod tests {
                 chain_id: [1u8; 32],
                 finalized_height: 0,
                 proposals: Vec::new(),
-                governance_limits: sccgub_governance::anti_concentration::GovernanceLimits::default(),
+                governance_limits: sccgub_governance::anti_concentration::GovernanceLimits::default(
+                ),
                 finality_config: sccgub_consensus::finality::FinalityConfig::default(),
                 slashing_events: Vec::new(),
                 slashing_stakes: vec![([9u8; 32], 1000)],
@@ -1161,7 +1160,11 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_success_response_shape(&status_json, "ChainStatusApiResponse", "ChainStatusResponse");
+        assert_success_response_shape(
+            &status_json,
+            "ChainStatusApiResponse",
+            "ChainStatusResponse",
+        );
 
         let status_schema_json = response_json(
             app.clone()
@@ -1175,11 +1178,7 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_success_response_shape(
-            &status_schema_json,
-            "SchemaApiResponse",
-            "SchemaResponse",
-        );
+        assert_success_response_shape(&status_schema_json, "SchemaApiResponse", "SchemaResponse");
 
         let openapi_json = response_json(
             app.clone()
@@ -1502,7 +1501,10 @@ mod tests {
 
         let response_json = response_json(response).await;
         assert_success_response_shape(&response_json, "TxSubmitApiResponse", "TxSubmitResponse");
-        assert_eq!(response_json["data"]["status"], Value::String("accepted".into()));
+        assert_eq!(
+            response_json["data"]["status"],
+            Value::String("accepted".into())
+        );
     }
 
     #[tokio::test]
@@ -1576,7 +1578,10 @@ mod tests {
 
         let response_json = response_json(response).await;
         assert_error_response_shape(&response_json);
-        assert_eq!(response_json["error"]["code"], Value::String("InvalidHex".into()));
+        assert_eq!(
+            response_json["error"]["code"],
+            Value::String("InvalidHex".into())
+        );
     }
 
     #[tokio::test]

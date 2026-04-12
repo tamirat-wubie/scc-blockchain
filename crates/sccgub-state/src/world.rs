@@ -50,9 +50,10 @@ impl ManagedWorldState {
     /// Returns list of rejected addresses.
     pub fn apply_delta(&mut self, delta: &StateDelta) -> Vec<SymbolAddress> {
         let mut rejected = Vec::new();
+        let max_state_entry_size = self.consensus_params.max_state_entry_size as usize;
         for write in &delta.writes {
-            if write.address.len() > MAX_STATE_ENTRY_SIZE
-                || write.value.len() > MAX_STATE_ENTRY_SIZE
+            if write.address.len() > max_state_entry_size
+                || write.value.len() > max_state_entry_size
             {
                 rejected.push(write.address.clone());
                 continue;
@@ -116,6 +117,27 @@ impl Default for ManagedWorldState {
     }
 }
 
+/// Commit the chain-bound consensus parameters into the reserved system namespace.
+pub fn commit_consensus_params(state: &mut ManagedWorldState) {
+    state.apply_delta(&StateDelta {
+        writes: vec![sccgub_types::transition::StateWrite {
+            address: ConsensusParams::TRIE_KEY.to_vec(),
+            value: state.consensus_params.to_canonical_bytes(),
+        }],
+        deletes: vec![],
+    });
+}
+
+/// Load consensus parameters from trie storage when present.
+pub fn consensus_params_from_trie(
+    state: &ManagedWorldState,
+) -> Result<Option<ConsensusParams>, String> {
+    match state.get(&ConsensusParams::TRIE_KEY.to_vec()) {
+        Some(bytes) => ConsensusParams::from_canonical_bytes(bytes).map(Some),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +171,47 @@ mod tests {
         });
 
         assert_ne!(ws.state_root(), root_before);
+    }
+
+    #[test]
+    fn test_apply_delta_respects_consensus_param_max_state_entry_size() {
+        let mut ws = ManagedWorldState::with_consensus_params(ConsensusParams {
+            max_state_entry_size: 4,
+            ..ConsensusParams::default()
+        });
+        let delta = StateDelta {
+            writes: vec![StateWrite {
+                address: b"oversized".to_vec(),
+                value: b"ok".to_vec(),
+            }],
+            deletes: vec![],
+        };
+
+        let rejected = ws.apply_delta(&delta);
+
+        assert_eq!(rejected, vec![b"oversized".to_vec()]);
+        assert!(ws.get(&b"oversized".to_vec()).is_none());
+        assert_eq!(ws.state_root(), ZERO_HASH);
+    }
+
+    #[test]
+    fn test_commit_and_load_consensus_params_from_trie() {
+        let params = ConsensusParams {
+            default_tx_gas_limit: 1234,
+            ..ConsensusParams::default()
+        };
+        let mut ws = ManagedWorldState::with_consensus_params(params.clone());
+
+        commit_consensus_params(&mut ws);
+        let loaded = consensus_params_from_trie(&ws)
+            .expect("consensus params load should succeed")
+            .expect("consensus params should be present");
+
+        assert_eq!(loaded, params);
+        assert_eq!(
+            ws.get(&ConsensusParams::TRIE_KEY.to_vec()),
+            Some(&params.to_canonical_bytes())
+        );
+        assert_ne!(ws.state_root(), ZERO_HASH);
     }
 }

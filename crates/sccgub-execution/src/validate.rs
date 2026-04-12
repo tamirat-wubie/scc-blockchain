@@ -1,14 +1,12 @@
-use sccgub_state::world::{ManagedWorldState, MAX_STATE_ENTRY_SIZE};
+use crate::gas::{GasMeter, GasPricing};
+use crate::phi::{is_per_tx_phase, phi_check_single_tx};
+use crate::wh_check::check_transition_wh;
+use sccgub_state::world::ManagedWorldState;
 use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{
     StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
 };
-use sccgub_types::MAX_SYMBOL_ADDRESS_LEN;
-
-use crate::gas::GasMeter;
-use crate::phi::{is_per_tx_phase, phi_check_single_tx};
-use crate::wh_check::check_transition_wh;
 
 /// Sentinel value for an unsealed receipt (post_state_root not yet committed).
 /// Any receipt with this root is NOT final and must be sealed before inclusion.
@@ -70,22 +68,24 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
     }
 
     // 3. Size limits.
-    if tx.intent.target.len() > MAX_SYMBOL_ADDRESS_LEN {
+    let max_symbol_address_len = state.consensus_params.max_symbol_address_len as usize;
+    let max_state_entry_size = state.consensus_params.max_state_entry_size as usize;
+    if tx.intent.target.len() > max_symbol_address_len {
         return Err(format!(
             "Target address {} bytes exceeds max {}",
             tx.intent.target.len(),
-            MAX_SYMBOL_ADDRESS_LEN
+            max_symbol_address_len
         ));
     }
     // Per-variant size checks.
     match &tx.payload {
         sccgub_types::transition::OperationPayload::Write { key, value } => {
-            if key.len() > MAX_STATE_ENTRY_SIZE || value.len() > MAX_STATE_ENTRY_SIZE {
+            if key.len() > max_state_entry_size || value.len() > max_state_entry_size {
                 return Err("Payload key or value exceeds 1MB size limit".into());
             }
         }
         sccgub_types::transition::OperationPayload::DeployContract { code, .. } => {
-            if code.len() > MAX_STATE_ENTRY_SIZE {
+            if code.len() > max_state_entry_size {
                 return Err(format!(
                     "Contract code {} bytes exceeds 1MB limit",
                     code.len()
@@ -93,7 +93,7 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
             }
         }
         sccgub_types::transition::OperationPayload::InvokeContract { args, .. } => {
-            if args.len() > MAX_STATE_ENTRY_SIZE {
+            if args.len() > max_state_entry_size {
                 return Err(format!(
                     "Contract args {} bytes exceeds 1MB limit",
                     args.len()
@@ -192,15 +192,27 @@ pub fn validate_transition(
     }
 
     // 7. Size limits on target address and payload.
-    if tx.intent.target.len() > MAX_SYMBOL_ADDRESS_LEN {
+    let max_symbol_address_len = state.consensus_params.max_symbol_address_len as usize;
+    let max_state_entry_size = state.consensus_params.max_state_entry_size as usize;
+    if tx.intent.target.len() > max_symbol_address_len {
         errors.push(format!(
             "Target address {} bytes exceeds max {}",
             tx.intent.target.len(),
-            MAX_SYMBOL_ADDRESS_LEN
+            max_symbol_address_len
         ));
     }
+    if let sccgub_types::transition::OperationPayload::AssetTransfer { from, .. } = &tx.payload {
+        if *from != tx.actor.agent_id && *from != tx.actor.public_key {
+            errors.push(format!(
+                "AssetTransfer source {} is not authorized for actor {} / signer {}",
+                hex::encode(from),
+                hex::encode(tx.actor.agent_id),
+                hex::encode(tx.actor.public_key)
+            ));
+        }
+    }
     if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
-        if key.len() > MAX_STATE_ENTRY_SIZE || value.len() > MAX_STATE_ENTRY_SIZE {
+        if key.len() > max_state_entry_size || value.len() > max_state_entry_size {
             errors.push("Payload key or value exceeds 1MB size limit".into());
         }
     }
@@ -232,7 +244,7 @@ pub fn validate_transition_metered(
     state: &ManagedWorldState,
     gas_limit: u64,
 ) -> (CausalReceipt, u64) {
-    let mut gas = GasMeter::new(gas_limit);
+    let mut gas = GasMeter::with_pricing(gas_limit, GasPricing::from(&state.consensus_params));
     let state_root_before = state.state_root();
 
     // Charge base transaction overhead.
@@ -295,10 +307,8 @@ pub fn validate_transition_metered(
                 causes: vec![],
                 resource_used: ResourceUsage {
                     compute_steps: gas.used,
-                    state_reads: (gas.breakdown.state_reads / crate::gas::costs::STATE_READ.max(1))
-                        as u32,
-                    state_writes: (gas.breakdown.state_writes
-                        / crate::gas::costs::STATE_WRITE.max(1))
+                    state_reads: (gas.breakdown.state_reads / gas.pricing.state_read.max(1)) as u32,
+                    state_writes: (gas.breakdown.state_writes / gas.pricing.state_write.max(1))
                         as u32,
                     proof_size_bytes: gas.breakdown.proof,
                 },
@@ -413,6 +423,7 @@ mod tests {
     use sccgub_crypto::keys::generate_keypair;
     use sccgub_crypto::signature::sign;
     use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+    use sccgub_types::consensus_params::ConsensusParams;
     use sccgub_types::governance::PrecedenceLevel;
     use sccgub_types::mfidel::MfidelAtomicSeal;
     use sccgub_types::timestamp::CausalTimestamp;
@@ -519,6 +530,51 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_transition_respects_consensus_size_limits() {
+        let mut tx = make_signed_tx();
+        tx.intent.target = b"data/too-long".to_vec();
+        if let OperationPayload::Write { key, .. } = &mut tx.payload {
+            *key = tx.intent.target.clone();
+        }
+
+        let state = ManagedWorldState::with_consensus_params(ConsensusParams {
+            max_symbol_address_len: 4,
+            ..ConsensusParams::default()
+        });
+        let result = validate_transition(&tx, &state);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("Target address")),
+            "validation must use consensus-bound address limits"
+        );
+    }
+
+    #[test]
+    fn test_validate_transition_metered_uses_consensus_gas_pricing() {
+        let tx = make_signed_tx();
+        let state = ManagedWorldState::with_consensus_params(ConsensusParams {
+            gas_tx_base: 7,
+            gas_payload_byte: 3,
+            gas_sig_verify: 11,
+            gas_hash_op: 13,
+            gas_compute_step: 2,
+            ..ConsensusParams::default()
+        });
+
+        let payload_size = sccgub_crypto::canonical::canonical_bytes(&tx.payload).len() as u64;
+        let (receipt, gas_used) = validate_transition_metered(&tx, &state, 10_000);
+        let expected = 7 + payload_size * 3 + 11 + 13 + 13 * 2;
+
+        assert!(receipt.verdict.is_accepted());
+        assert_eq!(gas_used, expected);
+        assert_eq!(receipt.resource_used.compute_steps, expected);
+    }
+
+    #[test]
     fn test_different_intent_kind_different_canonical() {
         let tx1 = make_signed_tx();
         let mut tx2 = tx1.clone();
@@ -535,6 +591,138 @@ mod tests {
             expression: "x > 0".into(),
         }];
         assert_ne!(canonical_tx_bytes(&tx1), canonical_tx_bytes(&tx2));
+    }
+
+    #[test]
+    fn test_asset_transfer_from_actor_public_key_is_authorized() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+            &pk,
+            &sccgub_crypto::canonical::canonical_bytes(&seal),
+        ]);
+        let target = sccgub_types::namespace::balance_key(&pk);
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key: pk,
+                mfidel_seal: seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::AssetTransfer,
+                target: target.clone(),
+                declared_purpose: "compat transfer".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::AssetTransfer {
+                from: pk,
+                to: [9u8; 32],
+                amount: TensionValue::from_integer(1).raw(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: blake3_hash(b"rule"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "compat transfer".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sign(&key, &canonical);
+
+        let state = ManagedWorldState::new();
+        let result = validate_transition(&tx, &state);
+        assert!(
+            result.is_ok(),
+            "actor must be allowed to spend from its signer compatibility account: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_asset_transfer_from_unrelated_account_rejected() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+            &pk,
+            &sccgub_crypto::canonical::canonical_bytes(&seal),
+        ]);
+        let unauthorized_from = [7u8; 32];
+        let target = sccgub_types::namespace::balance_key(&unauthorized_from);
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key: pk,
+                mfidel_seal: seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::AssetTransfer,
+                target: target.clone(),
+                declared_purpose: "unauthorized transfer".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::AssetTransfer {
+                from: unauthorized_from,
+                to: [9u8; 32],
+                amount: TensionValue::from_integer(1).raw(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: blake3_hash(b"rule"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "unauthorized transfer".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sign(&key, &canonical);
+
+        let state = ManagedWorldState::new();
+        let result = validate_transition(&tx, &state);
+        assert!(result.is_err(), "unrelated source account must be rejected");
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("AssetTransfer source")),
+            "rejection must mention the unauthorized transfer source"
+        );
     }
 
     // --- admit_check tests ---

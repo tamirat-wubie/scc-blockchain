@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use sccgub_types::block::Block;
 
-/// Chain persistence — save and load chain state from disk.
+const STORAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const VALIDATOR_KEY_FILE: &str = "validator.key";
+
+/// Chain persistence - save and load blocks, metadata, validator keys, and snapshots.
 #[allow(dead_code)]
 pub struct ChainStore {
     base_dir: PathBuf,
@@ -136,7 +139,7 @@ impl ChainStore {
         let tmp_path = self.base_dir.join("chain_meta.json.tmp");
         let json = serde_json::json!({
             "chain_id": hex::encode(chain_id),
-            "version": "0.1.0",
+            "version": STORAGE_VERSION,
             "spec": "SCCGUB v2.1"
         });
         fs::write(&tmp_path, serde_json::to_string_pretty(&json).unwrap())?;
@@ -147,42 +150,59 @@ impl ChainStore {
         &self.base_dir
     }
 
-    /// Save validator key to disk, encrypted with a passphrase-derived key.
-    /// Uses Blake3 hash of passphrase as XOR encryption key.
+    fn validator_key_path(&self) -> PathBuf {
+        self.base_dir.join(VALIDATOR_KEY_FILE)
+    }
+
+    /// Save validator key to disk using the shared finance-grade keystore bundle.
     pub fn save_validator_key(
         &self,
         key: &ed25519_dalek::SigningKey,
         passphrase: &str,
     ) -> std::io::Result<()> {
-        let path = self.base_dir.join("validator.key");
-        let tmp_path = self.base_dir.join("validator.key.tmp");
-        let raw = key.to_bytes();
-        let encrypted = encrypt_key(&raw, passphrase);
-        fs::write(&tmp_path, hex::encode(encrypted))?;
+        let path = self.validator_key_path();
+        let tmp_path = self.base_dir.join(format!("{}.tmp", VALIDATOR_KEY_FILE));
+        let bundle =
+            sccgub_crypto::keystore::encrypt_key(key, passphrase).map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(&bundle).map_err(std::io::Error::other)?;
+        fs::write(&tmp_path, json)?;
         fs::rename(&tmp_path, &path)
     }
 
-    /// Load validator key from disk, decrypting with the same passphrase.
+    /// Load validator key from disk.
+    ///
+    /// New keystore files are JSON bundles produced by `sccgub_crypto::keystore`.
+    /// Legacy Blake3-XOR files are still accepted for backward-compatible reads.
     pub fn load_validator_key(
         &self,
         passphrase: &str,
     ) -> std::io::Result<ed25519_dalek::SigningKey> {
-        let path = self.base_dir.join("validator.key");
-        let hex_str = fs::read_to_string(path)?;
-        let encrypted = hex::decode(hex_str.trim())
-            .map_err(|e| std::io::Error::other(format!("Invalid key hex: {}", e)))?;
-        if encrypted.len() != 32 {
-            return Err(std::io::Error::other("Encrypted key must be 32 bytes"));
+        let path = self.validator_key_path();
+        let content = fs::read_to_string(path)?;
+        if content.trim_start().starts_with('{') {
+            let bundle: sccgub_crypto::keystore::EncryptedKeyBundle =
+                serde_json::from_str(&content).map_err(std::io::Error::other)?;
+            return sccgub_crypto::keystore::decrypt_key(&bundle, passphrase)
+                .map_err(std::io::Error::other);
         }
+
+        let encrypted = hex::decode(content.trim())
+            .map_err(|e| std::io::Error::other(format!("Invalid legacy key hex: {}", e)))?;
+        if encrypted.len() != 32 {
+            return Err(std::io::Error::other(
+                "Legacy encrypted key must be 32 bytes",
+            ));
+        }
+
         let mut enc_bytes = [0u8; 32];
         enc_bytes.copy_from_slice(&encrypted);
-        let raw = decrypt_key(&enc_bytes, passphrase);
+        let raw = decrypt_key_legacy(&enc_bytes, passphrase);
         Ok(ed25519_dalek::SigningKey::from_bytes(&raw))
     }
 
     /// Check if a validator key exists on disk.
     pub fn has_validator_key(&self) -> bool {
-        self.base_dir.join("validator.key").exists()
+        self.validator_key_path().exists()
     }
 
     /// Save a state snapshot at a given height.
@@ -224,8 +244,9 @@ impl ChainStore {
     }
 }
 
-/// Encrypt a 32-byte key using Blake3(passphrase) as XOR mask.
-fn encrypt_key(key: &[u8; 32], passphrase: &str) -> [u8; 32] {
+/// Legacy validator-key masking retained only for backward-compatible reads.
+/// New writes use Argon2id + ChaCha20-Poly1305 in `sccgub_crypto::keystore`.
+fn encrypt_key_legacy(key: &[u8; 32], passphrase: &str) -> [u8; 32] {
     let mask = sccgub_crypto::hash::blake3_hash(passphrase.as_bytes());
     let mut encrypted = [0u8; 32];
     for i in 0..32 {
@@ -234,9 +255,9 @@ fn encrypt_key(key: &[u8; 32], passphrase: &str) -> [u8; 32] {
     encrypted
 }
 
-/// Decrypt a 32-byte key (XOR is its own inverse).
-fn decrypt_key(encrypted: &[u8; 32], passphrase: &str) -> [u8; 32] {
-    encrypt_key(encrypted, passphrase) // XOR is symmetric.
+/// Legacy validator-key decrypt (XOR is its own inverse).
+fn decrypt_key_legacy(encrypted: &[u8; 32], passphrase: &str) -> [u8; 32] {
+    encrypt_key_legacy(encrypted, passphrase)
 }
 
 /// State snapshot for fast chain loading.
@@ -263,11 +284,35 @@ pub struct StateSnapshot {
     pub treasury_epoch: u64,
     /// Finalized block height.
     pub finalized_height: u64,
+    /// Slashing events recorded so far.
+    #[serde(default)]
+    pub slashing_events: Vec<sccgub_consensus::slashing::SlashingEvent>,
+    /// Slashing stakes (validator_id -> raw stake).
+    #[serde(default)]
+    pub slashing_stakes: Vec<(sccgub_types::Hash, i128)>,
+    /// Slashing removed validators.
+    #[serde(default)]
+    pub slashing_removed: Vec<sccgub_types::Hash>,
+    /// Slashing absence counters (validator_id -> consecutive absent epochs).
+    #[serde(default)]
+    pub slashing_absence: Vec<(sccgub_types::Hash, u32)>,
+    /// Equivocation evidence records (proof + epoch).
+    #[serde(default)]
+    pub equivocation_records: Vec<(sccgub_consensus::protocol::EquivocationProof, u64)>,
+    /// Governance limits snapshot (for restart-safe parameters).
+    #[serde(default)]
+    pub governance_limits: sccgub_governance::anti_concentration::GovernanceLimits,
+    /// Finality config snapshot (for restart-safe parameters).
+    #[serde(default)]
+    pub finality_config: sccgub_consensus::finality::FinalityConfig,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::Chain;
+    use sccgub_crypto::hash::blake3_hash;
+    use sccgub_crypto::keys::generate_keypair;
     use sccgub_types::block::{Block, BlockBody, BlockHeader};
     use sccgub_types::causal::CausalGraphDelta;
     use sccgub_types::governance::{FinalityMode, GovernanceSnapshot};
@@ -275,6 +320,7 @@ mod tests {
     use sccgub_types::proof::{CausalProof, PhiTraversalLog};
     use sccgub_types::tension::TensionValue;
     use sccgub_types::timestamp::CausalTimestamp;
+    use sccgub_types::transition::*;
     use sccgub_types::ZERO_HASH;
 
     fn test_block(height: u64) -> Block {
@@ -309,6 +355,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -329,6 +376,8 @@ mod tests {
                 active_norm_count: 0,
                 emergency_mode: false,
                 finality_mode: FinalityMode::Deterministic,
+                governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+                finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
             },
         }
     }
@@ -364,6 +413,473 @@ mod tests {
         for (i, block) in blocks.iter().enumerate() {
             assert_eq!(block.header.height, i as u64);
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_save_and_load_validator_key_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("sccgub_key_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+        let key = generate_keypair();
+
+        store
+            .save_validator_key(&key, "node-passphrase")
+            .expect("validator keystore should save");
+
+        let loaded = store
+            .load_validator_key("node-passphrase")
+            .expect("validator keystore should load");
+        assert_eq!(loaded.as_bytes(), key.as_bytes());
+        assert!(
+            fs::read_to_string(dir.join(VALIDATOR_KEY_FILE))
+                .unwrap()
+                .trim_start()
+                .starts_with('{'),
+            "new validator keystore format must be JSON"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_legacy_validator_key_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("sccgub_key_legacy_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+        let key = generate_keypair();
+        let encrypted = encrypt_key_legacy(&key.to_bytes(), "legacy-passphrase");
+        fs::write(dir.join(VALIDATOR_KEY_FILE), hex::encode(encrypted)).unwrap();
+
+        let loaded = store
+            .load_validator_key("legacy-passphrase")
+            .expect("legacy validator key should still load");
+        assert_eq!(loaded.as_bytes(), key.as_bytes());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_snapshot_restore_matches_block_replay() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_snapshot_restore_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let genesis = chain.latest_block().unwrap().clone();
+        store.save_block(&genesis).unwrap();
+
+        for _ in 0..5 {
+            chain.produce_block().unwrap();
+            let block = chain.latest_block().unwrap().clone();
+            store.save_block(&block).unwrap();
+        }
+
+        let snapshot = chain.create_snapshot();
+        store.save_snapshot(&snapshot).unwrap();
+
+        let blocks = store.load_all_blocks().unwrap();
+        let mut replayed = Chain::from_blocks(blocks).unwrap();
+
+        assert_eq!(snapshot.height, replayed.height());
+        assert_eq!(snapshot.state_root, replayed.state.state_root());
+
+        replayed.restore_from_snapshot(&snapshot);
+
+        assert_eq!(
+            replayed.state.state_root(),
+            chain.state.state_root(),
+            "Snapshot restore must match replayed state root"
+        );
+        assert_eq!(
+            replayed.balances.total_supply(),
+            chain.balances.total_supply(),
+            "Snapshot restore must preserve total supply"
+        );
+        assert_eq!(
+            replayed.governance_limits.max_consecutive_proposals,
+            chain.governance_limits.max_consecutive_proposals
+        );
+        assert_eq!(
+            replayed.finality_config.confirmation_depth,
+            chain.finality_config.confirmation_depth
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persisted_finality_config_replays() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_finality_persist_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 400;
+        chain.finality_config.confirmation_depth = 7;
+
+        let genesis = chain.latest_block().unwrap().clone();
+        store.save_block(&genesis).unwrap();
+
+        for _ in 0..3 {
+            chain.produce_block().unwrap();
+            let block = chain.latest_block().unwrap().clone();
+            store.save_block(&block).unwrap();
+        }
+
+        assert_eq!(chain.finality_config.confirmation_depth, 7);
+
+        let snapshot = chain.create_snapshot();
+        store.save_snapshot(&snapshot).unwrap();
+
+        let blocks = store.load_all_blocks().unwrap();
+        let mut replayed = Chain::from_blocks(blocks).unwrap();
+        assert_eq!(replayed.finality_config.confirmation_depth, 7);
+
+        replayed.restore_from_snapshot(&snapshot);
+        assert_eq!(replayed.finality_config.confirmation_depth, 7);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persisted_norm_proposal_replays() {
+        let dir = std::env::temp_dir().join(format!("sccgub_norm_persist_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 200;
+        let actor_key = chain.validator_key.clone();
+        let actor_pk = *actor_key.verifying_key().as_bytes();
+        let actor_seal = MfidelAtomicSeal::from_height(0);
+        let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+
+        let genesis = chain.latest_block().unwrap().clone();
+        store.save_block(&genesis).unwrap();
+
+        let proposal_target = b"norms/persisted_norm".to_vec();
+        let mut propose_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: sccgub_types::agent::AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal.clone(),
+                registration_block: 0,
+                governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                norm_set: std::collections::HashSet::new(),
+                responsibility: sccgub_types::agent::ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::NormProposal,
+                target: proposal_target.clone(),
+                declared_purpose: "persisted norm proposal".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::ProposeNorm {
+                name: "persisted-norm".into(),
+                description: "norm proposal persisted across replay".into(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: proposal_target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::GovernanceAction,
+                which: std::collections::HashSet::new(),
+                what_declared: "persisted norm proposal".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&propose_tx);
+        propose_tx.tx_id = blake3_hash(&canonical);
+        propose_tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical);
+
+        chain
+            .submit_transition(propose_tx)
+            .expect("submit should succeed");
+        let block = chain.produce_block().unwrap().clone();
+        if block.body.transitions.len() != 1 {
+            let reason = chain
+                .latest_rejected_receipts
+                .get(0)
+                .map(|r| r.verdict.to_string())
+                .unwrap_or_else(|| "no rejection receipt".into());
+            panic!("proposal tx rejected: {}", reason);
+        }
+        assert!(block.receipts[0].verdict.is_accepted());
+        store.save_block(&block).unwrap();
+
+        let proposal_id = chain
+            .proposals
+            .proposals
+            .iter()
+            .find(|p| p.proposer == actor_id)
+            .map(|p| p.id)
+            .expect("proposal should be registered");
+
+        let vote_target = b"norms/governance/proposals/vote".to_vec();
+        let mut vote_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: sccgub_types::agent::AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal.clone(),
+                registration_block: 0,
+                governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                norm_set: std::collections::HashSet::new(),
+                responsibility: sccgub_types::agent::ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: vote_target.clone(),
+                declared_purpose: "vote for norm proposal".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: vote_target.clone(),
+                value: proposal_id.to_vec(),
+            },
+            causal_chain: vec![block.body.transitions[0].tx_id],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: vote_target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: std::collections::HashSet::new(),
+                what_declared: "vote for norm proposal".into(),
+            },
+            nonce: 2,
+            signature: vec![],
+        };
+        let canonical_vote = sccgub_execution::validate::canonical_tx_bytes(&vote_tx);
+        vote_tx.tx_id = blake3_hash(&canonical_vote);
+        vote_tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical_vote);
+
+        chain
+            .submit_transition(vote_tx)
+            .expect("vote submit should succeed");
+        let vote_block = chain.produce_block().unwrap().clone();
+        if vote_block.body.transitions.len() != 1 {
+            let reason = chain
+                .latest_rejected_receipts
+                .get(0)
+                .map(|r| r.verdict.to_string())
+                .unwrap_or_else(|| "no rejection receipt".into());
+            panic!("vote tx rejected: {}", reason);
+        }
+        assert!(vote_block.receipts[0].verdict.is_accepted());
+        store.save_block(&vote_block).unwrap();
+
+        for _ in 0..60 {
+            chain.produce_block().unwrap();
+            let block = chain.latest_block().unwrap().clone();
+            store.save_block(&block).unwrap();
+        }
+
+        assert!(
+            chain
+                .state
+                .state
+                .governance_state
+                .active_norms
+                .contains_key(&proposal_id),
+            "norm should be activated in live chain"
+        );
+
+        let snapshot = chain.create_snapshot();
+        store.save_snapshot(&snapshot).unwrap();
+
+        let blocks = store.load_all_blocks().unwrap();
+        let replayed = Chain::from_blocks(blocks).unwrap();
+        assert!(
+            replayed
+                .state
+                .state
+                .governance_state
+                .active_norms
+                .contains_key(&proposal_id),
+            "norm should be activated after replay"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persisted_param_proposal_replays() {
+        let dir = std::env::temp_dir().join(format!("sccgub_param_persist_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 300;
+        let actor_key = chain.validator_key.clone();
+        let actor_pk = *actor_key.verifying_key().as_bytes();
+        let actor_seal = MfidelAtomicSeal::from_height(0);
+        let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+
+        let genesis = chain.latest_block().unwrap().clone();
+        store.save_block(&genesis).unwrap();
+
+        let propose_target = b"norms/governance/params/propose".to_vec();
+        let mut propose_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: sccgub_types::agent::AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal.clone(),
+                registration_block: 0,
+                governance_level: sccgub_types::governance::PrecedenceLevel::Safety,
+                norm_set: std::collections::HashSet::new(),
+                responsibility: sccgub_types::agent::ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: propose_target.clone(),
+                declared_purpose: "propose finality update".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: propose_target.clone(),
+                value: b"finality.confirmation_depth=5".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: propose_target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: sccgub_types::governance::PrecedenceLevel::Safety,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: std::collections::HashSet::new(),
+                what_declared: "propose finality update".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&propose_tx);
+        propose_tx.tx_id = blake3_hash(&canonical);
+        propose_tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical);
+
+        chain
+            .submit_transition(propose_tx)
+            .expect("param proposal submit should succeed");
+        let proposal_block = chain.produce_block().unwrap().clone();
+        if proposal_block.body.transitions.len() != 1 {
+            let reason = chain
+                .latest_rejected_receipts
+                .get(0)
+                .map(|r| r.verdict.to_string())
+                .unwrap_or_else(|| "no rejection receipt".into());
+            panic!("param proposal tx rejected: {}", reason);
+        }
+        store.save_block(&proposal_block).unwrap();
+
+        let proposal_id = chain
+            .proposals
+            .proposals
+            .iter()
+            .find(|p| p.proposer == actor_id)
+            .map(|p| p.id)
+            .expect("parameter proposal should be registered");
+
+        let vote_target = b"norms/governance/proposals/vote".to_vec();
+        let mut vote_tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: sccgub_types::agent::AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal.clone(),
+                registration_block: 0,
+                governance_level: sccgub_types::governance::PrecedenceLevel::Safety,
+                norm_set: std::collections::HashSet::new(),
+                responsibility: sccgub_types::agent::ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: vote_target.clone(),
+                declared_purpose: "vote for param proposal".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: vote_target.clone(),
+                value: proposal_id.to_vec(),
+            },
+            causal_chain: vec![proposal_block.body.transitions[0].tx_id],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: vote_target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: sccgub_types::governance::PrecedenceLevel::Safety,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: std::collections::HashSet::new(),
+                what_declared: "vote for param proposal".into(),
+            },
+            nonce: 2,
+            signature: vec![],
+        };
+        let canonical_vote = sccgub_execution::validate::canonical_tx_bytes(&vote_tx);
+        vote_tx.tx_id = blake3_hash(&canonical_vote);
+        vote_tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical_vote);
+
+        chain
+            .submit_transition(vote_tx)
+            .expect("param vote submit should succeed");
+        let vote_block = chain.produce_block().unwrap().clone();
+        if vote_block.body.transitions.len() != 1 {
+            let reason = chain
+                .latest_rejected_receipts
+                .get(0)
+                .map(|r| r.verdict.to_string())
+                .unwrap_or_else(|| "no rejection receipt".into());
+            panic!("param vote tx rejected: {}", reason);
+        }
+        store.save_block(&vote_block).unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+            let block = chain.latest_block().unwrap().clone();
+            store.save_block(&block).unwrap();
+        }
+
+        assert_eq!(chain.finality_config.confirmation_depth, 5);
+
+        let snapshot = chain.create_snapshot();
+        store.save_snapshot(&snapshot).unwrap();
+
+        let blocks = store.load_all_blocks().unwrap();
+        let replayed = Chain::from_blocks(blocks).unwrap();
+        assert_eq!(replayed.finality_config.confirmation_depth, 5);
 
         let _ = fs::remove_dir_all(&dir);
     }

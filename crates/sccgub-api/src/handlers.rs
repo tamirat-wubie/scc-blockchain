@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use sccgub_consensus::protocol::EquivocationProof;
+use sccgub_consensus::slashing::{SlashingEvent, SlashingEvidence};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
 use sccgub_types::Hash;
-use sccgub_consensus::slashing::{SlashingEvent, SlashingEvidence};
-use sccgub_consensus::protocol::EquivocationProof;
 
 use crate::responses::*;
 
@@ -105,39 +105,27 @@ pub async fn get_status(
         governed_parameter_values: std::collections::HashMap::from([
             (
                 "governance.max_consecutive_proposals".to_string(),
-                app.governance_limits
-                    .max_consecutive_proposals
-                    .to_string(),
+                app.governance_limits.max_consecutive_proposals.to_string(),
             ),
             (
                 "governance.max_actions_per_agent_pct".to_string(),
-                app.governance_limits
-                    .max_actions_per_agent_pct
-                    .to_string(),
+                app.governance_limits.max_actions_per_agent_pct.to_string(),
             ),
             (
                 "governance.safety_change_min_signers".to_string(),
-                app.governance_limits
-                    .safety_change_min_signers
-                    .to_string(),
+                app.governance_limits.safety_change_min_signers.to_string(),
             ),
             (
                 "governance.genesis_change_min_signers".to_string(),
-                app.governance_limits
-                    .genesis_change_min_signers
-                    .to_string(),
+                app.governance_limits.genesis_change_min_signers.to_string(),
             ),
             (
                 "governance.max_authority_term_epochs".to_string(),
-                app.governance_limits
-                    .max_authority_term_epochs
-                    .to_string(),
+                app.governance_limits.max_authority_term_epochs.to_string(),
             ),
             (
                 "governance.authority_cooldown_epochs".to_string(),
-                app.governance_limits
-                    .authority_cooldown_epochs
-                    .to_string(),
+                app.governance_limits.authority_cooldown_epochs.to_string(),
             ),
             (
                 "finality.confirmation_depth".to_string(),
@@ -160,8 +148,7 @@ pub async fn get_status(
 }
 
 /// GET /status/schema — JSON schema for status output.
-pub async fn get_status_schema(
-) -> axum::Json<ApiResponse<serde_json::Value>> {
+pub async fn get_status_schema() -> axum::Json<ApiResponse<serde_json::Value>> {
     let schema = serde_json::from_str(include_str!("../../../specs/STATUS_JSON_SCHEMA.json"))
         .unwrap_or_else(|_| serde_json::json!({ "error": "invalid status schema" }));
     axum::Json(ApiResponse::ok(schema))
@@ -180,8 +167,7 @@ pub async fn get_governance_params(
 }
 
 /// GET /governance/params/schema — JSON schema for governed parameters.
-pub async fn get_governance_params_schema(
-) -> axum::Json<ApiResponse<serde_json::Value>> {
+pub async fn get_governance_params_schema() -> axum::Json<ApiResponse<serde_json::Value>> {
     let schema = serde_json::from_str(include_str!("../../../specs/GOVERNED_JSON_SCHEMA.json"))
         .unwrap_or_else(|_| serde_json::json!({ "error": "invalid governed schema" }));
     axum::Json(ApiResponse::ok(schema))
@@ -273,7 +259,11 @@ pub async fn get_governance_proposals(
     proposals.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
 
     let total = proposals.len();
-    let page = proposals.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
+    let page = proposals
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
 
     (
         axum::http::StatusCode::OK,
@@ -765,7 +755,13 @@ pub async fn submit_governance_vote(
 
 fn decode_tx_hex(
     tx_hex: &str,
-) -> Result<sccgub_types::transition::SymbolicTransition, (axum::http::StatusCode, axum::Json<ApiResponse<TxSubmitResponse>>)> {
+) -> Result<
+    sccgub_types::transition::SymbolicTransition,
+    (
+        axum::http::StatusCode,
+        axum::Json<ApiResponse<TxSubmitResponse>>,
+    ),
+> {
     let tx_bytes = match hex::decode(tx_hex) {
         Ok(b) => b,
         Err(e) => {
@@ -1104,7 +1100,11 @@ pub async fn get_slashing_validator(
     };
 
     let app = state.read().await;
-    let stake = match app.slashing_stakes.iter().find(|(id, _)| *id == validator_id) {
+    let stake = match app
+        .slashing_stakes
+        .iter()
+        .find(|(id, _)| *id == validator_id)
+    {
         Some((_, raw)) => *raw,
         None => {
             return (

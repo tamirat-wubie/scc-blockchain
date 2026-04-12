@@ -19,6 +19,10 @@ pub struct PeerInfo {
     pub finalized_height: u64,
     pub protocol_version: u32,
     pub last_seen_ms: u64,
+    pub score: i32,
+    pub violations: u32,
+    pub last_score_decay_ms: u64,
+    pub last_violation_forgive_ms: u64,
     pub state: PeerState,
 }
 
@@ -50,8 +54,16 @@ impl PeerRegistry {
     /// Register or update a peer. Rejects new peers if registry is full.
     pub fn upsert(&mut self, info: PeerInfo) -> Result<(), String> {
         // Check capacity before insert for new peers.
-        let is_update = self.peers.contains_key(&info.validator_id);
-        if !is_update && self.peers.len() >= MAX_PEERS {
+        if let Some(existing) = self.peers.get(&info.validator_id) {
+            let mut updated = info;
+            updated.score = existing.score;
+            updated.violations = existing.violations;
+            updated.last_score_decay_ms = existing.last_score_decay_ms;
+            updated.last_violation_forgive_ms = existing.last_violation_forgive_ms;
+            self.peers.insert(updated.validator_id, updated);
+            return Ok(());
+        }
+        if self.peers.len() >= MAX_PEERS {
             return Err(format!(
                 "Peer registry full ({}/{})",
                 self.peers.len(),
@@ -95,12 +107,23 @@ impl PeerRegistry {
     /// Check if peer diversity requirements are met (eclipse attack defense).
     /// Returns Ok if sufficient distinct peers from diverse network locations.
     pub fn check_diversity(&self) -> Result<(), String> {
+        self.check_diversity_with(
+            diversity::MIN_CONNECTED_PEERS,
+            diversity::MAX_SAME_SUBNET_PCT,
+        )
+    }
+
+    /// Check diversity with explicit thresholds (runtime-configurable).
+    pub fn check_diversity_with(
+        &self,
+        min_connected_peers: usize,
+        max_same_subnet_pct: u32,
+    ) -> Result<(), String> {
         let connected = self.active_count();
-        if connected < diversity::MIN_CONNECTED_PEERS {
+        if connected < min_connected_peers {
             return Err(format!(
                 "Insufficient peer diversity: {} connected, need >= {}",
-                connected,
-                diversity::MIN_CONNECTED_PEERS
+                connected, min_connected_peers
             ));
         }
 
@@ -125,12 +148,10 @@ impl PeerRegistry {
 
         for (subnet, count) in &subnet_counts {
             let pct = (*count as u32) * 100 / connected as u32;
-            if pct > diversity::MAX_SAME_SUBNET_PCT {
+            if pct > max_same_subnet_pct {
                 return Err(format!(
                     "Subnet {} has {}% of peers (max {}%)",
-                    subnet,
-                    pct,
-                    diversity::MAX_SAME_SUBNET_PCT
+                    subnet, pct, max_same_subnet_pct
                 ));
             }
         }
@@ -148,6 +169,33 @@ impl PeerRegistry {
         candidates.sort_by(|a, b| b.current_height.cmp(&a.current_height));
         candidates
     }
+
+    /// Decay peer scores and forgive violations over time.
+    pub fn decay_scores(
+        &mut self,
+        now_ms: u64,
+        decay_interval_ms: u64,
+        decay_amount: i32,
+        max_score: i32,
+        violation_forgive_interval_ms: u64,
+    ) {
+        for peer in self.peers.values_mut() {
+            if peer.state != PeerState::Connected {
+                continue;
+            }
+            if now_ms.saturating_sub(peer.last_score_decay_ms) >= decay_interval_ms {
+                peer.score = (peer.score + decay_amount).min(max_score);
+                peer.last_score_decay_ms = now_ms;
+            }
+            if now_ms.saturating_sub(peer.last_violation_forgive_ms)
+                >= violation_forgive_interval_ms
+                && peer.violations > 0
+            {
+                peer.violations = peer.violations.saturating_sub(1);
+                peer.last_violation_forgive_ms = now_ms;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +210,10 @@ mod tests {
             finalized_height: height.saturating_sub(2),
             protocol_version: 1,
             last_seen_ms: 0,
+            score: 0,
+            violations: 0,
+            last_score_decay_ms: 0,
+            last_violation_forgive_ms: 0,
             state: PeerState::Connected,
         }
     }
@@ -282,5 +334,19 @@ mod tests {
         registry.upsert(p3).unwrap();
         // All 3 from 10.0.x.x → 100% same subnet > 50% max.
         assert!(registry.check_diversity().is_err());
+    }
+
+    #[test]
+    fn test_decay_scores_and_forgive_violations() {
+        let mut registry = PeerRegistry::default();
+        let mut peer = test_peer(1, 10);
+        peer.score = 5;
+        peer.violations = 2;
+        registry.upsert(peer).unwrap();
+
+        registry.decay_scores(10_000, 5_000, 3, 10, 8_000);
+        let updated = registry.peers.get(&[1u8; 32]).unwrap();
+        assert_eq!(updated.score, 8);
+        assert_eq!(updated.violations, 1);
     }
 }

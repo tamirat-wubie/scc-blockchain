@@ -10,9 +10,7 @@ use sccgub_state::balances::BalanceLedger;
 use sccgub_state::treasury::{
     commit_treasury_state, default_block_reward, treasury_from_trie, Treasury,
 };
-use sccgub_state::world::{
-    commit_consensus_params, consensus_params_from_trie, ManagedWorldState,
-};
+use sccgub_state::world::{commit_consensus_params, consensus_params_from_trie, ManagedWorldState};
 use sccgub_types::agent::ValidatorAuthority;
 use sccgub_types::block::{
     is_supported_block_version, Block, BlockBody, BlockHeader, CURRENT_BLOCK_VERSION,
@@ -78,9 +76,8 @@ pub(crate) fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
 
 fn load_genesis_consensus_params(genesis: &Block) -> Result<ConsensusParams, ImportError> {
     match genesis.body.genesis_consensus_params.as_ref() {
-        Some(bytes) => {
-            ConsensusParams::from_canonical_bytes(bytes).map_err(ImportError::GenesisConsensusParams)
-        }
+        Some(bytes) => ConsensusParams::from_canonical_bytes(bytes)
+            .map_err(ImportError::GenesisConsensusParams),
         None => Ok(ConsensusParams::default()),
     }
 }
@@ -255,7 +252,8 @@ impl Chain {
                 }
             }
             None => {
-                if genesis.header.state_root != ZERO_HASH || genesis.header.balance_root != ZERO_HASH
+                if genesis.header.state_root != ZERO_HASH
+                    || genesis.header.balance_root != ZERO_HASH
                 {
                     return Err(ImportError::MissingGenesisConsensusParams);
                 }
@@ -388,9 +386,7 @@ impl Chain {
                         if key.starts_with(b"governance/proposals/")
                             || key.starts_with(b"norms/governance/proposals/")
                         {
-                            if let Ok(proposal_id) =
-                                <[u8; 32]>::try_from(&value[..])
-                            {
+                            if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
                                 let _ = proposals.vote(
                                     &proposal_id,
                                     tx.actor.agent_id,
@@ -405,8 +401,7 @@ impl Chain {
             }
             let _accepted = proposals.finalize(block.header.height);
             for proposal in proposals.proposals.clone() {
-                if proposal.status
-                    == sccgub_governance::proposals::ProposalStatus::Timelocked
+                if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
                     && block.header.height >= proposal.timelock_until
                 {
                     match proposals.activate(&proposal.id, block.header.height) {
@@ -421,8 +416,12 @@ impl Chain {
                             sccgub_governance::proposals::ProposalKind::DeactivateNorm {
                                 norm_id,
                             } => {
-                                if let Some(mut norm) =
-                                    state.state.governance_state.active_norms.get(&norm_id).cloned()
+                                if let Some(mut norm) = state
+                                    .state
+                                    .governance_state
+                                    .active_norms
+                                    .get(&norm_id)
+                                    .cloned()
                                 {
                                     norm.active = false;
                                     state
@@ -442,10 +441,7 @@ impl Chain {
                                     key,
                                     value,
                                 ) {
-                                    tracing::warn!(
-                                        "Governance parameter update rejected: {}",
-                                        e
-                                    );
+                                    tracing::warn!("Governance parameter update rejected: {}", e);
                                 }
                             }
                             sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
@@ -521,22 +517,25 @@ impl Chain {
         } else {
             (proof.block_hash_b, proof.block_hash_a)
         };
-        let duplicate = self.equivocation_records.iter().any(|(existing, existing_epoch)| {
-            *existing_epoch == epoch
-                && existing.validator_id == proof.validator_id
-                && existing.height == proof.height
-                && existing.round == proof.round
-                && existing.vote_type == proof.vote_type
-                && {
-                    let (existing_a, existing_b) =
-                        if existing.block_hash_a <= existing.block_hash_b {
-                            (existing.block_hash_a, existing.block_hash_b)
-                        } else {
-                            (existing.block_hash_b, existing.block_hash_a)
-                        };
-                    existing_a == block_a && existing_b == block_b
-                }
-        });
+        let duplicate = self
+            .equivocation_records
+            .iter()
+            .any(|(existing, existing_epoch)| {
+                *existing_epoch == epoch
+                    && existing.validator_id == proof.validator_id
+                    && existing.height == proof.height
+                    && existing.round == proof.round
+                    && existing.vote_type == proof.vote_type
+                    && {
+                        let (existing_a, existing_b) =
+                            if existing.block_hash_a <= existing.block_hash_b {
+                                (existing.block_hash_a, existing.block_hash_b)
+                            } else {
+                                (existing.block_hash_b, existing.block_hash_a)
+                            };
+                        existing_a == block_a && existing_b == block_b
+                    }
+            });
 
         if !duplicate {
             let mut normalized = proof;
@@ -694,7 +693,8 @@ impl Chain {
         self.mempool.mark_confirmed(&confirmed);
 
         // Record proposer for anti-concentration tracking.
-        self.power_tracker.record_proposal(&block.header.validator_id);
+        self.power_tracker
+            .record_proposal(&block.header.validator_id);
         if block.header.height % 100 == 0 {
             self.power_tracker.reset_epoch();
             self.economics.reset_epoch();
@@ -992,27 +992,26 @@ impl Chain {
                         description,
                     } = &tx.payload
                     {
-                        if let Err(e) = self.proposals.submit(
-                            tx.actor.agent_id,
-                            tx.actor.governance_level,
-                            sccgub_governance::proposals::ProposalKind::AddNorm {
-                                name: name.clone(),
-                                description: description.clone(),
-                                initial_fitness: sccgub_types::tension::TensionValue::from_integer(
-                                    5,
-                                ),
-                                enforcement_cost: sccgub_types::tension::TensionValue::from_integer(
-                                    1,
-                                ),
-                            },
-                            height,
-                            5,
-                        ) {
+                        if let Err(e) =
+                            self.proposals.submit(
+                                tx.actor.agent_id,
+                                tx.actor.governance_level,
+                                sccgub_governance::proposals::ProposalKind::AddNorm {
+                                    name: name.clone(),
+                                    description: description.clone(),
+                                    initial_fitness:
+                                        sccgub_types::tension::TensionValue::from_integer(5),
+                                    enforcement_cost:
+                                        sccgub_types::tension::TensionValue::from_integer(1),
+                                },
+                                height,
+                                5,
+                            )
+                        {
                             tracing::warn!("Proposal submit failed: {}", e);
                         }
                     }
-                    if tx.intent.kind
-                        == sccgub_types::transition::TransitionKind::GovernanceUpdate
+                    if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate
                     {
                         if let sccgub_types::transition::OperationPayload::Write { key, value } =
                             &tx.payload
@@ -1398,9 +1397,7 @@ impl Chain {
     }
 }
 
-fn governance_limits_snapshot_from(
-    limits: &GovernanceLimits,
-) -> GovernanceLimitsSnapshot {
+fn governance_limits_snapshot_from(limits: &GovernanceLimits) -> GovernanceLimitsSnapshot {
     GovernanceLimitsSnapshot {
         max_actions_per_agent_pct: limits.max_actions_per_agent_pct,
         safety_change_min_signers: limits.safety_change_min_signers,
@@ -2020,7 +2017,11 @@ mod tests {
             Some(&embedded)
         );
         assert_eq!(
-            replayed.latest_block().unwrap().body.genesis_consensus_params,
+            replayed
+                .latest_block()
+                .unwrap()
+                .body
+                .genesis_consensus_params,
             chain.latest_block().unwrap().body.genesis_consensus_params
         );
     }
@@ -2045,7 +2046,10 @@ mod tests {
             restored.state.get(&ConsensusParams::TRIE_KEY.to_vec()),
             Some(&embedded)
         );
-        assert_eq!(restored.balances.total_supply(), chain.balances.total_supply());
+        assert_eq!(
+            restored.balances.total_supply(),
+            chain.balances.total_supply()
+        );
     }
 
     #[test]
@@ -2254,7 +2258,10 @@ mod tests {
             .expect("from_blocks should succeed for valid chain");
         replayed.restore_from_snapshot(&snapshot);
         assert_eq!(replayed.state.state_root(), tip.header.state_root);
-        assert_eq!(balance_root_from_ledger(&replayed.balances), tip.header.balance_root);
+        assert_eq!(
+            balance_root_from_ledger(&replayed.balances),
+            tip.header.balance_root
+        );
     }
 
     #[test]
@@ -2998,10 +3005,15 @@ mod tests {
         };
         let propose_canonical = sccgub_execution::validate::canonical_tx_bytes(&propose_tx);
         propose_tx.tx_id = blake3_hash(&propose_canonical);
-        propose_tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &propose_canonical);
+        propose_tx.signature =
+            sccgub_crypto::signature::sign(&chain.validator_key, &propose_canonical);
 
-        chain.submit_transition(propose_tx).expect("proposal submit should succeed");
-        let proposal_block = chain.produce_block().expect("proposal block should succeed");
+        chain
+            .submit_transition(propose_tx)
+            .expect("proposal submit should succeed");
+        let proposal_block = chain
+            .produce_block()
+            .expect("proposal block should succeed");
         assert!(
             !proposal_block.body.transitions.is_empty(),
             "proposal transition must be included in produced block"
@@ -3011,7 +3023,12 @@ mod tests {
             .proposals
             .proposals
             .iter()
-            .find(|proposal| matches!(proposal.kind, sccgub_governance::proposals::ProposalKind::ModifyParameter { .. }))
+            .find(|proposal| {
+                matches!(
+                    proposal.kind,
+                    sccgub_governance::proposals::ProposalKind::ModifyParameter { .. }
+                )
+            })
             .map(|proposal| proposal.id)
             .expect("proposal registry should contain parameter proposal");
 
@@ -3052,7 +3069,9 @@ mod tests {
         vote_tx.tx_id = blake3_hash(&vote_canonical);
         vote_tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &vote_canonical);
 
-        chain.submit_transition(vote_tx).expect("vote submit should succeed");
+        chain
+            .submit_transition(vote_tx)
+            .expect("vote submit should succeed");
         let vote_block = chain.produce_block().expect("vote block should succeed");
         assert!(
             !vote_block.body.transitions.is_empty(),
