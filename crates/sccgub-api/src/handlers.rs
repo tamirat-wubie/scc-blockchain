@@ -243,9 +243,8 @@ pub async fn get_governance_proposals(
         .proposals
         .iter()
         .filter(|proposal| {
-            status_filter.map_or(true, |status| {
-                status.eq_ignore_ascii_case(&format!("{:?}", proposal.status))
-            })
+            status_filter
+                .is_none_or(|status| status.eq_ignore_ascii_case(&format!("{:?}", proposal.status)))
         })
         .map(|proposal| GovernanceProposalSummary {
             id: hex::encode(proposal.id),
@@ -1060,11 +1059,7 @@ pub async fn get_slashing_summary(
         .iter()
         .map(slashing_event_response)
         .collect();
-    let removed_validators: Vec<String> = app
-        .slashing_removed
-        .iter()
-        .map(|id| hex::encode(id))
-        .collect();
+    let removed_validators: Vec<String> = app.slashing_removed.iter().map(hex::encode).collect();
 
     axum::Json(ApiResponse::ok(SlashingSummaryResponse {
         total_events: events.len() as u64,
@@ -1116,7 +1111,7 @@ pub async fn get_slashing_validator(
             );
         }
     };
-    let removed = app.slashing_removed.iter().any(|id| *id == validator_id);
+    let removed = app.slashing_removed.contains(&validator_id);
     let events: Vec<SlashingEventResponse> = app
         .slashing_events
         .iter()
