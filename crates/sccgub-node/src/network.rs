@@ -1061,6 +1061,9 @@ impl NetworkRuntime {
                     round: 0,
                     signature: Vec::new(),
                 });
+                if let Err(e) = self.handle_message(msg.clone(), "local").await {
+                    tracing::warn!("Local proposal handling failed: {}", e);
+                }
                 self.broadcast(msg).await;
             }
         }
