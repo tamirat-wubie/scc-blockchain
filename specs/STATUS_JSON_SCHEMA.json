@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SCCGUB Status Output",
+  "type": "object",
+  "required": [
+    "chain_id",
+    "height",
+    "block_count",
+    "finalized_height",
+    "state_root",
+    "tension",
+    "emergency",
+    "governance_norms"
+  ],
+  "properties": {
+    "chain_id": { "type": "string" },
+    "height": { "type": "integer", "minimum": 0 },
+    "block_count": { "type": "integer", "minimum": 0 },
+    "finalized_height": { "type": "integer", "minimum": 0 },
+    "state_root": { "type": "string" },
+    "tension": { "type": "string" },
+    "emergency": { "type": "boolean" },
+    "governance_norms": { "type": "integer", "minimum": 0 }
+  }
+}
