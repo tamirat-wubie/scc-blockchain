@@ -317,8 +317,37 @@ fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &c
         }
     };
 
-    if let Err(e) = chain.state.bind_store(state_store) {
-        eprintln!("Warning: state store bind failed: {}", e);
+    match state_store.is_empty() {
+        Ok(true) => {
+            if let Err(e) = chain.state.bind_store(state_store) {
+                eprintln!("Warning: state store bind failed: {}", e);
+            }
+        }
+        Ok(false) => {
+            let durable_trie = match sccgub_state::trie::StateTrie::with_store(state_store.clone())
+            {
+                Ok(trie) => trie,
+                Err(e) => {
+                    eprintln!("Warning: state store load failed: {}", e);
+                    return;
+                }
+            };
+            let durable_root = durable_trie.root_readonly();
+            let expected_root = chain.state.state_root();
+            if durable_root == expected_root {
+                chain.state.trie = durable_trie;
+            } else if let Err(e) = chain.state.bind_store(state_store) {
+                eprintln!(
+                    "Warning: state store root mismatch (durable={} expected={}); rebinding failed: {}",
+                    hex::encode(durable_root),
+                    hex::encode(expected_root),
+                    e
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: state store status check failed: {}", e);
+        }
     }
 }
 

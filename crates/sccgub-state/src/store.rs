@@ -17,6 +17,7 @@ pub trait StateStore: Send + Sync {
     fn delete(&self, key: &[u8]) -> Result<(), String>;
     fn iter_prefix(&self, prefix: &[u8]) -> Result<StateEntries, String>;
     fn iter_all(&self) -> Result<StateEntries, String>;
+    fn is_empty(&self) -> Result<bool, String>;
     fn flush(&self) -> Result<(), String>;
 }
 
@@ -70,6 +71,15 @@ impl StateStore for SledStateStore {
             entries.push((key.to_vec(), value.to_vec()));
         }
         Ok(entries)
+    }
+
+    fn is_empty(&self) -> Result<bool, String> {
+        let mut iter = self.db.iter();
+        match iter.next() {
+            None => Ok(true),
+            Some(Ok(_)) => Ok(false),
+            Some(Err(e)) => Err(format!("sled iter failed: {}", e)),
+        }
     }
 
     fn flush(&self) -> Result<(), String> {
