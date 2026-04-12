@@ -21,7 +21,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 
 **What it cannot do yet**  
 - Multi-validator consensus is not wired into the live runtime; default mode is single proposer.
-- No durable state database: state is replay-authoritative from persisted blocks + snapshots.
+- No durable state database: state is replay-authoritative from persisted blocks + snapshots (optional sled-backed trie mirror).
 - Contract VM is not implemented (contract types exist, structural validation only).
 - No ZK/privacy implementation (placeholders only).
 
