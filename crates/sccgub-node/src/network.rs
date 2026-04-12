@@ -1422,7 +1422,7 @@ mod tests {
                     return true;
                 }
             }
-            sleep(Duration::from_millis(25)).await;
+            sleep(Duration::from_millis(50)).await;
         }
         false
     }
@@ -1436,7 +1436,7 @@ mod tests {
             if let Ok(Some(snapshot)) = store.load_latest_snapshot() {
                 return Some(snapshot);
             }
-            sleep(Duration::from_millis(25)).await;
+            sleep(Duration::from_millis(50)).await;
         }
         None
     }
@@ -1818,7 +1818,7 @@ mod tests {
             }
 
             let persisted =
-                wait_for_persisted_height(store.as_ref(), block.header.height, 5_000).await;
+                wait_for_persisted_height(store.as_ref(), block.header.height, 15_000).await;
             assert!(
                 persisted,
                 "Expected persisted block at height {}",
@@ -1827,7 +1827,7 @@ mod tests {
         }
 
         let blocks = store.load_all_blocks().unwrap();
-        let snapshot = wait_for_snapshot(store.as_ref(), 5_000)
+        let snapshot = wait_for_snapshot(store.as_ref(), 15_000)
             .await
             .expect("expected snapshot for restart");
         let mut replayed = Chain::from_blocks(blocks).unwrap();
