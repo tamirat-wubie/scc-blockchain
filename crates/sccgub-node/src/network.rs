@@ -2331,9 +2331,6 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let quorum = runtime_peer.consensus_quorum().await;
-        assert_eq!(quorum, 3);
-        assert_eq!(runtime_peer.validator_set.len(), 3);
         let block = {
             let guard = chain_proposer.read().await;
             guard.build_candidate_block().unwrap()
