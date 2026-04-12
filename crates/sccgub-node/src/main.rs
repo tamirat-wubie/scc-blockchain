@@ -247,7 +247,12 @@ fn replay_chain_state(
     Ok((replayed.state, replayed.balances))
 }
 
-fn restore_snapshot_if_available(store: &ChainStore, chain: &mut Chain, allow_restore: bool) {
+fn restore_snapshot_if_available(
+    store: &ChainStore,
+    chain: &mut Chain,
+    allow_restore: bool,
+    durable_store: Option<std::sync::Arc<dyn sccgub_state::store::StateStore>>,
+) {
     if !allow_restore {
         return;
     }
@@ -299,12 +304,22 @@ fn restore_snapshot_if_available(store: &ChainStore, chain: &mut Chain, allow_re
         return;
     }
 
-    chain.restore_from_snapshot(&snapshot);
+    if let Some(store) = durable_store {
+        if let Err(e) = chain.restore_from_snapshot_with_store(&snapshot, store) {
+            eprintln!("Warning: snapshot restore with store failed: {}", e);
+        }
+    } else {
+        chain.restore_from_snapshot(&snapshot);
+    }
 }
 
-fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &config::NodeConfig) {
+fn bind_state_store_if_enabled(
+    store: &ChainStore,
+    chain: &mut Chain,
+    config: &config::NodeConfig,
+) -> Option<std::sync::Arc<dyn sccgub_state::store::StateStore>> {
     if !config.storage.state_store_enabled {
-        return;
+        return None;
     }
 
     let state_store = match store.open_state_store(&config.storage) {
@@ -313,13 +328,13 @@ fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &c
         }
         Err(e) => {
             eprintln!("Warning: state store open failed: {}", e);
-            return;
+            return None;
         }
     };
 
     match state_store.is_empty() {
         Ok(true) => {
-            if let Err(e) = chain.state.bind_store(state_store) {
+            if let Err(e) = chain.state.bind_store(state_store.clone()) {
                 eprintln!("Warning: state store bind failed: {}", e);
             }
         }
@@ -329,14 +344,14 @@ fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &c
                 Ok(trie) => trie,
                 Err(e) => {
                     eprintln!("Warning: state store load failed: {}", e);
-                    return;
+                    return Some(state_store);
                 }
             };
             let durable_root = durable_trie.root_readonly();
             let expected_root = chain.state.state_root();
             if durable_root == expected_root {
                 chain.state.trie = durable_trie;
-            } else if let Err(e) = chain.state.bind_store(state_store) {
+            } else if let Err(e) = chain.state.bind_store(state_store.clone()) {
                 eprintln!(
                     "Warning: state store root mismatch (durable={} expected={}); rebinding failed: {}",
                     hex::encode(durable_root),
@@ -349,6 +364,8 @@ fn bind_state_store_if_enabled(store: &ChainStore, chain: &mut Chain, config: &c
             eprintln!("Warning: state store status check failed: {}", e);
         }
     }
+
+    Some(state_store)
 }
 
 fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphrase: &str) {
@@ -371,7 +388,7 @@ fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphras
     }
 
     let mut chain = Chain::init();
-    bind_state_store_if_enabled(&store, &mut chain, &config);
+    let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
     let genesis = chain.latest_block().unwrap();
 
     store
@@ -426,9 +443,8 @@ fn cmd_produce(
         std::process::exit(1);
     });
 
-    // Try to restore from snapshot when it matches the chain tip.
-    restore_snapshot_if_available(&store, &mut chain, true);
-    bind_state_store_if_enabled(&store, &mut chain, &config);
+    let durable_store = bind_state_store_if_enabled(&store, &mut chain, &config);
+    restore_snapshot_if_available(&store, &mut chain, true, durable_store);
 
     // Load persisted validator key if available.
     if store.has_validator_key() {
@@ -1444,17 +1460,18 @@ async fn cmd_serve(
             std::process::exit(1);
         }
     };
+    let durable_store = bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
     restore_snapshot_if_available(
         store.as_ref(),
         &mut chain,
         config.storage.snapshot_restore_enabled,
+        durable_store,
     );
     if store.has_validator_key() {
         if let Ok(key) = store.load_validator_key(passphrase) {
             chain.set_validator_key(key);
         }
     }
-    bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
     if config.network.enable || p2p {
         match network::NetworkRuntime::validators_from_config(&config.network) {
             Ok(validators) => chain.set_validator_set(validators),

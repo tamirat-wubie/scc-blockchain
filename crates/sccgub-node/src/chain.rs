@@ -1453,6 +1453,15 @@ impl Chain {
         self.finality_config = snapshot.finality_config.clone();
     }
 
+    pub fn restore_from_snapshot_with_store(
+        &mut self,
+        snapshot: &crate::persistence::StateSnapshot,
+        store: std::sync::Arc<dyn sccgub_state::store::StateStore>,
+    ) -> Result<(), String> {
+        self.restore_from_snapshot(snapshot);
+        self.state.bind_store(store)
+    }
+
     /// Get the latest block.
     pub fn latest_block(&self) -> Option<&Block> {
         self.blocks.last()
