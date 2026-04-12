@@ -1,4 +1,7 @@
 /target
+/target-windows-*
+/.codex-*
+/.claude/settings.local.json
 *.swp
 *.swo
 .DS_Store
