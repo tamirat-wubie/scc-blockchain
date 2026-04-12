@@ -5,7 +5,7 @@
 **Repo:** 9 crates, 622 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Known Limits (MVP) Summary:**
-- Default single-proposer mode when no validator set is configured
+- Default single-proposer mode when no validator set is configured (validator set snapshots persist across restarts)
 - Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)
@@ -84,7 +84,7 @@ Auditors should focus on these files first:
 
 ### 4.2 Known Limitations (MVP)
 
-1. **Default single-proposer mode** — Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator
+1. **Default single-proposer mode** — Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator; validator set snapshots persist across restarts
 2. **Replay-authoritative state** — Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional sled-backed trie mirror exists, but replay remains authoritative
 3. **P2P networking is minimal** — Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits
 4. **No ZK/privacy layer** — Placeholder types exist (ZkCommitment) but no implementation

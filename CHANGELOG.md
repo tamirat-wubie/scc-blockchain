@@ -46,7 +46,7 @@ All notable changes to SCCGUB are documented here.
 - CLI governance registry status command
 
 #### Known Limits (MVP)
-- Default single-proposer mode when no validator set is configured
+- Default single-proposer mode when no validator set is configured (validator set snapshots persist across restarts)
 - Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)

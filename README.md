@@ -37,7 +37,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 
 ## Known Limits (MVP)
 
-- **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator.
+- **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator; validator set snapshots persist across restarts.
 - **Replay-authoritative state:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional sled-backed state store can mirror the trie, but replay remains authoritative.
 - **P2P networking is minimal:** Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits.
 - **No ZK/privacy layer:** Placeholder types exist (ZkCommitment) but no implementation.
