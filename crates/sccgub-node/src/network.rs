@@ -3,7 +3,7 @@
 //! Dependencies: sccgub-network (messages/peer), sccgub-node::chain, tokio transport.
 //! Invariants: length-delimited frames, chain_id/version checks, fail-closed imports.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -24,7 +24,7 @@ use sccgub_network::messages::{
 };
 use sccgub_network::peer::{PeerInfo, PeerRegistry, PeerState};
 use sccgub_types::agent::ValidatorAuthority;
-use sccgub_types::governance::PrecedenceLevel;
+use sccgub_types::governance::{FinalityMode, PrecedenceLevel};
 use sccgub_types::Hash;
 
 use crate::chain::Chain;
@@ -424,20 +424,30 @@ impl NetworkRuntime {
             .insert(block.header.block_id, block.clone());
 
         let epoch = self.current_epoch().await;
-        let mut rounds = self.consensus_rounds.lock().await;
         let height = block.header.height;
-        let state = rounds.entry(height).or_insert_with(|| RoundState {
-            round: ConsensusRound::new(
-                self.chain_id,
-                epoch,
-                block.header.block_id,
-                height,
-                0,
-                self.validator_set.clone(),
-                self.config.max_rounds,
+        let desired_quorum = self.consensus_quorum().await;
+        let mut rounds = self.consensus_rounds.lock().await;
+        let (state, created) = match rounds.entry(height) {
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+            Entry::Vacant(entry) => (
+                entry.insert(RoundState {
+                    round: ConsensusRound::new(
+                        self.chain_id,
+                        epoch,
+                        block.header.block_id,
+                        height,
+                        0,
+                        self.validator_set.clone(),
+                        self.config.max_rounds,
+                    ),
+                    last_round_ms: now_ms(),
+                }),
+                true,
             ),
-            last_round_ms: now_ms(),
-        });
+        };
+        if created {
+            state.round.quorum = desired_quorum;
+        }
         if state.round.epoch != epoch {
             return Err("Consensus epoch mismatch".into());
         }
@@ -502,20 +512,30 @@ impl NetworkRuntime {
             return Ok(());
         }
         let epoch = self.current_epoch().await;
+        let desired_quorum = self.consensus_quorum().await;
         self.verify_vote_signature(&vote, epoch)?;
         let mut rounds = self.consensus_rounds.lock().await;
-        let state = rounds.entry(vote.height).or_insert_with(|| RoundState {
-            round: ConsensusRound::new(
-                self.chain_id,
-                epoch,
-                vote.block_hash,
-                vote.height,
-                vote.round,
-                self.validator_set.clone(),
-                self.config.max_rounds,
+        let (state, created) = match rounds.entry(vote.height) {
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+            Entry::Vacant(entry) => (
+                entry.insert(RoundState {
+                    round: ConsensusRound::new(
+                        self.chain_id,
+                        epoch,
+                        vote.block_hash,
+                        vote.height,
+                        vote.round,
+                        self.validator_set.clone(),
+                        self.config.max_rounds,
+                    ),
+                    last_round_ms: now_ms(),
+                }),
+                true,
             ),
-            last_round_ms: now_ms(),
-        });
+        };
+        if created {
+            state.round.quorum = desired_quorum;
+        }
         if state.round.epoch != epoch {
             return Ok(());
         }
@@ -817,6 +837,24 @@ impl NetworkRuntime {
     async fn current_epoch(&self) -> u64 {
         let chain = self.chain.read().await;
         chain.treasury.epoch
+    }
+
+    async fn consensus_quorum(&self) -> u32 {
+        let chain = self.chain.read().await;
+        let finality_mode = chain.state.state.governance_state.finality_mode;
+        drop(chain);
+        let validator_count = self.validator_set.len() as u32;
+        let default_quorum = (2 * validator_count) / 3 + 1;
+        match finality_mode {
+            FinalityMode::BftCertified { quorum_threshold } => {
+                let mut quorum = quorum_threshold.max(1);
+                if validator_count > 0 && quorum > validator_count {
+                    quorum = validator_count;
+                }
+                quorum
+            }
+            FinalityMode::Deterministic => default_quorum,
+        }
     }
 
     async fn maybe_advance_consensus(&self, height: u64) -> Result<(), String> {
@@ -1271,6 +1309,8 @@ mod tests {
     use sccgub_crypto::keys::generate_keypair;
     use sccgub_governance::validator::round_robin_proposer;
     use sccgub_network::messages::HelloMessage;
+    use sccgub_types::governance::FinalityMode;
+    use sccgub_types::tension::TensionValue;
     use std::fs;
     use tokio::time::{sleep, Duration};
 
@@ -1363,6 +1403,53 @@ mod tests {
             "Expected bad signature rejection, got: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn test_bft_quorum_override_uses_governance_threshold() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let other_key = generate_keypair();
+        let third_key = generate_keypair();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![
+            hex::encode(local_pk),
+            hex::encode(*other_key.verifying_key().as_bytes()),
+            hex::encode(*third_key.verifying_key().as_bytes()),
+        ];
+
+        {
+            let mut guard = chain.write().await;
+            guard.validator_key = local_key;
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 2,
+            };
+            guard.set_validator_set(vec![ValidatorAuthority {
+                node_id: local_pk,
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            }]);
+        }
+
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+        let block = { chain.read().await.build_candidate_block().unwrap() };
+        runtime
+            .handle_block_proposal(BlockProposalMessage {
+                proposer_id: local_pk,
+                block: block.clone(),
+                round: 0,
+                signature: Vec::new(),
+            })
+            .await
+            .unwrap();
+
+        let rounds = runtime.consensus_rounds.lock().await;
+        let state = rounds.get(&block.header.height).expect("round created");
+        assert_eq!(state.round.quorum, 2);
     }
 
     #[tokio::test]
