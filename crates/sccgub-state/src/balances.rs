@@ -71,6 +71,12 @@ impl BalanceLedger {
     pub fn account_count(&self) -> usize {
         self.balances.values().filter(|v| v.raw() > 0).count()
     }
+
+    /// Restore or import a balance that is already represented in persisted state.
+    /// This bypasses dirty tracking so replay/snapshot reconstruction stays O(1).
+    pub fn import_balance(&mut self, agent: AgentId, amount: TensionValue) {
+        self.balances.insert(agent, amount);
+    }
 }
 
 #[cfg(test)]

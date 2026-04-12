@@ -10,6 +10,17 @@ use crate::timestamp::CausalTimestamp;
 use crate::transition::SymbolicTransition;
 use crate::{ConstraintId, Hash, MerkleRoot, ZERO_HASH};
 
+pub const LEGACY_BLOCK_VERSION: u32 = 1;
+pub const CANONICAL_AGENT_BLOCK_VERSION: u32 = 2;
+pub const CURRENT_BLOCK_VERSION: u32 = CANONICAL_AGENT_BLOCK_VERSION;
+
+pub fn is_supported_block_version(version: u32) -> bool {
+    matches!(
+        version,
+        LEGACY_BLOCK_VERSION | CANONICAL_AGENT_BLOCK_VERSION
+    )
+}
+
 /// A block is a governed symbolic state transition carrying its own causal proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -68,6 +79,8 @@ pub struct BlockBody {
     pub transition_count: u32,
     pub total_tension_delta: TensionValue,
     pub constraint_satisfaction: Vec<(ConstraintId, bool)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_consensus_params: Option<Vec<u8>>,
 }
 
 impl Block {
@@ -90,13 +103,17 @@ impl Block {
         if u32::try_from(self.body.transitions.len()) != Ok(self.body.transition_count) {
             return false;
         }
+        // Only genesis may carry embedded consensus parameters.
+        if self.header.height > 0 && self.body.genesis_consensus_params.is_some() {
+            return false;
+        }
         // Receipt count must match transition count (one receipt per transition).
         // Genesis blocks may have zero receipts with zero transitions.
         if !self.receipts.is_empty() && self.receipts.len() != self.body.transitions.len() {
             return false;
         }
         // Version check.
-        if self.header.version != 1 {
+        if !is_supported_block_version(self.header.version) {
             return false;
         }
         true
@@ -115,6 +132,8 @@ mod tests {
             active_norm_count: 0,
             emergency_mode: false,
             finality_mode: FinalityMode::Deterministic,
+            governance_limits: crate::governance::GovernanceLimitsSnapshot::default(),
+            finality_config: crate::governance::FinalityConfigSnapshot::default(),
         };
         Block {
             header: BlockHeader {
@@ -141,6 +160,7 @@ mod tests {
                 transition_count: 0,
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -163,6 +183,13 @@ mod tests {
     #[test]
     fn test_valid_genesis_is_structurally_valid() {
         assert!(genesis_block().is_structurally_valid());
+    }
+
+    #[test]
+    fn test_v2_genesis_is_structurally_valid() {
+        let mut b = genesis_block();
+        b.header.version = CURRENT_BLOCK_VERSION;
+        assert!(b.is_structurally_valid());
     }
 
     #[test]
@@ -199,6 +226,16 @@ mod tests {
     fn test_wrong_version_invalid() {
         let mut b = genesis_block();
         b.header.version = 0;
+        assert!(!b.is_structurally_valid());
+    }
+
+    #[test]
+    fn test_non_genesis_with_embedded_genesis_params_invalid() {
+        let mut b = genesis_block();
+        b.header.height = 1;
+        b.header.parent_id = [9u8; 32];
+        b.header.mfidel_seal = MfidelAtomicSeal::from_height(1);
+        b.body.genesis_consensus_params = Some(vec![1, 2, 3]);
         assert!(!b.is_structurally_valid());
     }
 }
