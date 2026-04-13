@@ -62,6 +62,94 @@ struct RoundState {
     last_round_ms: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedRoundState {
+    round: PersistedConsensusRound,
+    last_round_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedConsensusRound {
+    chain_id: Hash,
+    epoch: u64,
+    block_hash: Hash,
+    height: u64,
+    round: u32,
+    phase: sccgub_consensus::protocol::ConsensusPhase,
+    prevotes: Vec<Vote>,
+    precommits: Vec<Vote>,
+    validator_set: Vec<ValidatorRecord>,
+    quorum: u32,
+    max_rounds: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ValidatorRecord {
+    validator_id: Hash,
+    public_key: [u8; 32],
+}
+
+fn round_state_to_persisted(state: &RoundState) -> PersistedRoundState {
+    let mut validator_set = Vec::new();
+    for (validator_id, public_key) in &state.round.validator_set {
+        validator_set.push(ValidatorRecord {
+            validator_id: *validator_id,
+            public_key: *public_key,
+        });
+    }
+    let prevotes = state.round.prevotes.values().cloned().collect();
+    let precommits = state.round.precommits.values().cloned().collect();
+    PersistedRoundState {
+        round: PersistedConsensusRound {
+            chain_id: state.round.chain_id,
+            epoch: state.round.epoch,
+            block_hash: state.round.block_hash,
+            height: state.round.height,
+            round: state.round.round,
+            phase: state.round.phase,
+            prevotes,
+            precommits,
+            validator_set,
+            quorum: state.round.quorum,
+            max_rounds: state.round.max_rounds,
+        },
+        last_round_ms: state.last_round_ms,
+    }
+}
+
+fn persisted_to_round_state(persisted: PersistedRoundState) -> RoundState {
+    let mut validator_set = HashMap::new();
+    for record in persisted.round.validator_set {
+        validator_set.insert(record.validator_id, record.public_key);
+    }
+    let mut prevotes = HashMap::new();
+    for vote in persisted.round.prevotes {
+        prevotes.insert(vote.validator_id, vote);
+    }
+    let mut precommits = HashMap::new();
+    for vote in persisted.round.precommits {
+        precommits.insert(vote.validator_id, vote);
+    }
+    let validator_count = validator_set.len() as u32;
+    RoundState {
+        round: ConsensusRound {
+            chain_id: persisted.round.chain_id,
+            epoch: persisted.round.epoch,
+            block_hash: persisted.round.block_hash,
+            height: persisted.round.height,
+            round: persisted.round.round,
+            phase: persisted.round.phase,
+            prevotes,
+            precommits,
+            validator_count,
+            quorum: persisted.round.quorum,
+            max_rounds: persisted.round.max_rounds,
+            validator_set,
+        },
+        last_round_ms: persisted.last_round_ms,
+    }
+}
+
 struct RateState {
     window_start_ms: u64,
     count: u32,
@@ -151,7 +239,11 @@ impl NetworkRuntime {
             let rounds = self.consensus_rounds.lock().await;
             let serializable: std::collections::HashMap<u64, serde_json::Value> = rounds
                 .iter()
-                .filter_map(|(h, s)| serde_json::to_value(s).ok().map(|v| (*h, v)))
+                .filter_map(|(h, s)| {
+                    serde_json::to_value(round_state_to_persisted(s))
+                        .ok()
+                        .map(|v| (*h, v))
+                })
                 .collect();
             drop(rounds);
             if let Err(e) = store.save_consensus_state(&serializable) {
@@ -161,6 +253,7 @@ impl NetworkRuntime {
     }
 
     pub async fn run(self: Arc<Self>) -> Result<(), String> {
+        self.load_persisted_consensus_state().await;
         let listener_addr = format!("{}:{}", self.config.bind, self.config.port);
         let listener = TcpListener::bind(&listener_addr)
             .await
@@ -203,6 +296,38 @@ impl NetworkRuntime {
         });
 
         Ok(())
+    }
+
+    async fn load_persisted_consensus_state(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let persisted = match store.load_consensus_state() {
+            Ok(state) => state,
+            Err(e) => {
+                tracing::warn!("Failed to load consensus state: {}", e);
+                return;
+            }
+        };
+        if persisted.is_empty() {
+            return;
+        }
+
+        let mut rounds = self.consensus_rounds.lock().await;
+        for (height, value) in persisted {
+            match serde_json::from_value::<PersistedRoundState>(value) {
+                Ok(state) => {
+                    rounds.insert(height, persisted_to_round_state(state));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize consensus round at height {}: {}",
+                        height,
+                        e
+                    );
+                }
+            }
+        }
     }
 
     pub fn validators_from_config(
@@ -1608,6 +1733,51 @@ mod tests {
         assert!(runtime.validator_set.contains_key(&local_pk));
         assert!(runtime.validator_set.contains_key(&other_pk));
         assert_eq!(runtime.validator_set.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_load_persisted_consensus_state() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_consensus_state_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Arc::new(ChainStore::new(&dir).unwrap());
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = { *chain.read().await.validator_key.verifying_key().as_bytes() };
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(local_pk)];
+
+        let runtime = NetworkRuntime::new(chain, config)
+            .await
+            .unwrap()
+            .with_persistence(store.clone(), 1);
+
+        let round = ConsensusRound::new(
+            runtime.chain_id,
+            0,
+            [0u8; 32],
+            1,
+            0,
+            runtime.validator_set.clone(),
+            runtime.config.max_rounds,
+        );
+        let state = RoundState {
+            round,
+            last_round_ms: now_ms(),
+        };
+        let mut payload = std::collections::HashMap::new();
+        payload.insert(
+            1u64,
+            serde_json::to_value(round_state_to_persisted(&state)).unwrap(),
+        );
+        store.save_consensus_state(&payload).unwrap();
+
+        runtime.load_persisted_consensus_state().await;
+
+        let rounds = runtime.consensus_rounds.lock().await;
+        assert!(rounds.contains_key(&1u64));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

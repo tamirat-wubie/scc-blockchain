@@ -231,7 +231,11 @@ impl ChainStore {
     ) -> std::io::Result<()> {
         let path = self.base_dir.join("consensus_rounds.json");
         let tmp_path = self.base_dir.join("consensus_rounds.json.tmp");
-        let json = serde_json::to_string(rounds).map_err(std::io::Error::other)?;
+        let serializable: std::collections::HashMap<String, serde_json::Value> = rounds
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        let json = serde_json::to_string(&serializable).map_err(std::io::Error::other)?;
         fs::write(&tmp_path, json)?;
         fs::rename(&tmp_path, &path)
     }
@@ -246,7 +250,16 @@ impl ChainStore {
             return Ok(std::collections::HashMap::new());
         }
         let data = fs::read_to_string(&path)?;
-        serde_json::from_str(&data).map_err(std::io::Error::other)
+        let raw: std::collections::HashMap<String, serde_json::Value> =
+            serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        let mut parsed = std::collections::HashMap::new();
+        for (key, value) in raw {
+            let height = key.parse::<u64>().map_err(|e| {
+                std::io::Error::other(format!("Invalid consensus height {}: {}", key, e))
+            })?;
+            parsed.insert(height, value);
+        }
+        Ok(parsed)
     }
 
     /// Clear persisted consensus state (after successful finalization).
