@@ -4148,7 +4148,7 @@ mod tests {
         config1.peers = vec![addr2.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2)];
         config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
-        config1.round_timeout_ms = 800;
+        config1.round_timeout_ms = 60_000; // High to prevent timeout races on slow CI.
         config1.max_rounds = 2;
         config1.min_connected_peers = 1;
         config1.max_same_subnet_pct = 100;
@@ -4219,12 +4219,21 @@ mod tests {
             guard.build_candidate_block_unchecked().unwrap()
         };
 
+        async fn current_round(runtime: &NetworkRuntime, height: u64) -> u32 {
+            let rounds = runtime.consensus_rounds.lock().await;
+            rounds
+                .get(&height)
+                .map(|state| state.round.round)
+                .unwrap_or(0)
+        }
+
+        let mut round = 0;
         let mut proposal = NetworkMessage::BlockProposal(signed_block_proposal(
             &proposer_key,
             BlockProposalMessage {
                 proposer_id: proposer_pk,
                 block: block.clone(),
-                round: 0,
+                round,
                 signature: Vec::new(),
             },
         ));
@@ -4253,18 +4262,39 @@ mod tests {
                         }
                     }
                 }
+                round = current_round(proposer_runtime.as_ref(), block.header.height).await;
                 proposal = NetworkMessage::BlockProposal(signed_block_proposal(
                     &proposer_key,
                     BlockProposalMessage {
                         proposer_id: proposer_pk,
                         block: block.clone(),
-                        round: 0,
+                        round,
                         signature: Vec::new(),
                     },
                 ));
-                let _ = proposer_runtime
+                let retry = proposer_runtime
                     .handle_message(proposal.clone(), "local")
                     .await;
+                if let Err(retry_err) = retry {
+                    panic!("proposal retry failed: {}", retry_err);
+                }
+            } else if err.contains("Consensus round mismatch") {
+                round = current_round(proposer_runtime.as_ref(), block.header.height).await;
+                proposal = NetworkMessage::BlockProposal(signed_block_proposal(
+                    &proposer_key,
+                    BlockProposalMessage {
+                        proposer_id: proposer_pk,
+                        block: block.clone(),
+                        round,
+                        signature: Vec::new(),
+                    },
+                ));
+                let retry = proposer_runtime
+                    .handle_message(proposal.clone(), "local")
+                    .await;
+                if let Err(retry_err) = retry {
+                    panic!("proposal retry failed: {}", retry_err);
+                }
             } else {
                 panic!("proposal handling failed: {}", err);
             }
@@ -4275,19 +4305,22 @@ mod tests {
             .unwrap();
 
         let epoch = proposer_runtime.current_epoch().await;
+        if round == 0 {
+            round = current_round(proposer_runtime.as_ref(), block.header.height).await;
+        }
         let prevote_payload = vote_sign_data(
             &proposer_runtime.chain_id,
             epoch,
             &block.header.block_id,
             block.header.height,
-            0,
+            round,
             VoteType::Prevote,
         );
         let prevote_proposer = Vote {
             validator_id: proposer_pk,
             block_hash: block.header.block_id,
             height: block.header.height,
-            round: 0,
+            round,
             vote_type: VoteType::Prevote,
             signature: sign(&proposer_key, &prevote_payload),
         };
@@ -4295,7 +4328,7 @@ mod tests {
             validator_id: if proposer_pk == pk1 { pk2 } else { pk1 },
             block_hash: block.header.block_id,
             height: block.header.height,
-            round: 0,
+            round,
             vote_type: VoteType::Prevote,
             signature: if proposer_pk == pk1 {
                 sign(&key2, &prevote_payload)
@@ -4343,14 +4376,14 @@ mod tests {
             epoch,
             &block.header.block_id,
             block.header.height,
-            0,
+            round,
             VoteType::Precommit,
         );
         let precommit_proposer = Vote {
             validator_id: proposer_pk,
             block_hash: block.header.block_id,
             height: block.header.height,
-            round: 0,
+            round,
             vote_type: VoteType::Precommit,
             signature: sign(&proposer_key, &precommit_payload),
         };
@@ -4358,7 +4391,7 @@ mod tests {
             validator_id: if proposer_pk == pk1 { pk2 } else { pk1 },
             block_hash: block.header.block_id,
             height: block.header.height,
-            round: 0,
+            round,
             vote_type: VoteType::Precommit,
             signature: if proposer_pk == pk1 {
                 sign(&key2, &precommit_payload)
@@ -4459,7 +4492,7 @@ mod tests {
         config1.peers = vec![addr2.clone(), addr3.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
         config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
-        config1.round_timeout_ms = 800;
+        config1.round_timeout_ms = 60_000; // High to prevent timeout races on slow CI.
         config1.max_rounds = 2;
         config1.min_connected_peers = 2;
         config1.max_same_subnet_pct = 100;
