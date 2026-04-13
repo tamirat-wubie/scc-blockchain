@@ -165,8 +165,12 @@ mod tests {
     fn test_replicator_dynamics() {
         let mut registry = NormRegistry::new();
         // Norm A: high fitness, Norm B: low fitness. 50% share each.
-        registry.register(test_norm([1u8; 32], 50, 10));
-        registry.register(test_norm([2u8; 32], 50, 5));
+        registry
+            .register(test_norm([1u8; 32], 50, 10))
+            .expect("register norm A");
+        registry
+            .register(test_norm([2u8; 32], 50, 5))
+            .expect("register norm B");
 
         registry.evolve_epoch();
 
