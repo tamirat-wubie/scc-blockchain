@@ -672,14 +672,22 @@ impl NetworkRuntime {
     }
 
     async fn handle_block_proposal(&self, msg: BlockProposalMessage) -> Result<(), String> {
-        let block = msg.block;
+        if !verify_block_proposal_signature(&msg) {
+            return Err("Block proposal signature invalid".into());
+        }
         let should_gossip = msg.proposer_id != self.validator_id;
-        if msg.proposer_id != block.header.validator_id {
+        let BlockProposalMessage {
+            proposer_id,
+            block,
+            round,
+            signature,
+        } = msg;
+        if proposer_id != block.header.validator_id {
             return Err("Block proposal proposer_id mismatch".into());
         }
         {
             let validator_set = self.validator_set.read().await;
-            if !validator_set.is_empty() && !validator_set.contains_key(&msg.proposer_id) {
+            if !validator_set.is_empty() && !validator_set.contains_key(&proposer_id) {
                 return Err("Block proposer not in authorized set".into());
             }
         }
@@ -706,7 +714,7 @@ impl NetworkRuntime {
                         epoch,
                         block.header.block_id,
                         height,
-                        msg.round,
+                        round,
                         validator_set,
                         self.config.max_rounds,
                     ),
@@ -721,10 +729,10 @@ impl NetworkRuntime {
         if state.round.epoch != epoch {
             return Err("Consensus epoch mismatch".into());
         }
-        if state.round.round != msg.round {
+        if state.round.round != round {
             return Err(format!(
                 "Consensus round mismatch: expected {}, got {}",
-                state.round.round, msg.round
+                state.round.round, round
             ));
         }
         if state.round.block_hash == EMPTY_HASH {
@@ -739,7 +747,7 @@ impl NetworkRuntime {
                 epoch,
                 block.header.block_id,
                 height,
-                msg.round,
+                round,
                 VoteType::Prevote,
             );
             state.round.add_prevote(vote.clone())?;
@@ -750,10 +758,10 @@ impl NetworkRuntime {
         self.maybe_advance_consensus(height).await?;
         if should_gossip {
             self.broadcast(NetworkMessage::BlockProposal(BlockProposalMessage {
-                proposer_id: msg.proposer_id,
+                proposer_id,
                 block,
-                round: msg.round,
-                signature: Vec::new(),
+                round,
+                signature,
             }))
             .await;
         }
@@ -1708,12 +1716,15 @@ impl NetworkRuntime {
                     Err(_) => continue,
                 }
             };
-            let msg = NetworkMessage::BlockProposal(BlockProposalMessage {
-                proposer_id: self.validator_id,
-                block,
-                round,
-                signature: Vec::new(),
-            });
+            let msg = NetworkMessage::BlockProposal(signed_block_proposal(
+                &self.validator_key,
+                BlockProposalMessage {
+                    proposer_id: self.validator_id,
+                    block,
+                    round,
+                    signature: Vec::new(),
+                },
+            ));
             if let Err(e) = self.handle_message(msg.clone(), "local").await {
                 tracing::warn!("Local proposal handling failed: {}", e);
             }
@@ -1744,6 +1755,26 @@ fn verify_hello_signature(msg: &HelloMessage) -> bool {
     unsigned.signature = Vec::new();
     let bytes = canonical_bytes(&NetworkMessage::Hello(unsigned));
     verify(&msg.validator_id, &bytes, &msg.signature)
+}
+
+fn signed_block_proposal(
+    key: &ed25519_dalek::SigningKey,
+    mut msg: BlockProposalMessage,
+) -> BlockProposalMessage {
+    msg.signature = Vec::new();
+    let bytes = canonical_bytes(&NetworkMessage::BlockProposal(msg.clone()));
+    msg.signature = sign(key, &bytes);
+    msg
+}
+
+fn verify_block_proposal_signature(msg: &BlockProposalMessage) -> bool {
+    if msg.signature.len() < 64 {
+        return false;
+    }
+    let mut unsigned = msg.clone();
+    unsigned.signature = Vec::new();
+    let bytes = canonical_bytes(&NetworkMessage::BlockProposal(unsigned));
+    verify(&msg.proposer_id, &bytes, &msg.signature)
 }
 
 fn validator_set_map(config: &NetworkConfig) -> Result<HashMap<Hash, [u8; 32]>, String> {
@@ -1931,10 +1962,8 @@ mod tests {
     #[tokio::test]
     async fn test_handle_hello_rejects_unknown_validator() {
         let chain = Arc::new(RwLock::new(Chain::init()));
-        let local_pk = {
-            let guard = chain.read().await;
-            *guard.validator_key.verifying_key().as_bytes()
-        };
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
         let config = default_network_config_with_validator(&local_pk);
         let runtime = NetworkRuntime::new(chain, config).await.unwrap();
 
@@ -2316,12 +2345,15 @@ mod tests {
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
         let block = { chain.read().await.build_candidate_block().unwrap() };
         runtime
-            .handle_block_proposal(BlockProposalMessage {
-                proposer_id: local_pk,
-                block: block.clone(),
-                round: 0,
-                signature: Vec::new(),
-            })
+            .handle_block_proposal(signed_block_proposal(
+                &local_key,
+                BlockProposalMessage {
+                    proposer_id: local_pk,
+                    block: block.clone(),
+                    round: 0,
+                    signature: Vec::new(),
+                },
+            ))
             .await
             .unwrap();
 
@@ -2452,12 +2484,15 @@ mod tests {
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
         let block = { chain.read().await.build_candidate_block().unwrap() };
         runtime
-            .handle_block_proposal(BlockProposalMessage {
-                proposer_id: local_pk,
-                block: block.clone(),
-                round: 0,
-                signature: Vec::new(),
-            })
+            .handle_block_proposal(signed_block_proposal(
+                &local_key,
+                BlockProposalMessage {
+                    proposer_id: local_pk,
+                    block: block.clone(),
+                    round: 0,
+                    signature: Vec::new(),
+                },
+            ))
             .await
             .unwrap();
 
@@ -2540,12 +2575,15 @@ mod tests {
 
             runtime_peer
                 .handle_message(
-                    NetworkMessage::BlockProposal(BlockProposalMessage {
-                        proposer_id: expected_proposer_id,
-                        block: block.clone(),
-                        round: 0,
-                        signature: Vec::new(),
-                    }),
+                    NetworkMessage::BlockProposal(signed_block_proposal(
+                        &expected_signing_key,
+                        BlockProposalMessage {
+                            proposer_id: expected_proposer_id,
+                            block: block.clone(),
+                            round: 0,
+                            signature: Vec::new(),
+                        },
+                    )),
                     "127.0.0.1:9101",
                 )
                 .await
@@ -3092,12 +3130,15 @@ mod tests {
 
         runtime
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: local_pk,
-                    block: block.clone(),
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &local_key,
+                    BlockProposalMessage {
+                        proposer_id: local_pk,
+                        block: block.clone(),
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9001",
             )
             .await
@@ -3146,12 +3187,15 @@ mod tests {
 
         let err = runtime
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: other_pk,
-                    block,
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &other_key,
+                    BlockProposalMessage {
+                        proposer_id: other_pk,
+                        block,
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9001",
             )
             .await
@@ -3166,10 +3210,8 @@ mod tests {
     #[tokio::test]
     async fn test_peer_flow_timeout_then_finalize() {
         let chain = Arc::new(RwLock::new(Chain::init()));
-        let local_pk = {
-            let guard = chain.read().await;
-            *guard.validator_key.verifying_key().as_bytes()
-        };
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
         let mut config = crate::config::NodeConfig::default().network;
         config.validators = vec![hex::encode(local_pk)];
         config.round_timeout_ms = 1_000;
@@ -3190,12 +3232,15 @@ mod tests {
 
         runtime
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: local_pk,
-                    block: block.clone(),
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &local_key,
+                    BlockProposalMessage {
+                        proposer_id: local_pk,
+                        block: block.clone(),
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9001",
             )
             .await
@@ -3296,12 +3341,15 @@ mod tests {
 
         runtime_peer
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: proposer_pk,
-                    block: block.clone(),
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &proposer_key,
+                    BlockProposalMessage {
+                        proposer_id: proposer_pk,
+                        block: block.clone(),
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9101",
             )
             .await
@@ -3445,15 +3493,25 @@ mod tests {
             let guard = chain_proposer.read().await;
             guard.build_candidate_block().unwrap()
         };
+        let proposer_signing_key = if proposer_pk == pk1 {
+            &key1
+        } else if proposer_pk == pk2 {
+            &key2
+        } else {
+            &key3
+        };
 
         runtime_peer
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: proposer_pk,
-                    block: block.clone(),
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    proposer_signing_key,
+                    BlockProposalMessage {
+                        proposer_id: proposer_pk,
+                        block: block.clone(),
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9201",
             )
             .await
@@ -3587,12 +3645,15 @@ mod tests {
 
         runtime_peer
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: proposer_pk,
-                    block: block.clone(),
-                    round: 0,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &proposer_key,
+                    BlockProposalMessage {
+                        proposer_id: proposer_pk,
+                        block: block.clone(),
+                        round: 0,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9301",
             )
             .await
@@ -3653,12 +3714,15 @@ mod tests {
 
         runtime_peer
             .handle_message(
-                NetworkMessage::BlockProposal(BlockProposalMessage {
-                    proposer_id: proposer_pk,
-                    block: block.clone(),
-                    round: 1,
-                    signature: Vec::new(),
-                }),
+                NetworkMessage::BlockProposal(signed_block_proposal(
+                    &proposer_key,
+                    BlockProposalMessage {
+                        proposer_id: proposer_pk,
+                        block: block.clone(),
+                        round: 1,
+                        signature: Vec::new(),
+                    },
+                )),
                 "127.0.0.1:9302",
             )
             .await
