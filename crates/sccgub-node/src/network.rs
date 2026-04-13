@@ -893,6 +893,29 @@ impl NetworkRuntime {
             return Err("Finality certificate references unknown block".into());
         }
         chain.record_safety_certificate(cert);
+        if let Some(store) = &self.store {
+            if let Ok(Some(block)) = chain.block_at(cert.height).cloned() {
+                let snapshot = if self.snapshot_interval > 0
+                    && cert.height > 0
+                    && cert.height % self.snapshot_interval == 0
+                {
+                    Some(chain.create_snapshot())
+                } else {
+                    None
+                };
+                let store = store.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = store.save_block(&block) {
+                        eprintln!("Warning: failed to persist block: {}", e);
+                    }
+                    if let Some(snapshot) = snapshot {
+                        if let Err(e) = store.save_snapshot(&snapshot) {
+                            eprintln!("Warning: failed to persist snapshot: {}", e);
+                        }
+                    }
+                });
+            }
+        }
         Ok(())
     }
 
