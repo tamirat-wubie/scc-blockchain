@@ -2771,6 +2771,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_proposer_loop_toggle_disables_auto_blocks() {
+        use std::net::TcpListener;
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.enable = true;
+        config.bind = "127.0.0.1".into();
+        config.port = port;
+        config.validators = vec![hex::encode(local_pk)];
+        config.proposer_loop_enabled = false;
+        config.block_interval_ms = 200;
+
+        let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
+        runtime.run().await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let height = { chain.read().await.height() };
+        assert_eq!(
+            height, 0,
+            "Proposer loop disabled should prevent auto-produced blocks"
+        );
+    }
+
+    #[tokio::test]
     async fn test_peer_restart_matches_synced_chain_state() {
         let dir = std::env::temp_dir().join(format!("sccgub_peer_restart_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
