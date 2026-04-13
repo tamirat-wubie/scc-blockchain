@@ -2571,6 +2571,108 @@ mod tests {
     }
 
     #[test]
+    fn test_state_store_bind_persists_trie_root() {
+        use crate::config::StorageConfig;
+        use sccgub_state::store::StateStore;
+        use sccgub_state::trie::StateTrie;
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_state_store_bind_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = crate::persistence::ChainStore::new(&dir).expect("store init");
+        let storage = StorageConfig {
+            data_dir: PathBuf::from(&dir),
+            snapshot_restore_enabled: true,
+            state_store_enabled: true,
+            state_store_dir: PathBuf::from("state_db"),
+        };
+        let state_store = store.open_state_store(&storage).expect("open state store");
+        let state_store_arc = Arc::new(state_store.clone()) as Arc<dyn StateStore>;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain
+            .state
+            .bind_store(state_store_arc.clone())
+            .expect("bind store");
+
+        let actor_key = chain.validator_key.clone();
+        let actor_pk = *actor_key.verifying_key().as_bytes();
+        let actor_seal = MfidelAtomicSeal::from_height(0);
+        let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+
+        let target = b"data/state_store/bind".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id: actor_id,
+                public_key: actor_pk,
+                mfidel_seal: actor_seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "state store bind test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"durable".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: actor_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target.clone(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "state store bind test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical);
+
+        chain.submit_transition(tx).expect("submit should succeed");
+        chain
+            .produce_block()
+            .expect("block production should succeed");
+
+        chain.state.flush_store().expect("flush store");
+
+        let durable_trie = StateTrie::with_store(state_store_arc).expect("load durable trie");
+        assert_eq!(
+            durable_trie.root_readonly(),
+            chain.state.state_root(),
+            "durable trie root must match chain state root"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_chain_from_blocks_replays_governance_parameters() {
         use sccgub_governance::proposals::ProposalKind;
         use sccgub_types::governance::PrecedenceLevel;
