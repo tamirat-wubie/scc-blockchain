@@ -1312,17 +1312,30 @@ impl NetworkRuntime {
         loop {
             ticker.tick().await;
             let now = now_ms();
+            let current_epoch = self.current_epoch().await;
             let mut stale_hashes = Vec::new();
-            let mut timed_out = false;
+            let mut updated = false;
+            let mut to_remove = Vec::new();
             {
                 let mut rounds = self.consensus_rounds.lock().await;
-                for state in rounds.values_mut() {
+                for (height, state) in rounds.iter_mut() {
+                    if state.round.epoch != current_epoch {
+                        if state.round.block_hash != EMPTY_HASH {
+                            stale_hashes.push(state.round.block_hash);
+                        }
+                        to_remove.push(*height);
+                        updated = true;
+                        continue;
+                    }
                     if let Some(old_hash) = advance_round_if_timed_out(state, &self.config, now) {
                         if old_hash != EMPTY_HASH {
                             stale_hashes.push(old_hash);
                         }
-                        timed_out = true;
+                        updated = true;
                     }
+                }
+                for height in to_remove {
+                    rounds.remove(&height);
                 }
             }
             if !stale_hashes.is_empty() {
@@ -1331,7 +1344,7 @@ impl NetworkRuntime {
                     pending.remove(&hash);
                 }
             }
-            if timed_out {
+            if updated {
                 self.persist_consensus_state().await;
             }
         }
