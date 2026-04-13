@@ -709,6 +709,9 @@ impl NetworkRuntime {
         &self,
         msg: sccgub_network::messages::LawSyncMessage,
     ) -> Result<(), String> {
+        if !verify_law_sync_signature(&msg) {
+            return Err("Law sync signature invalid".into());
+        }
         if msg.protocol_version != self.config.protocol_version {
             return Err("Law sync protocol version mismatch".into());
         }
@@ -1798,6 +1801,26 @@ fn verify_hello_signature(msg: &HelloMessage) -> bool {
     let mut unsigned = msg.clone();
     unsigned.signature = Vec::new();
     let bytes = canonical_bytes(&NetworkMessage::Hello(unsigned));
+    verify(&msg.validator_id, &bytes, &msg.signature)
+}
+
+fn signed_law_sync(
+    key: &ed25519_dalek::SigningKey,
+    mut msg: sccgub_network::messages::LawSyncMessage,
+) -> sccgub_network::messages::LawSyncMessage {
+    msg.signature = Vec::new();
+    let bytes = canonical_bytes(&NetworkMessage::LawSync(msg.clone()));
+    msg.signature = sign(key, &bytes);
+    msg
+}
+
+fn verify_law_sync_signature(msg: &sccgub_network::messages::LawSyncMessage) -> bool {
+    if msg.signature.len() < 64 {
+        return false;
+    }
+    let mut unsigned = msg.clone();
+    unsigned.signature = Vec::new();
+    let bytes = canonical_bytes(&NetworkMessage::LawSync(unsigned));
     verify(&msg.validator_id, &bytes, &msg.signature)
 }
 
