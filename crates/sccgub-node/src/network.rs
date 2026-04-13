@@ -892,12 +892,13 @@ impl NetworkRuntime {
         if !known {
             return Err("Finality certificate references unknown block".into());
         }
+        let height = cert.height;
         chain.record_safety_certificate(cert);
         if let Some(store) = &self.store {
-            if let Some(block) = chain.block_at(cert.height).cloned() {
+            if let Some(block) = chain.block_at(height).cloned() {
                 let snapshot = if self.snapshot_interval > 0
-                    && cert.height > 0
-                    && cert.height % self.snapshot_interval == 0
+                    && height > 0
+                    && height % self.snapshot_interval == 0
                 {
                     Some(chain.create_snapshot())
                 } else {
