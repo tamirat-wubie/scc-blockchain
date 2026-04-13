@@ -3961,6 +3961,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_governed_finality_mode_sets_consensus_quorum() {
+        use sccgub_governance::proposals::ProposalKind;
+        use sccgub_types::governance::{FinalityMode, PrecedenceLevel};
+
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 300;
+        chain.validator_key = key1.clone();
+        let proposal_id = chain
+            .proposals
+            .submit(
+                pk1,
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyParameter {
+                    key: "finality.mode".into(),
+                    value: "bft:2".into(),
+                },
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &proposal_id,
+                pk1,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+
+        assert_eq!(
+            chain.state.state.governance_state.finality_mode,
+            FinalityMode::BftCertified {
+                quorum_threshold: 2
+            }
+        );
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2)];
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+        chain.set_validator_set(validators);
+
+        let runtime = Arc::new(
+            NetworkRuntime::new(Arc::new(RwLock::new(chain)), config)
+                .await
+                .unwrap(),
+        );
+        let quorum = runtime.consensus_quorum().await;
+        assert_eq!(quorum, 2);
+    }
+
+    #[tokio::test]
     async fn test_bandwidth_accounting_updates() {
         let chain = Arc::new(RwLock::new(Chain::init()));
         let local_pk = {
