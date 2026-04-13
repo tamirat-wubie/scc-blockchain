@@ -397,12 +397,7 @@ impl NetworkRuntime {
         let mut ticker = interval(Duration::from_millis(2_000));
         loop {
             ticker.tick().await;
-            let peers = {
-                let seeds = self.peer_seeds.lock().await;
-                let mut peers: Vec<String> = seeds.iter().cloned().collect();
-                peers.sort();
-                peers
-            };
+            let peers = self.collect_peer_targets().await;
             for peer_addr in peers {
                 if peer_addr == format!("{}:{}", self.config.bind, self.config.port) {
                     continue;
@@ -599,6 +594,32 @@ impl NetworkRuntime {
         }
         self.sync_peer_stats(peer_addr).await;
         Ok(())
+    }
+
+    async fn collect_peer_targets(&self) -> Vec<String> {
+        let mut targets = HashSet::new();
+        {
+            let seeds = self.peer_seeds.lock().await;
+            for peer in seeds.iter() {
+                targets.insert(peer.clone());
+            }
+        }
+
+        let validator_set = self.validator_set.read().await.clone();
+        let registry = self.registry.lock().await;
+        for peer in registry.peers.values() {
+            if peer.state == PeerState::Banned {
+                continue;
+            }
+            if !validator_set.is_empty() && !validator_set.contains_key(&peer.validator_id) {
+                continue;
+            }
+            targets.insert(peer.address.clone());
+        }
+
+        let mut peers: Vec<String> = targets.into_iter().collect();
+        peers.sort();
+        peers
     }
 
     async fn mark_peer_disconnected(&self, peer_addr: &str) {
@@ -1855,6 +1876,46 @@ mod tests {
             .find(|p| p.address == peer_addr)
             .unwrap();
         assert_eq!(peer.state, PeerState::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn test_collect_peer_targets_includes_registry_validators() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(local_pk), hex::encode(other_pk)];
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let peer_addr = "127.0.0.1:7001";
+        {
+            let mut registry = runtime.registry.lock().await;
+            registry
+                .upsert(PeerInfo {
+                    validator_id: other_pk,
+                    address: peer_addr.to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Disconnected,
+                })
+                .unwrap();
+        }
+
+        let peers = runtime.collect_peer_targets().await;
+        assert!(
+            peers.contains(&peer_addr.to_string()),
+            "Expected peer targets to include registry address"
+        );
     }
 
     #[tokio::test]
