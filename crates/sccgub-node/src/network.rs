@@ -1323,15 +1323,11 @@ impl NetworkRuntime {
             if validator_set.is_empty() {
                 continue;
             }
-            let mut updated = false;
-            {
+            let updated = {
                 let current = self.validator_set.read().await;
-                if current.len() != validator_set.len() {
-                    updated = true;
-                } else if !current.keys().all(|k| validator_set.contains_key(k)) {
-                    updated = true;
-                }
-            }
+                current.len() != validator_set.len()
+                    || !current.keys().all(|k| validator_set.contains_key(k))
+            };
             if updated {
                 let mut current = self.validator_set.write().await;
                 *current = validator_set;
