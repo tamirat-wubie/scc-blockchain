@@ -1066,11 +1066,16 @@ impl NetworkRuntime {
 
     async fn maybe_advance_consensus(&self, height: u64) -> Result<(), String> {
         if self.config.enable {
+            let validator_set = self.validator_set.read().await;
+            let effective_min_peers = self
+                .config
+                .min_connected_peers
+                .min(validator_set.len().saturating_sub(1));
+            drop(validator_set);
             let registry = self.registry.lock().await;
-            if let Err(e) = registry.check_diversity_with(
-                self.config.min_connected_peers,
-                self.config.max_same_subnet_pct,
-            ) {
+            if let Err(e) =
+                registry.check_diversity_with(effective_min_peers, self.config.max_same_subnet_pct)
+            {
                 return Err(format!("Peer diversity gate: {}", e));
             }
         }
@@ -3072,9 +3077,11 @@ mod tests {
             let guard = chain.read().await;
             *guard.validator_key.verifying_key().as_bytes()
         };
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
         let mut config = crate::config::NodeConfig::default().network;
         config.enable = true;
-        config.validators = vec![hex::encode(local_pk)];
+        config.validators = vec![hex::encode(local_pk), hex::encode(other_pk)];
 
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
         let block = {
