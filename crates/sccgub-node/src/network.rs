@@ -898,7 +898,7 @@ impl NetworkRuntime {
             if let Some(block) = chain.block_at(height).cloned() {
                 let snapshot = if self.snapshot_interval > 0
                     && height > 0
-                    && height % self.snapshot_interval == 0
+                    && height.is_multiple_of(self.snapshot_interval)
                 {
                     Some(chain.create_snapshot())
                 } else {
