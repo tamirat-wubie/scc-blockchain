@@ -538,7 +538,7 @@ impl NetworkRuntime {
     async fn handle_message(&self, message: NetworkMessage, peer_addr: &str) -> Result<(), String> {
         self.check_rate_limit(peer_addr).await?;
         self.check_bandwidth_limit(peer_addr).await?;
-        match message {
+        let result = match message {
             NetworkMessage::Hello(msg) => self.handle_hello(msg, peer_addr).await,
             NetworkMessage::Heartbeat(msg) => self.handle_heartbeat(msg, peer_addr).await,
             NetworkMessage::TransactionGossip(msg) => self.handle_tx_gossip(msg).await,
@@ -553,7 +553,24 @@ impl NetworkRuntime {
                 self.handle_finality_certificate(cert).await
             }
             NetworkMessage::LawSync(msg) => self.handle_law_sync(msg).await,
+        };
+        if let Err(err) = &result {
+            if self.should_penalize_error(err) {
+                let banned = self.record_peer_violation(peer_addr).await;
+                if banned {
+                    return Err("disconnect: peer violation".into());
+                }
+            }
         }
+        result
+    }
+
+    fn should_penalize_error(&self, err: &str) -> bool {
+        err.contains("signature invalid")
+            || err.contains("protocol version mismatch")
+            || err.contains("epoch mismatch")
+            || err.contains("not in authorized set")
+            || err.contains("proposer_id mismatch")
     }
 
     async fn handle_hello(&self, msg: HelloMessage, peer_addr: &str) -> Result<(), String> {
