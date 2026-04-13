@@ -2409,30 +2409,24 @@ mod tests {
         }
 
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
-        let (block, proposer_id, proposer_key) = {
-            let guard = chain.read().await;
-            let height = guard.height() + 1;
-            let proposer =
-                round_robin_proposer(&guard.validator_set, height).expect("expected proposer");
-            let proposer_id = proposer.node_id;
-            let proposer_key = if proposer_id == local_pk {
-                local_key.clone()
-            } else if proposer_id == *other_key.verifying_key().as_bytes() {
-                other_key.clone()
-            } else {
-                third_key.clone()
-            };
-            (
-                guard.build_candidate_block_unchecked().unwrap(),
-                proposer_id,
-                proposer_key,
-            )
-        };
+        // Override chain validator set to just local so it's always proposer.
+        // Runtime validator set still has 3 for quorum calculation.
+        {
+            let mut guard = chain.write().await;
+            guard.set_validator_set(vec![ValidatorAuthority {
+                node_id: local_pk,
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: TensionValue::from_integer(1),
+                causal_reliability: TensionValue::from_integer(1),
+                active: true,
+            }]);
+        }
+        let block = { chain.read().await.build_candidate_block().unwrap() };
         runtime
             .handle_block_proposal(signed_block_proposal(
-                &proposer_key,
+                &local_key,
                 BlockProposalMessage {
-                    proposer_id,
+                    proposer_id: local_pk,
                     block: block.clone(),
                     round: 0,
                     signature: Vec::new(),
@@ -2546,18 +2540,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_deterministic_quorum_is_one() {
+        // Single validator — always the proposer, quorum=1 in deterministic mode.
         let chain = Arc::new(RwLock::new(Chain::init()));
         let local_key = { chain.read().await.validator_key.clone() };
         let local_pk = *local_key.verifying_key().as_bytes();
-        let other_key = generate_keypair();
-        let third_key = generate_keypair();
 
         let mut config = crate::config::NodeConfig::default().network;
-        config.validators = vec![
-            hex::encode(local_pk),
-            hex::encode(*other_key.verifying_key().as_bytes()),
-            hex::encode(*third_key.verifying_key().as_bytes()),
-        ];
+        config.validators = vec![hex::encode(local_pk)];
 
         {
             let mut guard = chain.write().await;
@@ -2566,13 +2555,7 @@ mod tests {
         }
 
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
-        let block = {
-            chain
-                .read()
-                .await
-                .build_candidate_block_unchecked()
-                .unwrap()
-        };
+        let block = { chain.read().await.build_candidate_block().unwrap() };
         runtime
             .handle_block_proposal(signed_block_proposal(
                 &local_key,
