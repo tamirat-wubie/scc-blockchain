@@ -199,18 +199,17 @@ const CONSTRAINT_PREFIX: &[u8] = b"constraints/";
 /// This is the ONLY correct way to construct constraint keys.
 /// Constructing keys by string concatenation will re-introduce
 /// the N-1 prefix collision bug.
-pub fn constraint_key(symbol: &[u8], constraint_id: &[u8]) -> Vec<u8> {
-    assert!(
-        !symbol.contains(&0),
-        "symbol addresses must not contain null bytes"
-    );
+pub fn constraint_key(symbol: &[u8], constraint_id: &[u8]) -> Result<Vec<u8>, String> {
+    if symbol.contains(&0) {
+        return Err("symbol addresses must not contain null bytes".into());
+    }
     let mut k =
         Vec::with_capacity(CONSTRAINT_PREFIX.len() + symbol.len() + 1 + constraint_id.len());
     k.extend_from_slice(CONSTRAINT_PREFIX);
     k.extend_from_slice(symbol);
     k.push(0);
     k.extend_from_slice(constraint_id);
-    k
+    Ok(k)
 }
 
 /// Build the prefix used by the walker to find all constraints attached
@@ -529,9 +528,10 @@ mod tests {
     #[test]
     fn test_propagation_detects_unsat_constraint() {
         let mut state = ManagedWorldState::new();
-        state
-            .trie
-            .insert(constraint_key(b"alpha/beta", b"c0"), b"false".to_vec());
+        state.trie.insert(
+            constraint_key(b"alpha/beta", b"c0").unwrap(),
+            b"false".to_vec(),
+        );
         let active = vec![b"alpha/beta".to_vec()];
         let result = propagate_constraints(&active, &state, 4, 1000);
         assert!(!result.consistent);
@@ -542,9 +542,10 @@ mod tests {
     fn test_propagation_passes_with_satisfied_exists() {
         let mut state = ManagedWorldState::new();
         state.trie.insert(b"data/foo".to_vec(), b"present".to_vec());
-        state
-            .trie
-            .insert(constraint_key(b"alpha", b"c0"), b"exists:data/foo".to_vec());
+        state.trie.insert(
+            constraint_key(b"alpha", b"c0").unwrap(),
+            b"exists:data/foo".to_vec(),
+        );
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(result.consistent, "{}", result.conflict_detail);
@@ -556,9 +557,10 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state.trie.insert(b"alpha/leaf".to_vec(), b"".to_vec());
         // Constraint on the CHILD symbol (null-terminated).
-        state
-            .trie
-            .insert(constraint_key(b"alpha/leaf", b"c0"), b"false".to_vec());
+        state.trie.insert(
+            constraint_key(b"alpha/leaf", b"c0").unwrap(),
+            b"false".to_vec(),
+        );
         let active = vec![b"alpha".to_vec()];
         // Depth 2 is enough to reach the child via worklist expansion.
         let result = propagate_constraints(&active, &state, 2, 1000);
@@ -573,9 +575,10 @@ mod tests {
         let mut state = ManagedWorldState::new();
         state.trie.insert(b"alpha/leaf".to_vec(), b"".to_vec());
         // Constraint on the CHILD only (null-terminated — NOT visible to parent).
-        state
-            .trie
-            .insert(constraint_key(b"alpha/leaf", b"c0"), b"false".to_vec());
+        state.trie.insert(
+            constraint_key(b"alpha/leaf", b"c0").unwrap(),
+            b"false".to_vec(),
+        );
         let active = vec![b"alpha".to_vec()];
         // Depth 0 — parent "alpha" is processed but child "alpha/leaf" is NOT
         // expanded into the worklist. With null-terminated keys, the parent's
@@ -598,10 +601,10 @@ mod tests {
         );
         state
             .trie
-            .insert(constraint_key(b"alpha", b"c0"), b"true".to_vec());
+            .insert(constraint_key(b"alpha", b"c0").unwrap(), b"true".to_vec());
         state
             .trie
-            .insert(constraint_key(b"alpha", b"c1"), b"true".to_vec());
+            .insert(constraint_key(b"alpha", b"c1").unwrap(), b"true".to_vec());
         let result = propagate_constraints(&[b"alpha".to_vec()], &state, 4, 1000);
 
         assert!(result.consistent);
@@ -612,9 +615,10 @@ mod tests {
     #[test]
     fn test_propagation_invalid_utf8_is_violation() {
         let mut state = ManagedWorldState::new();
-        state
-            .trie
-            .insert(constraint_key(b"alpha", b"c0"), vec![0xFF, 0xFE, 0xFD]);
+        state.trie.insert(
+            constraint_key(b"alpha", b"c0").unwrap(),
+            vec![0xFF, 0xFE, 0xFD],
+        );
         let active = vec![b"alpha".to_vec()];
         let result = propagate_constraints(&active, &state, 2, 1000);
         assert!(!result.consistent);
@@ -626,7 +630,7 @@ mod tests {
         let mut state = ManagedWorldState::new();
         for i in 0..10u8 {
             state.trie.insert(
-                constraint_key(b"alpha", format!("c{}", i).as_bytes()),
+                constraint_key(b"alpha", format!("c{}", i).as_bytes()).unwrap(),
                 b"true".to_vec(),
             );
         }
@@ -651,6 +655,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "null bytes")]
     fn test_null_byte_in_symbol_rejected() {
-        constraint_key(b"alpha\x00evil", b"c0");
+        constraint_key(b"alpha\x00evil", b"c0").unwrap();
     }
 }

@@ -153,6 +153,35 @@ impl ConsensusParams {
         if self.max_tension_swing <= 0 {
             return Err("max_tension_swing must be > 0".into());
         }
+        // Propagation bounds — prevent OOM from unbounded walker expansion.
+        if self.max_constraint_propagation_depth == 0
+            || self.max_constraint_propagation_depth > 1_000
+        {
+            return Err(format!(
+                "max_constraint_propagation_depth {} out of bounds (1..1000)",
+                self.max_constraint_propagation_depth
+            ));
+        }
+        if self.max_constraint_propagation_steps == 0
+            || self.max_constraint_propagation_steps > 10_000_000
+        {
+            return Err(format!(
+                "max_constraint_propagation_steps {} out of bounds (1..10000000)",
+                self.max_constraint_propagation_steps
+            ));
+        }
+        if self.max_activated_symbols == 0 {
+            return Err("max_activated_symbols must be > 0".into());
+        }
+        if self.max_scan_per_symbol == 0 {
+            return Err("max_scan_per_symbol must be > 0".into());
+        }
+        if self.max_constraints_per_symbol == 0 {
+            return Err("max_constraints_per_symbol must be > 0".into());
+        }
+        if self.default_max_steps == 0 {
+            return Err("default_max_steps must be > 0".into());
+        }
         Ok(())
     }
 }

@@ -1647,6 +1647,9 @@ fn apply_governance_parameter_static(
             let parsed = value
                 .parse::<u64>()
                 .map_err(|_| "authority_cooldown_epochs must be u64".to_string())?;
+            if parsed > 1_000 {
+                return Err("authority_cooldown_epochs must be <= 1000".into());
+            }
             governance_limits.authority_cooldown_epochs = parsed;
             Ok(())
         }
@@ -1664,6 +1667,9 @@ fn apply_governance_parameter_static(
             let parsed = value
                 .parse::<u64>()
                 .map_err(|_| "max_finality_ms must be u64".to_string())?;
+            if parsed == 0 || parsed > 300_000 {
+                return Err("max_finality_ms must be 1..300000".into());
+            }
             finality_config.max_finality_ms = parsed;
             Ok(())
         }
@@ -2789,7 +2795,7 @@ mod tests {
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
 
-        let key = sccgub_execution::scce::constraint_key(b"test/symbol", b"c0");
+        let key = sccgub_execution::scce::constraint_key(b"test/symbol", b"c0").unwrap();
         chain.state.trie.insert(key.clone(), b"false".to_vec());
 
         let result = chain.produce_block();
@@ -2821,7 +2827,8 @@ mod tests {
         chain.governance_limits.max_consecutive_proposals = 100;
 
         // 1. Plant an unsatisfiable constraint at "test/constrained".
-        let constraint = sccgub_execution::scce::constraint_key(b"test/constrained", b"c0");
+        let constraint =
+            sccgub_execution::scce::constraint_key(b"test/constrained", b"c0").unwrap();
         chain.state.trie.insert(constraint, b"false".to_vec());
 
         // 2. Build a properly signed transaction targeting that symbol.

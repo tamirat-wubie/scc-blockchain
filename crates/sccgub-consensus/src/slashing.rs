@@ -112,11 +112,12 @@ impl SlashingEngine {
             .copied()
             .ok_or("Validator not found")?;
 
-        let penalty_raw = stake.raw() * self.config.double_sign_penalty_pct as i128 / 100;
+        let penalty_raw = (stake.raw().max(0) * self.config.double_sign_penalty_pct as i128 / 100)
+            .min(stake.raw().max(0)); // Cap at available stake.
         let penalty = TensionValue(penalty_raw);
 
-        // Deduct penalty.
-        let new_stake = stake - penalty;
+        // Deduct penalty (cannot go below zero).
+        let new_stake = TensionValue(stake.raw().saturating_sub(penalty_raw).max(0));
         self.stakes.insert(validator, new_stake);
 
         let event = SlashingEvent {
@@ -150,10 +151,11 @@ impl SlashingEngine {
             .copied()
             .ok_or("Validator not found")?;
 
-        let penalty_raw = stake.raw() * self.config.divergence_penalty_pct as i128 / 100;
+        let penalty_raw = (stake.raw().max(0) * self.config.divergence_penalty_pct as i128 / 100)
+            .min(stake.raw().max(0));
         let penalty = TensionValue(penalty_raw);
 
-        let new_stake = stake - penalty;
+        let new_stake = TensionValue(stake.raw().saturating_sub(penalty_raw).max(0));
         self.stakes.insert(validator, new_stake);
 
         let event = SlashingEvent {
@@ -176,10 +178,12 @@ impl SlashingEngine {
         *counter = counter.saturating_add(1);
 
         let stake = self.stakes.get(&validator).copied()?;
-        let penalty_raw = stake.raw() * self.config.absence_penalty_pct_per_epoch as i128 / 100;
+        let penalty_raw = (stake.raw().max(0) * self.config.absence_penalty_pct_per_epoch as i128
+            / 100)
+            .min(stake.raw().max(0));
         let penalty = TensionValue(penalty_raw);
 
-        let new_stake = stake - penalty;
+        let new_stake = TensionValue(stake.raw().saturating_sub(penalty_raw).max(0));
         self.stakes.insert(validator, new_stake);
 
         let event = SlashingEvent {

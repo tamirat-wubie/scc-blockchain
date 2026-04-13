@@ -21,12 +21,17 @@ impl NormRegistry {
     }
 
     /// Register a norm. Updates existing norms (replicator dynamics).
-    /// Rejects new norms if registry is full.
-    pub fn register(&mut self, norm: Norm) {
+    /// Returns Err if registry is full and the norm is new.
+    pub fn register(&mut self, norm: Norm) -> Result<(), String> {
         if !self.norms.contains_key(&norm.id) && self.norms.len() >= MAX_NORMS {
-            return; // Silently reject — governance can clean up old norms.
+            return Err(format!(
+                "Norm registry full ({}/{})",
+                self.norms.len(),
+                MAX_NORMS
+            ));
         }
         self.norms.insert(norm.id, norm);
+        Ok(())
     }
 
     pub fn get(&self, id: &NormId) -> Option<&Norm> {
@@ -96,7 +101,8 @@ impl NormRegistry {
             } else {
                 0
             };
-            norm.population_share = TensionValue(raw);
+            // Clamp to [0, SCALE] — shares must not go negative.
+            norm.population_share = TensionValue(raw.clamp(0, TensionValue::SCALE));
         }
 
         // Renormalize: ensure shares sum to exactly SCALE (1.0).
@@ -114,7 +120,15 @@ impl NormRegistry {
                     .raw()
                     .saturating_mul(TensionValue::SCALE)
                     / total;
-                norm.population_share = TensionValue(raw);
+                norm.population_share = TensionValue(raw.max(0));
+            }
+        } else if !active_norms.is_empty() {
+            // All shares collapsed to zero — reset to equal distribution.
+            let equal_share = TensionValue::SCALE / active_norms.len() as i128;
+            for id in &active_norms {
+                if let Some(norm) = self.norms.get_mut(id) {
+                    norm.population_share = TensionValue(equal_share);
+                }
             }
         }
     }

@@ -303,7 +303,9 @@ impl ChainStore {
         }
 
         entries.sort_by_key(|e| e.file_name());
-        let latest = entries.last().unwrap();
+        let Some(latest) = entries.last() else {
+            return Ok(None);
+        };
         let json = fs::read_to_string(latest.path())?;
         let snapshot: StateSnapshot = serde_json::from_str(&json).map_err(std::io::Error::other)?;
         Ok(Some(snapshot))
