@@ -536,7 +536,14 @@ impl NetworkRuntime {
     }
 
     async fn handle_message(&self, message: NetworkMessage, peer_addr: &str) -> Result<(), String> {
-        self.check_rate_limit(peer_addr).await?;
+        let is_priority = matches!(
+            message,
+            NetworkMessage::ConsensusVote(_)
+                | NetworkMessage::BlockProposal(_)
+                | NetworkMessage::FinalityCertificate(_)
+                | NetworkMessage::LawSync(_)
+        );
+        self.check_rate_limit(peer_addr, is_priority).await?;
         self.check_bandwidth_limit(peer_addr).await?;
         let result = match message {
             NetworkMessage::Hello(msg) => self.handle_hello(msg, peer_addr).await,
@@ -1171,7 +1178,7 @@ impl NetworkRuntime {
         validator_set.contains_key(&self.validator_id)
     }
 
-    async fn check_rate_limit(&self, peer_addr: &str) -> Result<(), String> {
+    async fn check_rate_limit(&self, peer_addr: &str, priority: bool) -> Result<(), String> {
         let now = now_ms();
         let mut limits = self.rate_limits.lock().await;
         let entry = limits.entry(peer_addr.to_string()).or_insert(RateState {
@@ -1184,7 +1191,12 @@ impl NetworkRuntime {
             entry.count = 0;
         }
         entry.count = entry.count.saturating_add(1);
-        if entry.count > self.config.inbound_msg_limit {
+        let limit = if priority {
+            self.config.inbound_msg_limit.saturating_mul(2)
+        } else {
+            self.config.inbound_msg_limit
+        };
+        if entry.count > limit {
             entry.violations = entry.violations.saturating_add(1);
             let banned = self.record_peer_violation(peer_addr).await;
             if banned || entry.violations >= self.config.peer_max_violations {
