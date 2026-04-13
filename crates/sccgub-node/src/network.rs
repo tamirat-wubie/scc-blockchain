@@ -1886,14 +1886,17 @@ mod tests {
         false
     }
 
-    async fn wait_for_snapshot(
+    async fn wait_for_snapshot_height(
         store: &ChainStore,
+        min_height: u64,
         timeout_ms: u64,
     ) -> Option<crate::persistence::StateSnapshot> {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         while Instant::now() < deadline {
             if let Ok(Some(snapshot)) = store.load_latest_snapshot() {
-                return Some(snapshot);
+                if snapshot.height >= min_height {
+                    return Some(snapshot);
+                }
             }
             sleep(Duration::from_millis(50)).await;
         }
@@ -2617,10 +2620,10 @@ mod tests {
         }
 
         let blocks = store.load_all_blocks().unwrap();
-        let snapshot = wait_for_snapshot(store.as_ref(), 15_000)
+        let mut replayed = Chain::from_blocks(blocks).unwrap();
+        let snapshot = wait_for_snapshot_height(store.as_ref(), replayed.height(), 15_000)
             .await
             .expect("expected snapshot for restart");
-        let mut replayed = Chain::from_blocks(blocks).unwrap();
 
         assert_eq!(snapshot.height, replayed.height());
         assert_eq!(snapshot.state_root, replayed.state.state_root());
