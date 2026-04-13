@@ -894,7 +894,7 @@ impl NetworkRuntime {
         }
         chain.record_safety_certificate(cert);
         if let Some(store) = &self.store {
-            if let Ok(Some(block)) = chain.block_at(cert.height).cloned() {
+            if let Some(block) = chain.block_at(cert.height).cloned() {
                 let snapshot = if self.snapshot_interval > 0
                     && cert.height > 0
                     && cert.height % self.snapshot_interval == 0
