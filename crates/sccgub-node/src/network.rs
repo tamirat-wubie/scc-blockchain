@@ -49,7 +49,7 @@ pub struct NetworkRuntime {
     bandwidth: Arc<Mutex<HashMap<String, BandwidthState>>>,
     peer_seeds: Arc<Mutex<HashSet<String>>>,
     peer_connect_backoff: Arc<Mutex<HashMap<String, u64>>>,
-    validator_set: HashMap<Hash, [u8; 32]>,
+    validator_set: Arc<RwLock<HashMap<Hash, [u8; 32]>>>,
     validator_key: ed25519_dalek::SigningKey,
     validator_id: Hash,
     chain_id: Hash,
@@ -210,7 +210,7 @@ impl NetworkRuntime {
             bandwidth: Arc::new(Mutex::new(HashMap::new())),
             peer_seeds: Arc::new(Mutex::new(peer_seeds)),
             peer_connect_backoff: Arc::new(Mutex::new(HashMap::new())),
-            validator_set,
+            validator_set: Arc::new(RwLock::new(validator_set)),
             validator_key,
             validator_id,
             chain_id,
@@ -283,6 +283,11 @@ impl NetworkRuntime {
         let runtime = self.clone();
         tokio::spawn(async move {
             runtime.consensus_timeout_loop().await;
+        });
+
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            runtime.validator_set_refresh_loop().await;
         });
 
         let runtime = self.clone();
@@ -533,7 +538,8 @@ impl NetworkRuntime {
         if !verify_hello_signature(&msg) {
             return Err("Hello signature invalid".into());
         }
-        if !self.validator_set.is_empty() && !self.validator_set.contains_key(&msg.validator_id) {
+        let validator_set = self.validator_set.read().await;
+        if !validator_set.is_empty() && !validator_set.contains_key(&msg.validator_id) {
             return Err("Hello validator not in authorized set".into());
         }
 
@@ -608,6 +614,7 @@ impl NetworkRuntime {
         let height = block.header.height;
         let desired_quorum = self.consensus_quorum().await;
         let mut rounds = self.consensus_rounds.lock().await;
+        let validator_set = self.validator_set.read().await.clone();
         let (state, created) = match rounds.entry(height) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
             Entry::Vacant(entry) => (
@@ -618,7 +625,7 @@ impl NetworkRuntime {
                         block.header.block_id,
                         height,
                         msg.round,
-                        self.validator_set.clone(),
+                        validator_set,
                         self.config.max_rounds,
                     ),
                     last_round_ms: now_ms(),
@@ -701,8 +708,9 @@ impl NetworkRuntime {
         }
         let epoch = self.current_epoch().await;
         let desired_quorum = self.consensus_quorum().await;
-        self.verify_vote_signature(&vote, epoch)?;
+        self.verify_vote_signature(&vote, epoch).await?;
         let mut rounds = self.consensus_rounds.lock().await;
+        let validator_set = self.validator_set.read().await.clone();
         let (state, created) = match rounds.entry(vote.height) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
             Entry::Vacant(entry) => (
@@ -713,7 +721,7 @@ impl NetworkRuntime {
                         vote.block_hash,
                         vote.height,
                         vote.round,
-                        self.validator_set.clone(),
+                        validator_set,
                         self.config.max_rounds,
                     ),
                     last_round_ms: now_ms(),
@@ -772,7 +780,8 @@ impl NetworkRuntime {
     }
 
     async fn handle_finality_certificate(&self, cert: SafetyCertificate) -> Result<(), String> {
-        cert.verify_cryptographic(&self.validator_set)?;
+        let validator_set = self.validator_set.read().await;
+        cert.verify_cryptographic(&validator_set)?;
         let mut chain = self.chain.write().await;
         let known = chain
             .block_at(cert.height)
@@ -805,8 +814,8 @@ impl NetworkRuntime {
             return Ok(());
         }
 
-        self.verify_vote_signature(&vote_a, epoch)?;
-        self.verify_vote_signature(&vote_b, epoch)?;
+        self.verify_vote_signature(&vote_a, epoch).await?;
+        self.verify_vote_signature(&vote_b, epoch).await?;
 
         let (block_hash_a, block_hash_b) = if vote_a.block_hash <= vote_b.block_hash {
             (vote_a.block_hash, vote_b.block_hash)
@@ -876,8 +885,9 @@ impl NetworkRuntime {
             .await
     }
 
-    fn verify_vote_signature(&self, vote: &Vote, epoch: u64) -> Result<(), String> {
-        let public_key = self.validator_set.get(&vote.validator_id).ok_or_else(|| {
+    async fn verify_vote_signature(&self, vote: &Vote, epoch: u64) -> Result<(), String> {
+        let validator_set = self.validator_set.read().await;
+        let public_key = validator_set.get(&vote.validator_id).ok_or_else(|| {
             format!(
                 "Validator {} not in authorized set",
                 hex::encode(vote.validator_id)
@@ -1040,7 +1050,8 @@ impl NetworkRuntime {
         let chain = self.chain.read().await;
         let finality_mode = chain.state.state.governance_state.finality_mode;
         drop(chain);
-        let validator_count = self.validator_set.len() as u32;
+        let validator_set = self.validator_set.read().await;
+        let validator_count = validator_set.len() as u32;
         match finality_mode {
             FinalityMode::BftCertified { quorum_threshold } => {
                 let mut quorum = quorum_threshold.max(1);
@@ -1291,6 +1302,40 @@ impl NetworkRuntime {
                 self.config.peer_score_initial,
                 self.config.peer_violation_forgive_interval_ms,
             );
+        }
+    }
+
+    async fn validator_set_refresh_loop(self: Arc<Self>) {
+        let mut ticker = interval(Duration::from_millis(5_000));
+        loop {
+            ticker.tick().await;
+            if !self.config.validators.is_empty() {
+                continue;
+            }
+            let chain_validators = { self.chain.read().await.validator_set.clone() };
+            if chain_validators.is_empty() {
+                continue;
+            }
+            let mut validator_set = HashMap::new();
+            for validator in chain_validators.iter().filter(|v| v.active) {
+                validator_set.insert(validator.node_id, validator.node_id);
+            }
+            if validator_set.is_empty() {
+                continue;
+            }
+            let mut updated = false;
+            {
+                let current = self.validator_set.read().await;
+                if current.len() != validator_set.len() {
+                    updated = true;
+                } else if !current.keys().all(|k| validator_set.contains_key(k)) {
+                    updated = true;
+                }
+            }
+            if updated {
+                let mut current = self.validator_set.write().await;
+                *current = validator_set;
+            }
         }
     }
 
@@ -1739,9 +1784,10 @@ mod tests {
         config.validators = Vec::new();
 
         let runtime = NetworkRuntime::new(chain, config).await.unwrap();
-        assert!(runtime.validator_set.contains_key(&local_pk));
-        assert!(runtime.validator_set.contains_key(&other_pk));
-        assert_eq!(runtime.validator_set.len(), 2);
+        let validator_set = runtime.validator_set.read().await;
+        assert!(validator_set.contains_key(&local_pk));
+        assert!(validator_set.contains_key(&other_pk));
+        assert_eq!(validator_set.len(), 2);
     }
 
     #[tokio::test]
@@ -1761,13 +1807,14 @@ mod tests {
             .unwrap()
             .with_persistence(store.clone(), 1);
 
+        let validator_set = runtime.validator_set.read().await.clone();
         let round = ConsensusRound::new(
             runtime.chain_id,
             0,
             [0u8; 32],
             1,
             0,
-            runtime.validator_set.clone(),
+            validator_set,
             runtime.config.max_rounds,
         );
         let state = RoundState {
@@ -2160,6 +2207,7 @@ mod tests {
 
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
 
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut rounds = runtime.consensus_rounds.lock().await;
         rounds.insert(
             1,
@@ -2170,7 +2218,7 @@ mod tests {
                     [9u8; 32],
                     1,
                     0,
-                    runtime.validator_set.clone(),
+                    validator_set,
                     runtime.config.max_rounds,
                 ),
                 last_round_ms: now_ms(),
@@ -2203,13 +2251,14 @@ mod tests {
         config.validators = vec![hex::encode(local_pk), hex::encode(pk2), hex::encode(pk3)];
 
         let runtime = Arc::new(NetworkRuntime::new(chain, config).await.unwrap());
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut round = ConsensusRound::new(
             runtime.chain_id,
             runtime.current_epoch().await,
             [9u8; 32],
             1,
             0,
-            runtime.validator_set.clone(),
+            validator_set,
             runtime.config.max_rounds,
         );
         round.prevotes.insert(
@@ -2281,13 +2330,14 @@ mod tests {
         config.validators = vec![hex::encode(local_pk), hex::encode(pk2), hex::encode(pk3)];
 
         let runtime = Arc::new(NetworkRuntime::new(chain, config).await.unwrap());
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut round = ConsensusRound::new(
             runtime.chain_id,
             runtime.current_epoch().await,
             [7u8; 32],
             1,
             0,
-            runtime.validator_set.clone(),
+            validator_set,
             runtime.config.max_rounds,
         );
 
@@ -2357,13 +2407,14 @@ mod tests {
             .await
             .insert(block.header.block_id, block.clone());
 
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut round = ConsensusRound::new(
             runtime.chain_id,
             runtime.current_epoch().await,
             block.header.block_id,
             block.header.height,
             0,
-            runtime.validator_set.clone(),
+            validator_set,
             runtime.config.max_rounds,
         );
         round.prevotes.insert(
@@ -2517,6 +2568,7 @@ mod tests {
             .await
             .insert(block.header.block_id, block.clone());
 
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut rounds = runtime.consensus_rounds.lock().await;
         rounds.insert(
             block.header.height,
@@ -2527,7 +2579,7 @@ mod tests {
                     block.header.block_id,
                     block.header.height,
                     0,
-                    runtime.validator_set.clone(),
+                    validator_set,
                     runtime.config.max_rounds,
                 ),
                 last_round_ms: now_ms(),
@@ -2887,7 +2939,8 @@ mod tests {
         );
         let quorum = runtime_peer.consensus_quorum().await;
         assert_eq!(quorum, 3);
-        assert_eq!(runtime_peer.validator_set.len(), 3);
+        let validator_set = runtime_peer.validator_set.read().await;
+        assert_eq!(validator_set.len(), 3);
         let block = {
             let guard = chain_proposer.read().await;
             guard.build_candidate_block().unwrap()
@@ -2937,6 +2990,7 @@ mod tests {
 
         {
             let desired_quorum = runtime_peer.consensus_quorum().await;
+            let validator_set = runtime_peer.validator_set.read().await.clone();
             let mut rounds = runtime_peer.consensus_rounds.lock().await;
             let state = rounds
                 .entry(block.header.height)
@@ -2947,7 +3001,7 @@ mod tests {
                         block.header.block_id,
                         block.header.height,
                         0,
-                        runtime_peer.validator_set.clone(),
+                        validator_set,
                         runtime_peer.config.max_rounds,
                     ),
                     last_round_ms: now_ms(),
@@ -3038,13 +3092,14 @@ mod tests {
             .await
             .insert(block.header.block_id, block.clone());
 
+        let validator_set = runtime.validator_set.read().await.clone();
         let mut round = ConsensusRound::new(
             runtime.chain_id,
             runtime.current_epoch().await,
             block.header.block_id,
             block.header.height,
             0,
-            runtime.validator_set.clone(),
+            validator_set,
             runtime.config.max_rounds,
         );
         round.prevotes.insert(
