@@ -332,7 +332,24 @@ impl NetworkRuntime {
             }
             match serde_json::from_value::<PersistedRoundState>(value) {
                 Ok(state) => {
-                    rounds.insert(height, persisted_to_round_state(state));
+                    let mut round_state = persisted_to_round_state(state);
+                    if round_state.round.block_hash != EMPTY_HASH {
+                        let pending = self.pending_blocks.lock().await;
+                        let has_block = pending.contains_key(&round_state.round.block_hash);
+                        drop(pending);
+                        if !has_block {
+                            tracing::warn!(
+                                "Clearing persisted round at height {}: missing pending block",
+                                height
+                            );
+                            round_state.round.block_hash = EMPTY_HASH;
+                            round_state.round.prevotes.clear();
+                            round_state.round.precommits.clear();
+                            round_state.round.phase =
+                                sccgub_consensus::protocol::ConsensusPhase::Propose;
+                        }
+                    }
+                    rounds.insert(height, round_state);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -2259,16 +2276,27 @@ mod tests {
         let round = ConsensusRound::new(
             runtime.chain_id,
             0,
-            [0u8; 32],
+            [9u8; 32],
             1,
             0,
             validator_set,
             runtime.config.max_rounds,
         );
-        let state = RoundState {
+        let mut state = RoundState {
             round,
             last_round_ms: now_ms(),
         };
+        state.round.prevotes.insert(
+            local_pk,
+            Vote {
+                validator_id: local_pk,
+                block_hash: [9u8; 32],
+                height: 1,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: vec![1u8; 64],
+            },
+        );
         let mut payload = std::collections::HashMap::new();
         payload.insert(
             1u64,
@@ -2279,7 +2307,10 @@ mod tests {
         runtime.load_persisted_consensus_state().await;
 
         let rounds = runtime.consensus_rounds.lock().await;
-        assert!(rounds.contains_key(&1u64));
+        let round = rounds.get(&1u64).expect("Expected persisted round");
+        assert_eq!(round.round.block_hash, EMPTY_HASH);
+        assert!(round.round.prevotes.is_empty());
+        assert!(round.round.precommits.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }
