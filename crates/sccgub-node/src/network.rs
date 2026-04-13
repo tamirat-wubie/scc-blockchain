@@ -770,8 +770,16 @@ impl NetworkRuntime {
         if let Some(block) = msg.block {
             let height = block.header.height;
             let mut chain = self.chain.write().await;
-            if let Err(e) = chain.import_block(block) {
+            if let Err(e) = chain.import_block(block.clone()) {
                 tracing::warn!("Block import failed for height {}: {:?}", height, e);
+            } else {
+                drop(chain);
+                self.pending_blocks
+                    .lock()
+                    .await
+                    .remove(&block.header.block_id);
+                self.consensus_rounds.lock().await.remove(&height);
+                self.persist_consensus_state().await;
             }
         }
         Ok(())
