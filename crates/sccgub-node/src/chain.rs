@@ -3871,4 +3871,133 @@ mod tests {
             "Different chain_id: never switch"
         );
     }
+
+    /// CONSERVATION INVARIANT: total token supply must not change across
+    /// block production. Tokens can move between accounts (transfers, fees,
+    /// rewards) but the treasury accounting identity must hold:
+    ///   balances + pending_fees + burned + distributed = genesis + collected
+    #[test]
+    fn test_token_conservation_across_block_production() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        let genesis_supply = chain.balances.total_supply();
+        assert!(
+            genesis_supply.raw() > 0,
+            "Genesis must mint a non-zero supply"
+        );
+
+        // Produce 5 blocks. The fee/reward/treasury cycle runs each block.
+        // Even empty blocks exercise the economics path.
+        for i in 1..=5 {
+            chain.produce_block().unwrap();
+            // Treasury accounting identity:
+            //   balances + pending + burned = genesis + (collected - distributed)
+            // Because distributed tokens go back into balances.
+            let lhs = chain.balances.total_supply().raw()
+                + chain.treasury.pending_fees.raw()
+                + chain.treasury.total_burned.raw();
+            let rhs = genesis_supply.raw() + chain.treasury.total_fees_collected.raw()
+                - chain.treasury.total_rewards_distributed.raw();
+            assert_eq!(
+                lhs, rhs,
+                "Conservation violated at block {}: balances={}, pending={}, burned={}, collected={}, distributed={}",
+                i,
+                chain.balances.total_supply(),
+                chain.treasury.pending_fees,
+                chain.treasury.total_burned,
+                chain.treasury.total_fees_collected,
+                chain.treasury.total_rewards_distributed,
+            );
+        }
+    }
+
+    /// REPLAY DETERMINISM: two chains built from identical blocks must produce
+    /// identical state roots. This is the fundamental consistency property.
+    #[test]
+    fn test_replay_determinism_with_transactions() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::HashSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+
+        // Submit and produce a block with a real tx.
+        let pk = *chain.validator_key.verifying_key().as_bytes();
+        let seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            blake3_hash_concat(&[&pk, &sccgub_crypto::canonical::canonical_bytes(&seal)]);
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key: pk,
+                mfidel_seal: seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: HashSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/replay/test".to_vec(),
+                declared_purpose: "replay test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"data/replay/test".to_vec(),
+                value: b"deterministic".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: b"data/replay/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [1u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: HashSet::new(),
+                what_declared: "replay test".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sccgub_crypto::signature::sign(&chain.validator_key, &canonical);
+
+        chain.submit_transition(tx).unwrap();
+        chain.produce_block().unwrap();
+
+        // Produce 2 more empty blocks.
+        chain.produce_block().unwrap();
+        chain.produce_block().unwrap();
+
+        let blocks = chain.blocks.clone();
+        let root_a = chain.state.state_root();
+
+        // Replay from blocks.
+        let chain_b = Chain::from_blocks(blocks).expect("replay must succeed");
+        let root_b = chain_b.state.state_root();
+
+        assert_eq!(
+            root_a, root_b,
+            "Replayed chain must produce identical state root"
+        );
+        assert_eq!(chain.height(), chain_b.height());
+        assert_eq!(
+            chain.balances.total_supply(),
+            chain_b.balances.total_supply(),
+            "Replayed chain must have identical balance supply"
+        );
+    }
 }
