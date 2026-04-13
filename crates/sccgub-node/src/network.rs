@@ -3480,6 +3480,19 @@ mod tests {
             assert_eq!(state.round.round, 1);
         }
 
+        runtime_peer
+            .handle_message(
+                NetworkMessage::BlockProposal(BlockProposalMessage {
+                    proposer_id: proposer_pk,
+                    block: block.clone(),
+                    round: 1,
+                    signature: Vec::new(),
+                }),
+                "127.0.0.1:9302",
+            )
+            .await
+            .unwrap();
+
         let prevote_round1 = vote_sign_data(
             &runtime_peer.chain_id,
             epoch,
