@@ -313,8 +313,17 @@ impl NetworkRuntime {
             return;
         }
 
+        let expected_height = { self.chain.read().await.height().saturating_add(1) };
         let mut rounds = self.consensus_rounds.lock().await;
         for (height, value) in persisted {
+            if height != expected_height {
+                tracing::warn!(
+                    "Ignoring persisted consensus round at height {} (expected {})",
+                    height,
+                    expected_height
+                );
+                continue;
+            }
             match serde_json::from_value::<PersistedRoundState>(value) {
                 Ok(state) => {
                     rounds.insert(height, persisted_to_round_state(state));
