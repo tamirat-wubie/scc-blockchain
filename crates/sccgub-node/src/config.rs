@@ -63,6 +63,9 @@ pub struct NetworkConfig {
     pub validators: Vec<String>,
     /// Target block interval (ms) for proposer loop.
     pub block_interval_ms: u64,
+    /// Whether to run the proposer loop (auto-proposal).
+    #[serde(default = "default_true")]
+    pub proposer_loop_enabled: bool,
     /// Consensus round timeout (ms) before advancing to next round.
     pub round_timeout_ms: u64,
     /// Maximum rounds before aborting a height.
@@ -150,6 +153,7 @@ impl Default for NodeConfig {
                 allowed_peers: Vec::new(),
                 validators: Vec::new(),
                 block_interval_ms: 5_000,
+                proposer_loop_enabled: true,
                 round_timeout_ms: 4_000,
                 max_rounds: 3,
                 epoch: 0,
@@ -180,6 +184,10 @@ impl Default for NodeConfig {
             },
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl NodeConfig {
@@ -228,6 +236,7 @@ mod tests {
         assert_eq!(config.network.port, 9000);
         assert_eq!(config.network.bind, "0.0.0.0");
         assert!(config.network.allowed_peers.is_empty());
+        assert!(config.network.proposer_loop_enabled);
         assert_eq!(config.network.min_connected_peers, 3);
         assert_eq!(config.network.max_same_subnet_pct, 50);
         assert!(config.validator.key_passphrase.is_empty());

@@ -296,10 +296,12 @@ impl NetworkRuntime {
             runtime.validator_set_refresh_loop().await;
         });
 
-        let runtime = self.clone();
-        tokio::spawn(async move {
-            runtime.proposer_loop().await;
-        });
+        if self.config.proposer_loop_enabled {
+            let runtime = self.clone();
+            tokio::spawn(async move {
+                runtime.proposer_loop().await;
+            });
+        }
 
         let runtime = self.clone();
         tokio::spawn(async move {
@@ -4148,6 +4150,7 @@ mod tests {
         config1.peers = vec![addr2.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2)];
         config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
+        config1.proposer_loop_enabled = false;
         config1.round_timeout_ms = 60_000; // High to prevent timeout races on slow CI.
         config1.max_rounds = 2;
         config1.min_connected_peers = 1;
@@ -4492,6 +4495,7 @@ mod tests {
         config1.peers = vec![addr2.clone(), addr3.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
         config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
+        config1.proposer_loop_enabled = false;
         config1.round_timeout_ms = 60_000; // High to prevent timeout races on slow CI.
         config1.max_rounds = 2;
         config1.min_connected_peers = 2;
