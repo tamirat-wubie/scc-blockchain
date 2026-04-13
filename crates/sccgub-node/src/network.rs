@@ -33,6 +33,7 @@ use crate::config::NetworkConfig;
 const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
 const CONNECT_BACKOFF_MS: u64 = 5_000;
+const EMPTY_HASH: Hash = [0u8; 32];
 
 pub struct NetworkRuntime {
     chain: Arc<RwLock<Chain>>,
@@ -702,7 +703,9 @@ impl NetworkRuntime {
                 state.round.round, msg.round
             ));
         }
-        if state.round.block_hash != block.header.block_id {
+        if state.round.block_hash == EMPTY_HASH {
+            state.round.block_hash = block.header.block_id;
+        } else if state.round.block_hash != block.header.block_id {
             return Err("Consensus round already tracking another block hash".into());
         }
         if !state.round.prevotes.contains_key(&self.validator_id)
@@ -1265,9 +1268,22 @@ impl NetworkRuntime {
         loop {
             ticker.tick().await;
             let now = now_ms();
-            let mut rounds = self.consensus_rounds.lock().await;
-            for state in rounds.values_mut() {
-                advance_round_if_timed_out(state, &self.config, now);
+            let mut stale_hashes = Vec::new();
+            {
+                let mut rounds = self.consensus_rounds.lock().await;
+                for state in rounds.values_mut() {
+                    if let Some(old_hash) = advance_round_if_timed_out(state, &self.config, now) {
+                        if old_hash != EMPTY_HASH {
+                            stale_hashes.push(old_hash);
+                        }
+                    }
+                }
+            }
+            if !stale_hashes.is_empty() {
+                let mut pending = self.pending_blocks.lock().await;
+                for hash in stale_hashes {
+                    pending.remove(&hash);
+                }
             }
         }
     }
@@ -1688,19 +1704,26 @@ async fn record_bandwidth(
     entry.outbound_bytes = entry.outbound_bytes.saturating_add(outbound);
 }
 
-fn advance_round_if_timed_out(state: &mut RoundState, config: &NetworkConfig, now_ms: u64) {
+fn advance_round_if_timed_out(
+    state: &mut RoundState,
+    config: &NetworkConfig,
+    now_ms: u64,
+) -> Option<Hash> {
     if now_ms.saturating_sub(state.last_round_ms) < config.round_timeout_ms {
-        return;
+        return None;
     }
+    let old_hash = state.round.block_hash;
     if state.round.round >= config.max_rounds {
         state.round.phase = sccgub_consensus::protocol::ConsensusPhase::Abort;
-        return;
+        return Some(old_hash);
     }
     state.round.round = state.round.round.saturating_add(1);
     state.round.phase = sccgub_consensus::protocol::ConsensusPhase::Propose;
     state.round.prevotes.clear();
     state.round.precommits.clear();
+    state.round.block_hash = EMPTY_HASH;
     state.last_round_ms = now_ms;
+    Some(old_hash)
 }
 
 #[cfg(test)]
@@ -2556,7 +2579,7 @@ mod tests {
             },
         );
 
-        advance_round_if_timed_out(&mut state, &config, 2_000);
+        let old_hash = advance_round_if_timed_out(&mut state, &config, 2_000);
         assert_eq!(state.round.round, 1);
         assert_eq!(
             state.round.phase,
@@ -2564,6 +2587,8 @@ mod tests {
         );
         assert!(state.round.prevotes.is_empty());
         assert!(state.round.precommits.is_empty());
+        assert_eq!(state.round.block_hash, EMPTY_HASH);
+        assert_eq!(old_hash, Some([2u8; 32]));
         assert_eq!(state.last_round_ms, 2_000);
     }
 
@@ -2586,11 +2611,12 @@ mod tests {
             last_round_ms: 0,
         };
 
-        advance_round_if_timed_out(&mut state, &config, 2_000);
+        let old_hash = advance_round_if_timed_out(&mut state, &config, 2_000);
         assert_eq!(
             state.round.phase,
             sccgub_consensus::protocol::ConsensusPhase::Abort
         );
+        assert_eq!(old_hash, Some([2u8; 32]));
     }
 
     #[tokio::test]
@@ -3033,7 +3059,7 @@ mod tests {
             let mut rounds = runtime.consensus_rounds.lock().await;
             let state = rounds.get_mut(&block.header.height).unwrap();
             state.last_round_ms = 0;
-            advance_round_if_timed_out(state, &runtime.config, 2_000);
+            let _ = advance_round_if_timed_out(state, &runtime.config, 2_000);
             assert_eq!(state.round.round, 1);
         }
 
@@ -3450,7 +3476,7 @@ mod tests {
                 });
             state.round.quorum = desired_quorum;
             state.last_round_ms = 0;
-            advance_round_if_timed_out(state, &runtime_peer.config, 2_000);
+            let _ = advance_round_if_timed_out(state, &runtime_peer.config, 2_000);
             assert_eq!(state.round.round, 1);
         }
 
