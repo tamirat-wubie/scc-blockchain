@@ -945,6 +945,16 @@ impl NetworkRuntime {
                 });
             }
         }
+        if let Err(e) = chain.state.flush_store() {
+            eprintln!("Warning: state store flush failed: {}", e);
+        }
+        if let Some(bridge) = &self.app_state {
+            let _ = bridge.sync_from_chain(&chain).await;
+        }
+        drop(chain);
+        self.pending_blocks.lock().await.remove(&cert.block_hash);
+        self.consensus_rounds.lock().await.remove(&height);
+        self.persist_consensus_state().await;
         Ok(())
     }
 
