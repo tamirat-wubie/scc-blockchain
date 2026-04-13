@@ -184,6 +184,11 @@ impl NetworkRuntime {
         let chain_id = guard.chain_id;
         let chain_validators = guard.validator_set.clone();
         drop(guard);
+        if !config.validators.is_empty() {
+            let validators = Self::validators_from_config(&config)?;
+            let mut guard = chain.write().await;
+            guard.set_validator_set(validators);
+        }
         let mut validator_set = validator_set_map(&config)?;
         if validator_set.is_empty() {
             for validator in chain_validators.iter().filter(|v| v.active) {
