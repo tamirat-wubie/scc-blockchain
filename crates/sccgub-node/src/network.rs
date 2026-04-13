@@ -891,6 +891,10 @@ impl NetworkRuntime {
         drop(rounds);
         if vote_added {
             self.persist_consensus_state().await;
+            if vote.validator_id != self.validator_id {
+                self.broadcast(NetworkMessage::ConsensusVote(vote.clone()))
+                    .await;
+            }
         }
         if let Some(existing) = existing_vote {
             self.maybe_record_equivocation(existing, vote, epoch)
