@@ -1152,6 +1152,7 @@ impl NetworkRuntime {
         let mut should_finalize = false;
         let mut block_hash = None;
         let mut cert_to_broadcast: Option<SafetyCertificate> = None;
+        let mut aborted = false;
         {
             let mut rounds = self.consensus_rounds.lock().await;
             let Some(state) = rounds.get_mut(&height) else {
@@ -1197,6 +1198,7 @@ impl NetworkRuntime {
                 }
                 ConsensusResult::Aborted { .. } => {
                     state.round.phase = sccgub_consensus::protocol::ConsensusPhase::Abort;
+                    aborted = true;
                 }
             }
         }
@@ -1262,6 +1264,16 @@ impl NetworkRuntime {
             if let Some(store) = &self.store {
                 let _ = store.clear_consensus_state();
             }
+        }
+        if aborted {
+            let mut rounds = self.consensus_rounds.lock().await;
+            if let Some(state) = rounds.remove(&height) {
+                let hash = state.round.block_hash;
+                if hash != EMPTY_HASH {
+                    self.pending_blocks.lock().await.remove(&hash);
+                }
+            }
+            self.persist_consensus_state().await;
         }
         Ok(())
     }
