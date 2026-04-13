@@ -648,7 +648,9 @@ impl NetworkRuntime {
         if state.round.block_hash != block.header.block_id {
             return Err("Consensus round already tracking another block hash".into());
         }
-        if !state.round.prevotes.contains_key(&self.validator_id) {
+        if !state.round.prevotes.contains_key(&self.validator_id)
+            && self.is_local_validator_active().await
+        {
             let vote = self.sign_vote_with_epoch(
                 epoch,
                 block.header.block_id,
@@ -910,6 +912,11 @@ impl NetworkRuntime {
         Ok(())
     }
 
+    async fn is_local_validator_active(&self) -> bool {
+        let validator_set = self.validator_set.read().await;
+        validator_set.contains_key(&self.validator_id)
+    }
+
     async fn check_rate_limit(&self, peer_addr: &str) -> Result<(), String> {
         let now = now_ms();
         let mut limits = self.rate_limits.lock().await;
@@ -1089,7 +1096,10 @@ impl NetworkRuntime {
             };
 
             let quorum = state.round.has_prevote_quorum();
-            if quorum && !state.round.precommits.contains_key(&self.validator_id) {
+            if quorum
+                && !state.round.precommits.contains_key(&self.validator_id)
+                && self.is_local_validator_active().await
+            {
                 let vote = self.sign_vote_with_epoch(
                     state.round.epoch,
                     state.round.block_hash,
