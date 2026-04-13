@@ -1365,9 +1365,37 @@ impl NetworkRuntime {
                     || !current.keys().all(|k| validator_set.contains_key(k))
             };
             if updated {
-                let mut current = self.validator_set.write().await;
-                *current = validator_set;
+                {
+                    let mut current = self.validator_set.write().await;
+                    *current = validator_set.clone();
+                }
+                self.enforce_validator_set_on_registry(&validator_set).await;
             }
+        }
+    }
+
+    async fn enforce_validator_set_on_registry(&self, validator_set: &HashMap<Hash, [u8; 32]>) {
+        if validator_set.is_empty() {
+            return;
+        }
+
+        let mut to_disconnect = Vec::new();
+        {
+            let mut registry = self.registry.lock().await;
+            for (validator_id, peer) in registry.peers.iter_mut() {
+                if !validator_set.contains_key(validator_id) {
+                    peer.state = PeerState::Banned;
+                    to_disconnect.push(peer.address.clone());
+                }
+            }
+        }
+
+        if to_disconnect.is_empty() {
+            return;
+        }
+        let mut connections = self.connections.lock().await;
+        for addr in to_disconnect {
+            connections.remove(&addr);
         }
     }
 
@@ -1723,6 +1751,58 @@ mod tests {
             "Expected address mismatch rejection, got: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn test_enforce_validator_set_bans_unknown_peers() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
+        let other_addr = "127.0.0.1:5111";
+        {
+            let mut registry = runtime.registry.lock().await;
+            registry
+                .upsert(PeerInfo {
+                    validator_id: other_pk,
+                    address: other_addr.to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Connected,
+                })
+                .unwrap();
+        }
+        {
+            let (tx, _rx) = mpsc::channel(1);
+            runtime
+                .connections
+                .lock()
+                .await
+                .insert(other_addr.to_string(), tx);
+        }
+
+        let validator_set = runtime.validator_set.read().await.clone();
+        runtime
+            .enforce_validator_set_on_registry(&validator_set)
+            .await;
+
+        let registry = runtime.registry.lock().await;
+        let peer = registry.peers.get(&other_pk).unwrap();
+        assert_eq!(peer.state, PeerState::Banned);
+        drop(registry);
+        assert!(!runtime.connections.lock().await.contains_key(other_addr));
     }
 
     #[tokio::test]
