@@ -805,6 +805,7 @@ impl NetworkRuntime {
         }
         let height = vote.height;
         let mut existing_vote: Option<Vote> = None;
+        let mut vote_added = false;
         match vote.vote_type {
             VoteType::Prevote => {
                 if let Some(existing) = state.round.prevotes.get(&vote.validator_id) {
@@ -813,6 +814,7 @@ impl NetworkRuntime {
                     }
                 } else {
                     let _ = state.round.add_prevote(vote.clone());
+                    vote_added = true;
                 }
             }
             VoteType::Precommit => {
@@ -822,11 +824,15 @@ impl NetworkRuntime {
                     }
                 } else {
                     let _ = state.round.add_precommit(vote.clone());
+                    vote_added = true;
                 }
             }
             VoteType::Nil => {}
         }
         drop(rounds);
+        if vote_added {
+            self.persist_consensus_state().await;
+        }
         if let Some(existing) = existing_vote {
             self.maybe_record_equivocation(existing, vote, epoch)
                 .await?;
