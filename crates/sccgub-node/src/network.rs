@@ -1303,10 +1303,42 @@ impl NetworkRuntime {
     }
 
     async fn broadcast(&self, message: NetworkMessage) {
-        let peers: Vec<String> = self.connections.lock().await.keys().cloned().collect();
+        let peers = self.collect_broadcast_targets().await;
         for peer in peers {
             let _ = self.send_to_peer(&peer, message.clone()).await;
         }
+    }
+
+    async fn collect_broadcast_targets(&self) -> Vec<String> {
+        let connections: HashSet<String> = self.connections.lock().await.keys().cloned().collect();
+        if connections.is_empty() {
+            return Vec::new();
+        }
+
+        let validator_set = self.validator_set.read().await;
+        if validator_set.is_empty() {
+            let mut peers: Vec<String> = connections.into_iter().collect();
+            peers.sort();
+            return peers;
+        }
+
+        let mut targets = HashSet::new();
+        let registry = self.registry.lock().await;
+        for peer in registry.peers.values() {
+            if peer.state != PeerState::Connected {
+                continue;
+            }
+            if !validator_set.contains_key(&peer.validator_id) {
+                continue;
+            }
+            if connections.contains(&peer.address) {
+                targets.insert(peer.address.clone());
+            }
+        }
+
+        let mut peers: Vec<String> = targets.into_iter().collect();
+        peers.sort();
+        peers
     }
 
     async fn seed_peers_snapshot(&self) -> Vec<String> {
@@ -1920,6 +1952,76 @@ mod tests {
             peers.contains(&peer_addr.to_string()),
             "Expected peer targets to include registry address"
         );
+    }
+
+    #[tokio::test]
+    async fn test_collect_broadcast_targets_filters_non_validators() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let validator_key = generate_keypair();
+        let validator_pk = *validator_key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(local_pk), hex::encode(validator_pk)];
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let validator_addr = "127.0.0.1:7101";
+        let non_validator_addr = "127.0.0.1:7102";
+        {
+            let mut registry = runtime.registry.lock().await;
+            registry
+                .upsert(PeerInfo {
+                    validator_id: validator_pk,
+                    address: validator_addr.to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Connected,
+                })
+                .unwrap();
+            registry
+                .upsert(PeerInfo {
+                    validator_id: [55u8; 32],
+                    address: non_validator_addr.to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Connected,
+                })
+                .unwrap();
+        }
+        {
+            let (tx, _rx) = mpsc::channel(1);
+            runtime
+                .connections
+                .lock()
+                .await
+                .insert(validator_addr.to_string(), tx);
+        }
+        {
+            let (tx, _rx) = mpsc::channel(1);
+            runtime
+                .connections
+                .lock()
+                .await
+                .insert(non_validator_addr.to_string(), tx);
+        }
+
+        let targets = runtime.collect_broadcast_targets().await;
+        assert!(targets.contains(&validator_addr.to_string()));
+        assert!(!targets.contains(&non_validator_addr.to_string()));
     }
 
     #[tokio::test]
