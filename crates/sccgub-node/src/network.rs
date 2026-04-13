@@ -673,6 +673,7 @@ impl NetworkRuntime {
 
     async fn handle_block_proposal(&self, msg: BlockProposalMessage) -> Result<(), String> {
         let block = msg.block;
+        let should_gossip = msg.proposer_id != self.validator_id;
         if msg.proposer_id != block.header.validator_id {
             return Err("Block proposal proposer_id mismatch".into());
         }
@@ -747,6 +748,15 @@ impl NetworkRuntime {
         drop(rounds);
         self.persist_consensus_state().await;
         self.maybe_advance_consensus(height).await?;
+        if should_gossip {
+            self.broadcast(NetworkMessage::BlockProposal(BlockProposalMessage {
+                proposer_id: msg.proposer_id,
+                block,
+                round: msg.round,
+                signature: Vec::new(),
+            }))
+            .await;
+        }
         Ok(())
     }
 
