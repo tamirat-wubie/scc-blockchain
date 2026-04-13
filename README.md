@@ -215,6 +215,18 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 | Runtime invariants | 7 checks | Supply, nonce, state root, tension, receipts, causality |
 | CI | 3 jobs | Ubuntu (fmt+build+test+clippy), Windows (build+test), security (cargo-audit) |
 
+## Local CI Gate
+
+Use the local gate scripts to mirror CI before pushing:
+
+```bash
+./scripts/run-ci.sh
+```
+
+```powershell
+pwsh ./scripts/run-ci.ps1
+```
+
 ## Conformance Matrix
 
 | Invariant | Enforcing Module | Test File | Failure Mode |
