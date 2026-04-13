@@ -555,6 +555,9 @@ impl NetworkRuntime {
         if msg.chain_id != self.chain_id {
             return Err("Hello chain_id mismatch".into());
         }
+        if msg.protocol_version != self.config.protocol_version {
+            return Err("Hello protocol version mismatch".into());
+        }
         if msg.epoch != self.current_epoch().await {
             return Err("Hello epoch mismatch".into());
         }
@@ -598,6 +601,9 @@ impl NetworkRuntime {
         let validator_set = self.validator_set.read().await;
         if !validator_set.is_empty() && !validator_set.contains_key(&msg.validator_id) {
             return Err("Heartbeat validator not in authorized set".into());
+        }
+        if msg.protocol_version != self.config.protocol_version {
+            return Err("Heartbeat protocol version mismatch".into());
         }
         if msg.epoch != self.current_epoch().await {
             return Err("Heartbeat epoch mismatch".into());
@@ -1584,6 +1590,7 @@ impl NetworkRuntime {
             let heartbeat = NetworkMessage::Heartbeat(HeartbeatMessage {
                 validator_id: self.validator_id,
                 current_height: chain.height(),
+                protocol_version: self.config.protocol_version,
                 epoch: chain.treasury.epoch,
                 timestamp_ms: now_ms(),
             });
@@ -2328,6 +2335,7 @@ mod tests {
                 HeartbeatMessage {
                     validator_id: other_pk,
                     current_height: 1,
+                    protocol_version: runtime.config.protocol_version,
                     epoch: runtime.current_epoch().await,
                     timestamp_ms: now_ms(),
                 },

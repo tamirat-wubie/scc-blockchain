@@ -104,6 +104,8 @@ pub struct HeartbeatMessage {
     pub validator_id: Hash,
     pub current_height: u64,
     #[serde(default)]
+    pub protocol_version: u32,
+    #[serde(default)]
     pub epoch: u64,
     pub timestamp_ms: u64,
 }
@@ -163,6 +165,7 @@ mod tests {
         let msg = NetworkMessage::Heartbeat(HeartbeatMessage {
             validator_id: [3u8; 32],
             current_height: 50,
+            protocol_version: 1,
             epoch: 0,
             timestamp_ms: 1234567890,
         });
