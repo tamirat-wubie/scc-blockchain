@@ -811,6 +811,21 @@ impl Chain {
         Ok(block)
     }
 
+    /// Build a candidate block without the proposer check.
+    /// Used by tests and the network layer when the actual proposer
+    /// may differ from the local validator (multi-validator mode).
+    #[allow(dead_code)]
+    pub fn build_candidate_block_unchecked(&self) -> Result<Block, String> {
+        let mut scratch = self.clone();
+        // Temporarily clear the validator set so produce_block
+        // skips the proposer check (single-validator fallback).
+        let saved = std::mem::take(&mut scratch.validator_set);
+        let block = scratch.produce_block()?.clone();
+        // Validator set is on the scratch copy, no need to restore.
+        let _ = saved;
+        Ok(block)
+    }
+
     /// Produce a new block from mempool transactions.
     /// Speculatively applies state to compute post-transition state root.
     /// Enforces anti-concentration limits on consecutive proposals.

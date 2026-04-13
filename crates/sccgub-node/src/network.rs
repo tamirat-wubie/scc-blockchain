@@ -2423,7 +2423,7 @@ mod tests {
                 third_key.clone()
             };
             (
-                guard.build_candidate_block().unwrap(),
+                guard.build_candidate_block_unchecked().unwrap(),
                 proposer_id,
                 proposer_key,
             )
@@ -2566,7 +2566,13 @@ mod tests {
         }
 
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
-        let block = { chain.read().await.build_candidate_block().unwrap() };
+        let block = {
+            chain
+                .read()
+                .await
+                .build_candidate_block_unchecked()
+                .unwrap()
+        };
         runtime
             .handle_block_proposal(signed_block_proposal(
                 &local_key,
@@ -2643,14 +2649,14 @@ mod tests {
                 if expected.node_id == proposer_pk {
                     guard.validator_key = proposer_key.clone();
                     (
-                        guard.build_candidate_block().unwrap(),
+                        guard.build_candidate_block_unchecked().unwrap(),
                         expected.node_id,
                         proposer_key.clone(),
                     )
                 } else {
                     guard.validator_key = peer_key.clone();
                     (
-                        guard.build_candidate_block().unwrap(),
+                        guard.build_candidate_block_unchecked().unwrap(),
                         expected.node_id,
                         peer_key.clone(),
                     )
@@ -3115,7 +3121,7 @@ mod tests {
 
         let block = {
             let guard = chain.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime
@@ -3207,7 +3213,7 @@ mod tests {
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
         let block = {
             let guard = chain.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime
@@ -3264,7 +3270,7 @@ mod tests {
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
         let block = {
             let guard = chain.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         let err = runtime
@@ -3309,7 +3315,7 @@ mod tests {
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
         let block = {
             let guard = chain.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime
@@ -3418,7 +3424,7 @@ mod tests {
         );
         let block = {
             let guard = chain_proposer.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime_peer
@@ -3573,7 +3579,7 @@ mod tests {
         );
         let block = {
             let guard = chain_proposer.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
         let proposer_signing_key = if proposer_pk == pk1 {
             &key1
@@ -3722,7 +3728,7 @@ mod tests {
         assert_eq!(validator_set.len(), 3);
         let block = {
             let guard = chain_proposer.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime_peer
@@ -3883,7 +3889,7 @@ mod tests {
         let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
         let block = {
             let guard = chain.read().await;
-            guard.build_candidate_block().unwrap()
+            guard.build_candidate_block_unchecked().unwrap()
         };
 
         runtime
