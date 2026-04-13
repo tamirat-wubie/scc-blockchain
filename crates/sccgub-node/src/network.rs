@@ -4147,7 +4147,7 @@ mod tests {
         config1.port = port1;
         config1.peers = vec![addr2.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2)];
-        config1.block_interval_ms = 200;
+        config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
         config1.round_timeout_ms = 800;
         config1.max_rounds = 2;
         config1.min_connected_peers = 1;
@@ -4458,7 +4458,7 @@ mod tests {
         config1.port = port1;
         config1.peers = vec![addr2.clone(), addr3.clone()];
         config1.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
-        config1.block_interval_ms = 200;
+        config1.block_interval_ms = 60_000; // Prevent proposer loop from racing the test.
         config1.round_timeout_ms = 800;
         config1.max_rounds = 2;
         config1.min_connected_peers = 2;
