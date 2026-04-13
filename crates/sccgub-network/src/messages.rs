@@ -95,6 +95,8 @@ pub struct LawSyncMessage {
     pub validator_id: Hash,
     pub height: u64,
     pub law_set_hash: Hash,
+    #[serde(default)]
+    pub protocol_version: u32,
     pub signature: Vec<u8>,
 }
 

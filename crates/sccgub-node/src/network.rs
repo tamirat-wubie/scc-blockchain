@@ -547,7 +547,7 @@ impl NetworkRuntime {
             NetworkMessage::FinalityCertificate(cert) => {
                 self.handle_finality_certificate(cert).await
             }
-            NetworkMessage::LawSync(_) => Ok(()),
+            NetworkMessage::LawSync(msg) => self.handle_law_sync(msg).await,
         }
     }
 
@@ -701,6 +701,16 @@ impl NetworkRuntime {
             if let Some(bridge) = &self.app_state {
                 let _ = bridge.sync_from_chain(&chain).await;
             }
+        }
+        Ok(())
+    }
+
+    async fn handle_law_sync(
+        &self,
+        msg: sccgub_network::messages::LawSyncMessage,
+    ) -> Result<(), String> {
+        if msg.protocol_version != self.config.protocol_version {
+            return Err("Law sync protocol version mismatch".into());
         }
         Ok(())
     }
