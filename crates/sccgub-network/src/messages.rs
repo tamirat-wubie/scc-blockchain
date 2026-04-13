@@ -43,6 +43,8 @@ pub struct HelloMessage {
     pub finalized_height: u64,
     pub protocol_version: u32,
     #[serde(default)]
+    pub epoch: u64,
+    #[serde(default)]
     pub known_peers: Vec<String>,
     pub signature: Vec<u8>,
 }
@@ -101,6 +103,8 @@ pub struct LawSyncMessage {
 pub struct HeartbeatMessage {
     pub validator_id: Hash,
     pub current_height: u64,
+    #[serde(default)]
+    pub epoch: u64,
     pub timestamp_ms: u64,
 }
 
@@ -144,6 +148,7 @@ mod tests {
             current_height: 100,
             finalized_height: 95,
             protocol_version: 1,
+            epoch: 0,
             known_peers: vec!["127.0.0.1:9000".to_string()],
             signature: vec![0u8; 64],
         });
@@ -158,6 +163,7 @@ mod tests {
         let msg = NetworkMessage::Heartbeat(HeartbeatMessage {
             validator_id: [3u8; 32],
             current_height: 50,
+            epoch: 0,
             timestamp_ms: 1234567890,
         });
 

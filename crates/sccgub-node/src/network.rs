@@ -555,6 +555,9 @@ impl NetworkRuntime {
         if msg.chain_id != self.chain_id {
             return Err("Hello chain_id mismatch".into());
         }
+        if msg.epoch != self.current_epoch().await {
+            return Err("Hello epoch mismatch".into());
+        }
         if !verify_hello_signature(&msg) {
             return Err("Hello signature invalid".into());
         }
@@ -595,6 +598,9 @@ impl NetworkRuntime {
         let validator_set = self.validator_set.read().await;
         if !validator_set.is_empty() && !validator_set.contains_key(&msg.validator_id) {
             return Err("Heartbeat validator not in authorized set".into());
+        }
+        if msg.epoch != self.current_epoch().await {
+            return Err("Heartbeat epoch mismatch".into());
         }
         let mut registry = self.registry.lock().await;
         let entry = registry.peers.get_mut(&msg.validator_id);
@@ -1476,6 +1482,7 @@ impl NetworkRuntime {
                 current_height: chain.height(),
                 finalized_height: chain.finalized_height(),
                 protocol_version: self.config.protocol_version,
+                epoch: chain.treasury.epoch,
                 known_peers,
                 signature: Vec::new(),
             },
@@ -1577,6 +1584,7 @@ impl NetworkRuntime {
             let heartbeat = NetworkMessage::Heartbeat(HeartbeatMessage {
                 validator_id: self.validator_id,
                 current_height: chain.height(),
+                epoch: chain.treasury.epoch,
                 timestamp_ms: now_ms(),
             });
             drop(chain);
@@ -1996,6 +2004,7 @@ mod tests {
                 current_height: 0,
                 finalized_height: 0,
                 protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
                 known_peers: vec![],
                 signature: Vec::new(),
             },
@@ -2028,6 +2037,7 @@ mod tests {
                 current_height: 0,
                 finalized_height: 0,
                 protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
                 known_peers: vec![],
                 signature: Vec::new(),
             },
@@ -2318,6 +2328,7 @@ mod tests {
                 HeartbeatMessage {
                     validator_id: other_pk,
                     current_height: 1,
+                    epoch: runtime.current_epoch().await,
                     timestamp_ms: now_ms(),
                 },
                 "127.0.0.1:4010",
