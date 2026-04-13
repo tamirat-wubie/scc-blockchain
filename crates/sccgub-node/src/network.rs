@@ -2568,6 +2568,164 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_persisted_consensus_round_finalizes_after_restart() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_consensus_restart_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Arc::new(ChainStore::new(&dir).unwrap());
+
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2)];
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+            let proposer = sccgub_governance::validator::round_robin_proposer(
+                &validators,
+                guard.height().saturating_add(1),
+            )
+            .expect("validator set must pick proposer");
+            guard.validator_key = if proposer.node_id == pk1 {
+                key1.clone()
+            } else {
+                key2.clone()
+            };
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 2,
+            };
+            guard.set_validator_set(validators);
+        }
+
+        let runtime = NetworkRuntime::new(chain.clone(), config.clone())
+            .await
+            .unwrap()
+            .with_persistence(store.clone(), 1);
+
+        let block = {
+            let guard = chain.read().await;
+            guard.build_candidate_block_unchecked().unwrap()
+        };
+        runtime
+            .pending_blocks
+            .lock()
+            .await
+            .insert(block.header.block_id, block.clone());
+
+        let epoch = runtime.current_epoch().await;
+        let validator_set = runtime.validator_set.read().await.clone();
+        let mut round = ConsensusRound::new(
+            runtime.chain_id,
+            epoch,
+            block.header.block_id,
+            block.header.height,
+            0,
+            validator_set,
+            runtime.config.max_rounds,
+        );
+        let prevote_payload = vote_sign_data(
+            &runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Prevote,
+        );
+        let precommit_payload = vote_sign_data(
+            &runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Precommit,
+        );
+        round.prevotes.insert(
+            pk1,
+            Vote {
+                validator_id: pk1,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: sign(&key1, &prevote_payload),
+            },
+        );
+        round.prevotes.insert(
+            pk2,
+            Vote {
+                validator_id: pk2,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: sign(&key2, &prevote_payload),
+            },
+        );
+        round.precommits.insert(
+            pk1,
+            Vote {
+                validator_id: pk1,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Precommit,
+                signature: sign(&key1, &precommit_payload),
+            },
+        );
+        round.precommits.insert(
+            pk2,
+            Vote {
+                validator_id: pk2,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Precommit,
+                signature: sign(&key2, &precommit_payload),
+            },
+        );
+        {
+            let mut rounds = runtime.consensus_rounds.lock().await;
+            rounds.insert(
+                block.header.height,
+                RoundState {
+                    round,
+                    last_round_ms: now_ms(),
+                },
+            );
+        }
+
+        runtime.persist_consensus_state().await;
+
+        let restarted = NetworkRuntime::new(chain.clone(), config)
+            .await
+            .unwrap()
+            .with_persistence(store.clone(), 1);
+        restarted
+            .pending_blocks
+            .lock()
+            .await
+            .insert(block.header.block_id, block.clone());
+        restarted.load_persisted_consensus_state().await;
+
+        restarted
+            .maybe_advance_consensus(block.header.height)
+            .await
+            .unwrap();
+
+        let chain = chain.read().await;
+        assert_eq!(chain.height(), block.header.height);
+        assert!(!chain.safety_certificates.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn test_deterministic_quorum_is_one() {
         // Single validator — always the proposer, quorum=1 in deterministic mode.
         let chain = Arc::new(RwLock::new(Chain::init()));
