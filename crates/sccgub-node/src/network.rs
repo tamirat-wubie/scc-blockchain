@@ -1497,6 +1497,12 @@ impl NetworkRuntime {
                     *current = validator_set.clone();
                 }
                 self.enforce_validator_set_on_registry(&validator_set).await;
+                self.consensus_rounds.lock().await.clear();
+                self.pending_blocks.lock().await.clear();
+                if let Some(store) = &self.store {
+                    let _ = store.clear_consensus_state();
+                }
+                self.persist_consensus_state().await;
             }
         }
     }
