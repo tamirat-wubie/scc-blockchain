@@ -227,6 +227,10 @@ Use the local gate scripts to mirror CI before pushing:
 pwsh ./scripts/run-ci.ps1
 ```
 
+```powershell
+pwsh ./scripts/ci-local.ps1
+```
+
 ## Conformance Matrix
 
 | Invariant | Enforcing Module | Test File | Failure Mode |
