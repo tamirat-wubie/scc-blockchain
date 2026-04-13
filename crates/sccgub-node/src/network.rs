@@ -508,6 +508,7 @@ impl NetworkRuntime {
         }
 
         self.connections.lock().await.remove(&peer_addr);
+        self.mark_peer_disconnected(&peer_addr).await;
     }
 
     async fn handle_message(&self, message: NetworkMessage, peer_addr: &str) -> Result<(), String> {
@@ -598,6 +599,16 @@ impl NetworkRuntime {
         }
         self.sync_peer_stats(peer_addr).await;
         Ok(())
+    }
+
+    async fn mark_peer_disconnected(&self, peer_addr: &str) {
+        let mut registry = self.registry.lock().await;
+        for peer in registry.peers.values_mut() {
+            if peer.address == peer_addr && peer.state == PeerState::Connected {
+                peer.state = PeerState::Disconnected;
+                break;
+            }
+        }
     }
 
     async fn handle_tx_gossip(&self, msg: TransactionGossipMessage) -> Result<(), String> {
@@ -1803,6 +1814,47 @@ mod tests {
         assert_eq!(peer.state, PeerState::Banned);
         drop(registry);
         assert!(!runtime.connections.lock().await.contains_key(other_addr));
+    }
+
+    #[tokio::test]
+    async fn test_mark_peer_disconnected_updates_state() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let peer_addr = "127.0.0.1:6123";
+        {
+            let mut registry = runtime.registry.lock().await;
+            registry
+                .upsert(PeerInfo {
+                    validator_id: [8u8; 32],
+                    address: peer_addr.to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Connected,
+                })
+                .unwrap();
+        }
+
+        runtime.mark_peer_disconnected(peer_addr).await;
+
+        let registry = runtime.registry.lock().await;
+        let peer = registry
+            .peers
+            .values()
+            .find(|p| p.address == peer_addr)
+            .unwrap();
+        assert_eq!(peer.state, PeerState::Disconnected);
     }
 
     #[tokio::test]
