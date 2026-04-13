@@ -921,6 +921,7 @@ impl NetworkRuntime {
             return Err("Finality certificate references unknown block".into());
         }
         let height = cert.height;
+        let block_hash = cert.block_hash;
         chain.record_safety_certificate(cert);
         if let Some(store) = &self.store {
             if let Some(block) = chain.block_at(height).cloned() {
@@ -951,7 +952,6 @@ impl NetworkRuntime {
         if let Some(bridge) = &self.app_state {
             let _ = bridge.sync_from_chain(&chain).await;
         }
-        let block_hash = cert.block_hash;
         drop(chain);
         self.pending_blocks.lock().await.remove(&block_hash);
         self.consensus_rounds.lock().await.remove(&height);
