@@ -739,8 +739,8 @@ fn test_norm_replicator_convergence() {
         created_at_height: 0,
     };
 
-    let _ = registry.register(high_fit);
-    let _ = registry.register(low_fit);
+    registry.register(high_fit).expect("register high-fit norm");
+    registry.register(low_fit).expect("register low-fit norm");
 
     // Run 20 epochs of replicator dynamics.
     for _ in 0..20 {
@@ -1079,19 +1079,23 @@ fn test_end_to_end_all_subsystems() {
 
     // ===== 10. NORM REPLICATOR DYNAMICS =====
     let mut norm_registry = NormRegistry::new();
-    let _ = norm_registry.register(norm);
+    norm_registry
+        .register(norm)
+        .expect("register fairness norm");
     // Add a competing norm.
-    let _ = norm_registry.register(sccgub_types::governance::Norm {
-        id: [99u8; 32],
-        name: "efficiency".into(),
-        description: "Optimize throughput".into(),
-        precedence: PrecedenceLevel::Optimization,
-        population_share: TensionValue(TensionValue::SCALE / 2),
-        fitness: TensionValue::from_integer(3),
-        enforcement_cost: TensionValue::from_integer(1),
-        active: true,
-        created_at_height: 0,
-    });
+    norm_registry
+        .register(sccgub_types::governance::Norm {
+            id: [99u8; 32],
+            name: "efficiency".into(),
+            description: "Optimize throughput".into(),
+            precedence: PrecedenceLevel::Optimization,
+            population_share: TensionValue(TensionValue::SCALE / 2),
+            fitness: TensionValue::from_integer(3),
+            enforcement_cost: TensionValue::from_integer(1),
+            active: true,
+            created_at_height: 0,
+        })
+        .expect("register efficiency norm");
     for _ in 0..10 {
         norm_registry.evolve_epoch();
     }
