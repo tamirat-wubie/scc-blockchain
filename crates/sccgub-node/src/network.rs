@@ -650,6 +650,28 @@ impl NetworkRuntime {
         peers
     }
 
+    async fn is_proposer_for_height(&self, height: u64) -> bool {
+        let validator_set = self.validator_set.read().await;
+        if validator_set.is_empty() {
+            return true;
+        }
+        let mut validators = Vec::with_capacity(validator_set.len());
+        for validator_id in validator_set.keys() {
+            validators.push(ValidatorAuthority {
+                node_id: *validator_id,
+                governance_level: PrecedenceLevel::Safety,
+                norm_compliance: sccgub_types::tension::TensionValue::from_integer(1),
+                causal_reliability: sccgub_types::tension::TensionValue::from_integer(1),
+                active: true,
+            });
+        }
+        validators.sort_by_key(|v| v.node_id);
+        match sccgub_governance::validator::round_robin_proposer(&validators, height) {
+            Some(expected) => expected.node_id == self.validator_id,
+            None => false,
+        }
+    }
+
     async fn mark_peer_disconnected(&self, peer_addr: &str) {
         let mut registry = self.registry.lock().await;
         for peer in registry.peers.values_mut() {
@@ -1679,11 +1701,8 @@ impl NetworkRuntime {
         let mut ticker = interval(Duration::from_millis(self.config.block_interval_ms));
         loop {
             ticker.tick().await;
-            let (next_height, is_proposer) = {
-                let chain = self.chain.read().await;
-                let next_height = chain.height().saturating_add(1);
-                (next_height, chain.is_proposer_for_height(next_height))
-            };
+            let next_height = { self.chain.read().await.height().saturating_add(1) };
+            let is_proposer = self.is_proposer_for_height(next_height).await;
             if !is_proposer {
                 continue;
             }
