@@ -321,6 +321,7 @@ impl NetworkRuntime {
 
         let expected_height = { self.chain.read().await.height().saturating_add(1) };
         let mut rounds = self.consensus_rounds.lock().await;
+        let mut cleaned = false;
         for (height, value) in persisted {
             if height != expected_height {
                 tracing::warn!(
@@ -347,6 +348,7 @@ impl NetworkRuntime {
                             round_state.round.precommits.clear();
                             round_state.round.phase =
                                 sccgub_consensus::protocol::ConsensusPhase::Propose;
+                            cleaned = true;
                         }
                     }
                     rounds.insert(height, round_state);
@@ -359,6 +361,10 @@ impl NetworkRuntime {
                     );
                 }
             }
+        }
+        drop(rounds);
+        if cleaned {
+            self.persist_consensus_state().await;
         }
     }
 
