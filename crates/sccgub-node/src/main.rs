@@ -1,3 +1,8 @@
+//! Purpose: SCCGUB node CLI entry point and command routing.
+//! Governance scope: operator-facing commands and parameter proposal flows.
+//! Dependencies: clap, sccgub-node modules, sccgub-types.
+//! Invariants: explicit error paths, deterministic command outputs.
+
 mod api_bridge;
 mod chain;
 pub mod config;
@@ -26,7 +31,7 @@ use chain::Chain;
 use persistence::ChainStore;
 
 const DEFAULT_DATA_DIR: &str = ".sccgub";
-const GOVERNED_PARAMETER_KEYS: [&str; 9] = [
+const GOVERNED_PARAMETER_KEYS: [&str; 10] = [
     "governance.max_consecutive_proposals",
     "governance.max_actions_per_agent_pct",
     "governance.safety_change_min_signers",
@@ -36,6 +41,7 @@ const GOVERNED_PARAMETER_KEYS: [&str; 9] = [
     "finality.confirmation_depth",
     "finality.max_finality_ms",
     "finality.target_block_time_ms",
+    "finality.mode",
 ];
 
 #[derive(Parser)]
@@ -1830,6 +1836,7 @@ fn cmd_info() {
     println!("    finality.confirmation_depth");
     println!("    finality.max_finality_ms");
     println!("    finality.target_block_time_ms");
+    println!("    finality.mode");
     println!("  Arithmetic:  Fixed-point (i128, 18 decimals)");
     println!();
     println!("Precedence Order:");

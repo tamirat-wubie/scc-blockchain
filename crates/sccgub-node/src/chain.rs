@@ -1,3 +1,8 @@
+//! Purpose: Chain state machine, block production/import, governance application.
+//! Governance scope: Consensus/treasury/governance/finality state transitions.
+//! Dependencies: sccgub_execution, sccgub_state, sccgub_consensus, sccgub_governance.
+//! Invariants: deterministic replay, governed parameter application, fail-closed validation.
+
 use sccgub_crypto::canonical::{canonical_bytes, canonical_hash};
 use sccgub_crypto::hash::{blake3_hash, blake3_hash_concat};
 use sccgub_crypto::keys::generate_keypair;
@@ -442,6 +447,7 @@ impl Chain {
                                 if let Err(e) = apply_governance_parameter_static(
                                     &mut governance_limits,
                                     &mut finality_config,
+                                    &mut state.state.governance_state.finality_mode,
                                     key,
                                     value,
                                 ) {
@@ -1542,6 +1548,7 @@ impl Chain {
         apply_governance_parameter_static(
             &mut self.governance_limits,
             &mut self.finality_config,
+            &mut self.state.state.governance_state.finality_mode,
             key,
             value,
         )
@@ -1589,6 +1596,7 @@ fn finality_config_from_snapshot(snapshot: &FinalityConfigSnapshot) -> FinalityC
 fn apply_governance_parameter_static(
     governance_limits: &mut GovernanceLimits,
     finality_config: &mut FinalityConfig,
+    finality_mode: &mut FinalityMode,
     key: &str,
     value: &str,
 ) -> Result<(), String> {
@@ -1682,6 +1690,26 @@ fn apply_governance_parameter_static(
             }
             finality_config.target_block_time_ms = parsed;
             Ok(())
+        }
+        "finality.mode" => {
+            let trimmed = value.trim().to_ascii_lowercase();
+            if trimmed == "deterministic" {
+                *finality_mode = FinalityMode::Deterministic;
+                return Ok(());
+            }
+            if let Some(quorum) = trimmed.strip_prefix("bft:") {
+                let parsed = quorum
+                    .parse::<u32>()
+                    .map_err(|_| "finality.mode bft quorum must be u32".to_string())?;
+                if parsed == 0 {
+                    return Err("finality.mode bft quorum must be >= 1".into());
+                }
+                *finality_mode = FinalityMode::BftCertified {
+                    quorum_threshold: parsed,
+                };
+                return Ok(());
+            }
+            Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
         }
         _ => Err(format!("Unknown governance parameter key: {}", key)),
     }
@@ -3099,6 +3127,51 @@ mod tests {
         }
 
         assert_eq!(chain.finality_config.confirmation_depth, 4);
+    }
+
+    #[test]
+    fn test_governance_parameter_updates_finality_mode() {
+        use sccgub_governance::proposals::ProposalKind;
+        use sccgub_types::governance::{FinalityMode, PrecedenceLevel};
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 300;
+        let proposer = chain.latest_block().unwrap().header.validator_id;
+
+        let proposal_id = chain
+            .proposals
+            .submit(
+                proposer,
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyParameter {
+                    key: "finality.mode".into(),
+                    value: "bft:2".into(),
+                },
+                chain.height(),
+                5,
+            )
+            .unwrap();
+        chain
+            .proposals
+            .vote(
+                &proposal_id,
+                proposer,
+                PrecedenceLevel::Safety,
+                true,
+                chain.height(),
+            )
+            .unwrap();
+
+        for _ in 0..210 {
+            chain.produce_block().unwrap();
+        }
+
+        assert_eq!(
+            chain.state.state.governance_state.finality_mode,
+            FinalityMode::BftCertified {
+                quorum_threshold: 2
+            }
+        );
     }
 
     #[test]
