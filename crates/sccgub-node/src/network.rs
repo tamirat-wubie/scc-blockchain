@@ -773,6 +773,20 @@ impl NetworkRuntime {
             if let Err(e) = chain.import_block(block.clone()) {
                 tracing::warn!("Block import failed for height {}: {:?}", height, e);
             } else {
+                if let Err(e) = chain.state.flush_store() {
+                    eprintln!("Warning: state store flush failed: {}", e);
+                }
+                if let Some(bridge) = &self.app_state {
+                    let _ = bridge.sync_from_chain(&chain).await;
+                }
+                let snapshot = if self.snapshot_interval > 0
+                    && height > 0
+                    && height.is_multiple_of(self.snapshot_interval)
+                {
+                    Some(chain.create_snapshot())
+                } else {
+                    None
+                };
                 drop(chain);
                 self.pending_blocks
                     .lock()
@@ -780,6 +794,20 @@ impl NetworkRuntime {
                     .remove(&block.header.block_id);
                 self.consensus_rounds.lock().await.remove(&height);
                 self.persist_consensus_state().await;
+                if let Some(store) = &self.store {
+                    let store = store.clone();
+                    let block = block.clone();
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(e) = store.save_block(&block) {
+                            eprintln!("Warning: failed to persist block: {}", e);
+                        }
+                        if let Some(snapshot) = snapshot {
+                            if let Err(e) = store.save_snapshot(&snapshot) {
+                                eprintln!("Warning: failed to persist snapshot: {}", e);
+                            }
+                        }
+                    });
+                }
             }
         }
         Ok(())
