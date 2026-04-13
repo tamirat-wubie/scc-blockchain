@@ -2329,7 +2329,7 @@ mod tests {
 
         {
             let mut guard = chain.write().await;
-            guard.validator_key = local_key;
+            guard.validator_key = local_key.clone();
             guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
                 quorum_threshold: 2,
             };
@@ -2477,7 +2477,7 @@ mod tests {
 
         {
             let mut guard = chain.write().await;
-            guard.validator_key = local_key;
+            guard.validator_key = local_key.clone();
             guard.state.state.governance_state.finality_mode = FinalityMode::Deterministic;
         }
 
@@ -3108,10 +3108,8 @@ mod tests {
     #[tokio::test]
     async fn test_peer_flow_block_proposal_to_import() {
         let chain = Arc::new(RwLock::new(Chain::init()));
-        let local_pk = {
-            let guard = chain.read().await;
-            *guard.validator_key.verifying_key().as_bytes()
-        };
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
         let mut config = crate::config::NodeConfig::default().network;
         config.validators = vec![hex::encode(local_pk)];
 
@@ -3468,7 +3466,7 @@ mod tests {
         {
             let mut guard = chain_proposer.write().await;
             guard.governance_limits.max_consecutive_proposals = 100;
-            guard.validator_key = proposer_key;
+            guard.validator_key = proposer_key.clone();
             guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
                 quorum_threshold: 3,
             };
@@ -3613,7 +3611,7 @@ mod tests {
         {
             let mut guard = chain_proposer.write().await;
             guard.governance_limits.max_consecutive_proposals = 100;
-            guard.validator_key = proposer_key;
+            guard.validator_key = proposer_key.clone();
             guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
                 quorum_threshold: 3,
             };
