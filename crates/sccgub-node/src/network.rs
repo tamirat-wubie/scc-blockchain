@@ -601,6 +601,15 @@ impl NetworkRuntime {
 
     async fn handle_block_proposal(&self, msg: BlockProposalMessage) -> Result<(), String> {
         let block = msg.block;
+        if msg.proposer_id != block.header.validator_id {
+            return Err("Block proposal proposer_id mismatch".into());
+        }
+        {
+            let validator_set = self.validator_set.read().await;
+            if !validator_set.is_empty() && !validator_set.contains_key(&msg.proposer_id) {
+                return Err("Block proposer not in authorized set".into());
+            }
+        }
         {
             let chain = self.chain.read().await;
             chain.validate_candidate_block(&block)?;
@@ -2533,6 +2542,50 @@ mod tests {
 
         let chain = chain.read().await;
         assert_eq!(chain.height(), block.header.height);
+    }
+
+    #[tokio::test]
+    async fn test_block_proposal_rejects_mismatched_proposer() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(local_pk)];
+
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+            guard.set_validator_set(validators);
+        }
+
+        let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
+        let block = {
+            let guard = chain.read().await;
+            guard.build_candidate_block().unwrap()
+        };
+
+        let err = runtime
+            .handle_message(
+                NetworkMessage::BlockProposal(BlockProposalMessage {
+                    proposer_id: other_pk,
+                    block,
+                    round: 0,
+                    signature: Vec::new(),
+                }),
+                "127.0.0.1:9001",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("proposer_id mismatch"),
+            "Expected proposer mismatch rejection, got: {}",
+            err
+        );
     }
 
     #[tokio::test]
