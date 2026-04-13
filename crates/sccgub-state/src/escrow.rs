@@ -194,9 +194,7 @@ impl EscrowRegistry {
                         // the key must have been written by that agent in this block.
                         let authority_ok = match required_authority {
                             None => true,
-                            Some(required) => {
-                                block_writers.get(key) == Some(required)
-                            }
+                            Some(required) => block_writers.get(key) == Some(required),
                         };
                         authority_ok
                     }
