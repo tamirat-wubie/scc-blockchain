@@ -951,8 +951,9 @@ impl NetworkRuntime {
         if let Some(bridge) = &self.app_state {
             let _ = bridge.sync_from_chain(&chain).await;
         }
+        let block_hash = cert.block_hash;
         drop(chain);
-        self.pending_blocks.lock().await.remove(&cert.block_hash);
+        self.pending_blocks.lock().await.remove(&block_hash);
         self.consensus_rounds.lock().await.remove(&height);
         self.persist_consensus_state().await;
         Ok(())
