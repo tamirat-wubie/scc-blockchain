@@ -1272,6 +1272,7 @@ impl NetworkRuntime {
             ticker.tick().await;
             let now = now_ms();
             let mut stale_hashes = Vec::new();
+            let mut timed_out = false;
             {
                 let mut rounds = self.consensus_rounds.lock().await;
                 for state in rounds.values_mut() {
@@ -1279,6 +1280,7 @@ impl NetworkRuntime {
                         if old_hash != EMPTY_HASH {
                             stale_hashes.push(old_hash);
                         }
+                        timed_out = true;
                     }
                 }
             }
@@ -1287,6 +1289,9 @@ impl NetworkRuntime {
                 for hash in stale_hashes {
                     pending.remove(&hash);
                 }
+            }
+            if timed_out {
+                self.persist_consensus_state().await;
             }
         }
     }
