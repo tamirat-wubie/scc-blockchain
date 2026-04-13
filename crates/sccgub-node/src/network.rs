@@ -543,6 +543,15 @@ impl NetworkRuntime {
             return Err("Hello validator not in authorized set".into());
         }
 
+        {
+            let registry = self.registry.lock().await;
+            if let Some(existing) = registry.peers.get(&msg.validator_id) {
+                if existing.address != peer_addr && existing.state == PeerState::Connected {
+                    return Err("Hello address mismatch for validator".into());
+                }
+            }
+        }
+
         self.update_peer_seeds(peer_addr, &msg.known_peers).await;
         let info = PeerInfo {
             validator_id: msg.validator_id,
@@ -566,6 +575,9 @@ impl NetworkRuntime {
         let mut registry = self.registry.lock().await;
         let entry = registry.peers.get_mut(&msg.validator_id);
         if let Some(peer) = entry {
+            if peer.address != peer_addr && peer.state == PeerState::Connected {
+                return Err("Heartbeat address mismatch for validator".into());
+            }
             peer.current_height = msg.current_height;
             peer.last_seen_ms = msg.timestamp_ms;
             peer.state = PeerState::Connected;
@@ -1672,6 +1684,43 @@ mod tests {
         assert!(
             err.contains("authorized set"),
             "Expected allowlist rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_hello_rejects_address_mismatch() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let hello = signed_hello(
+            &local_key,
+            HelloMessage {
+                validator_id: local_pk,
+                chain_id: runtime.chain_id,
+                current_height: 0,
+                finalized_height: 0,
+                protocol_version: runtime.config.protocol_version,
+                known_peers: vec![],
+                signature: Vec::new(),
+            },
+        );
+
+        runtime
+            .handle_hello(hello.clone(), "127.0.0.1:4001")
+            .await
+            .unwrap();
+
+        let err = runtime
+            .handle_hello(hello, "127.0.0.1:4002")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("address mismatch"),
+            "Expected address mismatch rejection, got: {}",
             err
         );
     }
