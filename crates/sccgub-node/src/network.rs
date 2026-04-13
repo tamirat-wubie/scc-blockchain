@@ -1804,16 +1804,6 @@ fn verify_hello_signature(msg: &HelloMessage) -> bool {
     verify(&msg.validator_id, &bytes, &msg.signature)
 }
 
-fn signed_law_sync(
-    key: &ed25519_dalek::SigningKey,
-    mut msg: sccgub_network::messages::LawSyncMessage,
-) -> sccgub_network::messages::LawSyncMessage {
-    msg.signature = Vec::new();
-    let bytes = canonical_bytes(&NetworkMessage::LawSync(msg.clone()));
-    msg.signature = sign(key, &bytes);
-    msg
-}
-
 fn verify_law_sync_signature(msg: &sccgub_network::messages::LawSyncMessage) -> bool {
     if msg.signature.len() < 64 {
         return false;
