@@ -2409,12 +2409,30 @@ mod tests {
         }
 
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
-        let block = { chain.read().await.build_candidate_block().unwrap() };
+        let (block, proposer_id, proposer_key) = {
+            let guard = chain.read().await;
+            let height = guard.height() + 1;
+            let proposer =
+                round_robin_proposer(&guard.validator_set, height).expect("expected proposer");
+            let proposer_id = proposer.node_id;
+            let proposer_key = if proposer_id == local_pk {
+                local_key.clone()
+            } else if proposer_id == *other_key.verifying_key().as_bytes() {
+                other_key.clone()
+            } else {
+                third_key.clone()
+            };
+            (
+                guard.build_candidate_block().unwrap(),
+                proposer_id,
+                proposer_key,
+            )
+        };
         runtime
             .handle_block_proposal(signed_block_proposal(
-                &local_key,
+                &proposer_key,
                 BlockProposalMessage {
-                    proposer_id: local_pk,
+                    proposer_id,
                     block: block.clone(),
                     round: 0,
                     signature: Vec::new(),
