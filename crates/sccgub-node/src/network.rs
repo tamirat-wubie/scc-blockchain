@@ -4232,6 +4232,230 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_p2p_three_validator_proposer_rotation_finalizes() {
+        use sccgub_types::governance::FinalityMode;
+        use std::net::TcpListener;
+
+        fn free_port() -> u16 {
+            TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        }
+
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let key3 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+        let pk3 = *key3.verifying_key().as_bytes();
+
+        let port1 = free_port();
+        let port2 = free_port();
+        let port3 = free_port();
+        let addr1 = format!("127.0.0.1:{}", port1);
+        let addr2 = format!("127.0.0.1:{}", port2);
+        let addr3 = format!("127.0.0.1:{}", port3);
+
+        let mut config1 = crate::config::NodeConfig::default().network;
+        config1.enable = true;
+        config1.bind = "127.0.0.1".into();
+        config1.port = port1;
+        config1.peers = vec![addr2.clone(), addr3.clone()];
+        config1.validators = vec![hex::encode(pk1), hex::encode(pk2), hex::encode(pk3)];
+        config1.block_interval_ms = 200;
+        config1.round_timeout_ms = 800;
+        config1.max_rounds = 2;
+        config1.min_connected_peers = 2;
+        config1.max_same_subnet_pct = 100;
+
+        let mut config2 = config1.clone();
+        config2.port = port2;
+        config2.peers = vec![addr1.clone(), addr3.clone()];
+
+        let mut config3 = config1.clone();
+        config3.port = port3;
+        config3.peers = vec![addr1.clone(), addr2.clone()];
+
+        let validators = NetworkRuntime::validators_from_config(&config1).unwrap();
+
+        let chain1 = Arc::new(RwLock::new(Chain::init()));
+        let chain2 = Arc::new(RwLock::new(Chain::init()));
+        let chain3 = Arc::new(RwLock::new(Chain::init()));
+
+        {
+            let mut guard = chain1.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key1.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+        {
+            let mut guard = chain2.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key2.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+        {
+            let mut guard = chain3.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key3.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+
+        let runtime1 = Arc::new(NetworkRuntime::new(chain1.clone(), config1).await.unwrap());
+        let runtime2 = Arc::new(NetworkRuntime::new(chain2.clone(), config2).await.unwrap());
+        let runtime3 = Arc::new(NetworkRuntime::new(chain3.clone(), config3).await.unwrap());
+
+        runtime1.clone().run().await.unwrap();
+        runtime2.clone().run().await.unwrap();
+        runtime3.clone().run().await.unwrap();
+
+        let wait_connected = |runtime: Arc<NetworkRuntime>, addr: String| async move {
+            for _ in 0..80 {
+                if runtime.connections.lock().await.contains_key(&addr) {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        };
+
+        let connected = wait_connected(runtime1.clone(), addr2.clone()).await
+            && wait_connected(runtime1.clone(), addr3.clone()).await
+            && wait_connected(runtime2.clone(), addr1.clone()).await
+            && wait_connected(runtime2.clone(), addr3.clone()).await
+            && wait_connected(runtime3.clone(), addr1.clone()).await
+            && wait_connected(runtime3.clone(), addr2.clone()).await;
+        assert!(connected, "p2p peers must connect");
+
+        let _ = runtime1.send_hello(&addr2).await;
+        let _ = runtime1.send_hello(&addr3).await;
+        let _ = runtime2.send_hello(&addr1).await;
+        let _ = runtime2.send_hello(&addr3).await;
+        let _ = runtime3.send_hello(&addr1).await;
+        let _ = runtime3.send_hello(&addr2).await;
+
+        let height = { chain1.read().await.height().saturating_add(1) };
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
+            .expect("validator set must pick proposer");
+
+        let (proposer_runtime, proposer_key, proposer_pk) = if proposer.node_id == pk1 {
+            (runtime1.clone(), key1.clone(), pk1)
+        } else if proposer.node_id == pk2 {
+            (runtime2.clone(), key2.clone(), pk2)
+        } else {
+            (runtime3.clone(), key3.clone(), pk3)
+        };
+
+        let block = {
+            let guard = proposer_runtime.chain.read().await;
+            guard.build_candidate_block_unchecked().unwrap()
+        };
+
+        let proposal = NetworkMessage::BlockProposal(signed_block_proposal(
+            &proposer_key,
+            BlockProposalMessage {
+                proposer_id: proposer_pk,
+                block: block.clone(),
+                round: 0,
+                signature: Vec::new(),
+            },
+        ));
+
+        proposer_runtime
+            .handle_message(proposal.clone(), "local")
+            .await
+            .unwrap();
+        proposer_runtime.broadcast(proposal.clone()).await;
+
+        let epoch = proposer_runtime.current_epoch().await;
+        let prevote_payload = vote_sign_data(
+            &proposer_runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Prevote,
+        );
+        let precommit_payload = vote_sign_data(
+            &proposer_runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Precommit,
+        );
+
+        let vote_triplet = [(pk1, &key1), (pk2, &key2), (pk3, &key3)];
+
+        for (pk, key) in vote_triplet.iter() {
+            let prevote = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                signature: sign(key, &prevote_payload),
+            };
+            let precommit = Vote {
+                validator_id: *pk,
+                block_hash: block.header.block_id,
+                height: block.header.height,
+                round: 0,
+                vote_type: VoteType::Precommit,
+                signature: sign(key, &precommit_payload),
+            };
+            let _ = runtime1
+                .handle_message(NetworkMessage::ConsensusVote(prevote.clone()), "local")
+                .await;
+            let _ = runtime2
+                .handle_message(NetworkMessage::ConsensusVote(prevote.clone()), "local")
+                .await;
+            let _ = runtime3
+                .handle_message(NetworkMessage::ConsensusVote(prevote), "local")
+                .await;
+
+            let _ = runtime1
+                .handle_message(NetworkMessage::ConsensusVote(precommit.clone()), "local")
+                .await;
+            let _ = runtime2
+                .handle_message(NetworkMessage::ConsensusVote(precommit.clone()), "local")
+                .await;
+            let _ = runtime3
+                .handle_message(NetworkMessage::ConsensusVote(precommit), "local")
+                .await;
+        }
+
+        let finalize = |chain: Arc<RwLock<Chain>>, height: u64| async move {
+            for _ in 0..80 {
+                {
+                    let guard = chain.read().await;
+                    if guard.height() >= height && !guard.safety_certificates.is_empty() {
+                        return true;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        };
+
+        let finalized = finalize(chain1.clone(), block.header.height).await
+            || finalize(chain2.clone(), block.header.height).await
+            || finalize(chain3.clone(), block.header.height).await;
+        assert!(finalized, "expected finality certificate after p2p gossip");
+    }
+
+    #[tokio::test]
     async fn test_governed_finality_mode_sets_consensus_quorum() {
         use sccgub_governance::proposals::ProposalKind;
         use sccgub_types::governance::{FinalityMode, PrecedenceLevel};
