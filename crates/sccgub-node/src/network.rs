@@ -797,6 +797,9 @@ impl NetworkRuntime {
         if state.round.epoch != epoch {
             return Ok(());
         }
+        if state.round.block_hash == EMPTY_HASH {
+            return Ok(());
+        }
         if vote.block_hash != state.round.block_hash {
             return Ok(());
         }
@@ -1529,11 +1532,12 @@ impl NetworkRuntime {
             let (round, phase, existing_hash) = {
                 let rounds = self.consensus_rounds.lock().await;
                 if let Some(state) = rounds.get(&next_height) {
-                    (
-                        state.round.round,
-                        state.round.phase,
-                        Some(state.round.block_hash),
-                    )
+                    let existing_hash = if state.round.block_hash == EMPTY_HASH {
+                        None
+                    } else {
+                        Some(state.round.block_hash)
+                    };
+                    (state.round.round, state.round.phase, existing_hash)
                 } else {
                     (0, sccgub_consensus::protocol::ConsensusPhase::Propose, None)
                 }
