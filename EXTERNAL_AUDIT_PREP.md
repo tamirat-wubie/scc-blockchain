@@ -4,6 +4,10 @@
 **Date:** 2026-04-11
 **Repo:** 9 crates, 639 tests, hardening-stage reference runtime with optional p2p alpha
 
+**Companion documents:**
+- [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
+- [PROTOCOL.md](PROTOCOL.md) — frozen protocol specification
+
 **Known Limits (MVP) Summary:**
 - Default single-proposer mode when no validator set is configured (validator set snapshots persist across restarts)
 - Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
