@@ -1792,9 +1792,11 @@ fn cmd_demo() {
         .expect("escrow create must succeed");
 
     let state = sccgub_state::world::ManagedWorldState::new();
-    let released_before = registry.check_and_release(&state, 4, &mut balances);
+    let released_before =
+        registry.check_and_release(&state, 4, &mut balances, &std::collections::HashMap::new());
     println!("  Released before timelock: {}", released_before.len());
-    let released_after = registry.check_and_release(&state, 5, &mut balances);
+    let released_after =
+        registry.check_and_release(&state, 5, &mut balances, &std::collections::HashMap::new());
     println!("  Released at timelock: {}", released_after.len());
     println!(
         "  Escrow status: {:?}",

@@ -157,11 +157,17 @@ impl EscrowRegistry {
 
     /// Check if any escrow conditions are met and release automatically.
     /// Returns IDs of released escrows.
+    ///
+    /// `block_writers` maps state keys written in the current block to the
+    /// agent_id that performed the write. Used for escrow authority verification:
+    /// a StateProof condition with `required_authority` only releases if the
+    /// key was written by that specific agent in this block.
     pub fn check_and_release(
         &mut self,
         state: &crate::world::ManagedWorldState,
         current_height: u64,
         balances: &mut BalanceLedger,
+        block_writers: &std::collections::HashMap<Vec<u8>, Hash>,
     ) -> Vec<Hash> {
         let mut released = Vec::new();
 
@@ -174,13 +180,25 @@ impl EscrowRegistry {
                 EscrowCondition::StateProof {
                     key,
                     expected_value,
-                    required_authority: _,
+                    required_authority,
                 } => {
-                    // Verify both key existence AND value match.
-                    // required_authority check requires write-tracking (future: audit log).
-                    match state.trie.get(key) {
+                    // Verify key existence AND value match.
+                    let value_match = match state.trie.get(key) {
                         Some(actual) => actual == expected_value,
                         None => false,
+                    };
+                    if !value_match {
+                        false
+                    } else {
+                        // Authority check: if required_authority is set (non-zero),
+                        // the key must have been written by that agent in this block.
+                        let authority_ok = match required_authority {
+                            None => true,
+                            Some(required) => block_writers
+                                .get(key)
+                                .map_or(false, |writer| writer == required),
+                        };
+                        authority_ok
                     }
                 }
                 EscrowCondition::TimeLocked { release_at } => current_height >= *release_at,
@@ -328,7 +346,12 @@ mod tests {
             .unwrap();
 
         // Condition not met — no release.
-        let released = registry.check_and_release(&state, 10, &mut balances);
+        let released = registry.check_and_release(
+            &state,
+            10,
+            &mut balances,
+            &std::collections::HashMap::new(),
+        );
         assert!(released.is_empty());
 
         // Write delivery proof to state.
@@ -341,7 +364,12 @@ mod tests {
         });
 
         // Now condition is met — auto-release.
-        let released = registry.check_and_release(&state, 20, &mut balances);
+        let released = registry.check_and_release(
+            &state,
+            20,
+            &mut balances,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(released.len(), 1);
         assert_eq!(balances.balance_of(&bob), TensionValue::from_integer(100));
     }
@@ -366,11 +394,16 @@ mod tests {
 
         // Before release time — nothing happens.
         assert!(registry
-            .check_and_release(&state, 30, &mut balances)
+            .check_and_release(&state, 30, &mut balances, &std::collections::HashMap::new())
             .is_empty());
 
         // At release time — auto-release.
-        let released = registry.check_and_release(&state, 50, &mut balances);
+        let released = registry.check_and_release(
+            &state,
+            50,
+            &mut balances,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(released.len(), 1);
         assert_eq!(balances.balance_of(&bob), TensionValue::from_integer(500));
     }
@@ -402,5 +435,54 @@ mod tests {
         let eid = registry.escrows[0].id;
         registry.release(&eid, &mut balances).unwrap();
         assert_eq!(balances.total_supply(), initial_supply);
+    }
+
+    #[test]
+    fn test_authority_check_blocks_unauthorized_release() {
+        let (mut balances, alice, bob) = setup();
+        let mut state = crate::world::ManagedWorldState::new();
+        let mut registry = EscrowRegistry::new();
+
+        let authorized_agent = [42u8; 32];
+        registry
+            .create(
+                alice,
+                bob,
+                TensionValue::from_integer(100),
+                EscrowCondition::StateProof {
+                    key: b"delivery/proof".to_vec(),
+                    expected_value: b"confirmed".to_vec(),
+                    required_authority: Some(authorized_agent),
+                },
+                1,
+                100,
+                &mut balances,
+            )
+            .unwrap();
+
+        // Write correct value but from WRONG agent.
+        state.apply_delta(&sccgub_types::transition::StateDelta {
+            writes: vec![sccgub_types::transition::StateWrite {
+                address: b"delivery/proof".to_vec(),
+                value: b"confirmed".to_vec(),
+            }],
+            deletes: vec![],
+        });
+        let wrong_agent = [99u8; 32];
+        let mut writers = std::collections::HashMap::new();
+        writers.insert(b"delivery/proof".to_vec(), wrong_agent);
+
+        // Should NOT release — wrong authority.
+        let released = registry.check_and_release(&state, 10, &mut balances, &writers);
+        assert!(
+            released.is_empty(),
+            "Wrong authority must not release escrow"
+        );
+
+        // Now with correct authority.
+        writers.insert(b"delivery/proof".to_vec(), authorized_agent);
+        let released = registry.check_and_release(&state, 10, &mut balances, &writers);
+        assert_eq!(released.len(), 1, "Correct authority must release escrow");
+        assert_eq!(balances.balance_of(&bob), TensionValue::from_integer(100));
     }
 }

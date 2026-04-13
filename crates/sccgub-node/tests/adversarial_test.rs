@@ -1293,7 +1293,8 @@ fn test_escrow_wrong_value_does_not_release() {
     });
 
     // Escrow must NOT release — value doesn't match.
-    let released = escrow.check_and_release(&state, 50, &mut bal);
+    let released =
+        escrow.check_and_release(&state, 50, &mut bal, &std::collections::HashMap::new());
     assert!(
         released.is_empty(),
         "Escrow must not release on wrong value"

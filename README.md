@@ -4,7 +4,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 638 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
+**Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 639 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
 
 ## Where It Stands (Executive Summary)
 
@@ -17,7 +17,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
 - REST API with 22 versioned endpoints for state, blocks, receipts, governance, and finality.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 624 tests, CI green on Ubuntu + Windows + security audit.
+- Hardening posture: 639 tests, CI green on Ubuntu + Windows + security audit.
 
 **What it cannot do yet**  
 - Multi-validator consensus is not wired into the live runtime; default mode is single proposer.
@@ -209,7 +209,7 @@ from `scripts/README.md` to reproduce proposal activation and receipt queries.
 | Keystore crypto | Argon2id + ChaCha20-Poly1305 | AEAD tamper detection, memory-hard KDF |
 | Custody roles | 6 roles | Validator/Treasury/Governance separation with rotation and revocation |
 | Structured API errors | 14 error codes | Machine-readable rejection for every failure path |
-| Escrow attack surface | 5 tests | Double-release, premature refund, self-escrow, zero-amount |
+| Escrow attack surface | 6 tests | Double-release, premature refund, self-escrow, zero-amount |
 | Gas metering | Wired | Chain-bound gas schedule + limits, trie-backed fee/reward replay |
 | Governance timelocks | Enforced | Ordinary 50 blocks, constitutional 200 blocks, activated in live chain lifecycle |
 | Runtime invariants | 7 checks | Supply, nonce, state root, tension, receipts, causality |
