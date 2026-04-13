@@ -739,8 +739,8 @@ fn test_norm_replicator_convergence() {
         created_at_height: 0,
     };
 
-    registry.register(high_fit);
-    registry.register(low_fit);
+    let _ = registry.register(high_fit);
+    let _ = registry.register(low_fit);
 
     // Run 20 epochs of replicator dynamics.
     for _ in 0..20 {
@@ -1079,9 +1079,9 @@ fn test_end_to_end_all_subsystems() {
 
     // ===== 10. NORM REPLICATOR DYNAMICS =====
     let mut norm_registry = NormRegistry::new();
-    norm_registry.register(norm);
+    let _ = norm_registry.register(norm);
     // Add a competing norm.
-    norm_registry.register(sccgub_types::governance::Norm {
+    let _ = norm_registry.register(sccgub_types::governance::Norm {
         id: [99u8; 32],
         name: "efficiency".into(),
         description: "Optimize throughput".into(),
