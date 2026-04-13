@@ -568,6 +568,10 @@ impl NetworkRuntime {
     }
 
     async fn handle_heartbeat(&self, msg: HeartbeatMessage, peer_addr: &str) -> Result<(), String> {
+        let validator_set = self.validator_set.read().await;
+        if !validator_set.is_empty() && !validator_set.contains_key(&msg.validator_id) {
+            return Err("Heartbeat validator not in authorized set".into());
+        }
         let mut registry = self.registry.lock().await;
         let entry = registry.peers.get_mut(&msg.validator_id);
         if let Some(peer) = entry {
@@ -1963,6 +1967,36 @@ mod tests {
         assert!(
             err.contains("Vote signature verification failed"),
             "Expected bad signature rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_heartbeat_rejects_unknown_validator() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = {
+            let guard = chain.read().await;
+            *guard.validator_key.verifying_key().as_bytes()
+        };
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let other_key = generate_keypair();
+        let other_pk = *other_key.verifying_key().as_bytes();
+        let err = runtime
+            .handle_heartbeat(
+                HeartbeatMessage {
+                    validator_id: other_pk,
+                    current_height: 1,
+                    timestamp_ms: now_ms(),
+                },
+                "127.0.0.1:4010",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("authorized set"),
+            "Expected allowlist rejection, got: {}",
             err
         );
     }
