@@ -2847,8 +2847,8 @@ mod tests {
                 .unwrap();
         }
 
-        runtime.check_rate_limit(addr).await.unwrap();
-        let err = runtime.check_rate_limit(addr).await.unwrap_err();
+        runtime.check_rate_limit(addr, false).await.unwrap();
+        let err = runtime.check_rate_limit(addr, false).await.unwrap_err();
         assert!(
             err.contains("disconnect: rate limit exceeded"),
             "Expected disconnect on rate limit, got: {}",
