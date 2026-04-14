@@ -578,6 +578,12 @@ fn cmd_produce(
             .save_snapshot(&snapshot)
             .expect("Failed to save snapshot");
         println!("  Snapshot saved at height {}.", produced_height);
+        // Keep only the 3 most recent snapshots to avoid unbounded disk growth.
+        if let Ok(removed) = store.rotate_snapshots(3) {
+            if removed > 0 {
+                println!("  Rotated {} old snapshot(s).", removed);
+            }
+        }
     }
 }
 

@@ -317,6 +317,33 @@ impl ChainStore {
         fs::rename(&tmp_path, &path)
     }
 
+    /// Remove old snapshots, keeping only the most recent `keep` files.
+    pub fn rotate_snapshots(&self, keep: usize) -> std::io::Result<usize> {
+        let state_dir = self.base_dir.join("state");
+        let mut entries: Vec<_> = fs::read_dir(&state_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with("snapshot_") && s.ends_with(".json") && !s.ends_with(".tmp")
+            })
+            .collect();
+
+        if entries.len() <= keep {
+            return Ok(0);
+        }
+
+        entries.sort_by_key(|e| e.file_name());
+        let to_remove = entries.len() - keep;
+        let mut removed = 0;
+        for entry in entries.into_iter().take(to_remove) {
+            if fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Load the latest state snapshot.
     pub fn load_latest_snapshot(&self) -> std::io::Result<Option<StateSnapshot>> {
         let state_dir = self.base_dir.join("state");
@@ -1019,6 +1046,69 @@ mod tests {
         let blocks = store.load_all_blocks().unwrap();
         let replayed = Chain::from_blocks(blocks).unwrap();
         assert_eq!(replayed.finality_config.confirmation_depth, 5);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rotate_snapshots_keeps_latest() {
+        let dir = std::env::temp_dir().join(format!("sccgub_rotate_test_{}", std::process::id()));
+        let store = ChainStore::new(&dir).unwrap();
+
+        // Create 5 snapshots at heights 10, 20, 30, 40, 50.
+        for h in [10u64, 20, 30, 40, 50] {
+            let snapshot = StateSnapshot {
+                height: h,
+                state_root: [h as u8; 32],
+                trie_entries: vec![],
+                agent_nonces: vec![],
+                balances: vec![],
+                treasury_pending_raw: 0,
+                treasury_collected_raw: 0,
+                treasury_distributed_raw: 0,
+                treasury_burned_raw: 0,
+                treasury_epoch: 0,
+                finalized_height: 0,
+                slashing_events: vec![],
+                slashing_stakes: vec![],
+                slashing_removed: vec![],
+                slashing_absence: vec![],
+                equivocation_records: vec![],
+                safety_certificates: vec![],
+                validator_set: vec![],
+                governance_limits: Default::default(),
+                finality_config: Default::default(),
+                proposals: vec![],
+            };
+            store.save_snapshot(&snapshot).unwrap();
+        }
+
+        // Verify all 5 exist.
+        let state_dir = dir.join("state");
+        let count_snapshots = || -> usize {
+            fs::read_dir(&state_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let s = e.file_name().to_string_lossy().to_string();
+                    s.starts_with("snapshot_") && s.ends_with(".json")
+                })
+                .count()
+        };
+        assert_eq!(count_snapshots(), 5);
+
+        // Rotate keeping 2 — should remove 3 oldest.
+        let removed = store.rotate_snapshots(2).unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(count_snapshots(), 2);
+
+        // Latest snapshot should still be height 50.
+        let latest = store.load_latest_snapshot().unwrap().unwrap();
+        assert_eq!(latest.height, 50);
+
+        // Rotate again — nothing to remove.
+        let removed = store.rotate_snapshots(2).unwrap();
+        assert_eq!(removed, 0);
 
         let _ = fs::remove_dir_all(&dir);
     }

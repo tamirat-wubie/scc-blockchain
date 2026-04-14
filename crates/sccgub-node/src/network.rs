@@ -959,6 +959,7 @@ impl NetworkRuntime {
                             if let Err(e) = store.save_snapshot(&snapshot) {
                                 eprintln!("Warning: failed to persist snapshot: {}", e);
                             }
+                            let _ = store.rotate_snapshots(3);
                         }
                     });
                 }
@@ -1106,6 +1107,7 @@ impl NetworkRuntime {
                         if let Err(e) = store.save_snapshot(&snapshot) {
                             eprintln!("Warning: failed to persist snapshot: {}", e);
                         }
+                        let _ = store.rotate_snapshots(3);
                     }
                 });
             }
@@ -1524,6 +1526,7 @@ impl NetworkRuntime {
                                 if let Err(e) = store.save_snapshot(&snapshot) {
                                     eprintln!("Warning: failed to persist snapshot: {}", e);
                                 }
+                                let _ = store.rotate_snapshots(3);
                             }
                         });
                     }
