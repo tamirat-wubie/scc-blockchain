@@ -9,10 +9,10 @@ use crate::handlers::{self, SharedState};
 /// Build the API router with all endpoints.
 ///
 /// Endpoints:
-///   GET  /api/v1/slashing         â€” slashing summary
-///   GET  /api/v1/slashing/{validator_id} â€” validator slashing detail
-///   GET  /api/v1/slashing/evidence â€” equivocation evidence
-///   GET  /api/v1/slashing/evidence/{validator_id} â€” validator evidence
+///   GET  /api/v1/slashing         -- slashing summary
+///   GET  /api/v1/slashing/{validator_id} -- validator slashing detail
+///   GET  /api/v1/slashing/evidence -- equivocation evidence
+///   GET  /api/v1/slashing/evidence/{validator_id} -- validator evidence
 ///   GET  /api/v1/status           — chain summary
 ///   GET  /api/v1/health           — system health + finality
 ///   GET  /api/v1/finality/certificates — finality safety certificates

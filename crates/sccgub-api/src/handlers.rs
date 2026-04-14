@@ -1086,7 +1086,7 @@ fn slashing_event_response(event: &SlashingEvent) -> SlashingEventResponse {
     }
 }
 
-/// GET /slashing â€” slashing summary and events.
+/// GET /slashing -- slashing summary and events.
 pub async fn get_slashing_summary(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<SlashingSummaryResponse>> {
@@ -1106,7 +1106,7 @@ pub async fn get_slashing_summary(
     }))
 }
 
-/// GET /slashing/:validator_id â€” slashing details for a validator.
+/// GET /slashing/:validator_id -- slashing details for a validator.
 pub async fn get_slashing_validator(
     state: axum::extract::State<SharedState>,
     axum::extract::Path(validator_hex): axum::extract::Path<String>,
@@ -1167,7 +1167,7 @@ pub async fn get_slashing_validator(
     )
 }
 
-/// GET /slashing/evidence â€” equivocation evidence (all validators).
+/// GET /slashing/evidence -- equivocation evidence (all validators).
 pub async fn get_slashing_evidence(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<SlashingEvidenceListResponse>> {
@@ -1209,7 +1209,7 @@ pub async fn get_slashing_evidence(
     }))
 }
 
-/// GET /slashing/evidence/:validator_id â€” equivocation evidence for a validator.
+/// GET /slashing/evidence/:validator_id -- equivocation evidence for a validator.
 pub async fn get_slashing_evidence_for_validator(
     state: axum::extract::State<SharedState>,
     axum::extract::Path(validator_hex): axum::extract::Path<String>,

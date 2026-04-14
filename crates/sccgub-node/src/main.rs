@@ -46,7 +46,7 @@ const GOVERNED_PARAMETER_KEYS: [&str; 10] = [
 
 #[derive(Parser)]
 #[command(name = "sccgub")]
-#[command(about = "Symbolic Causal Chain General Universal Blockchain â€” Node CLI")]
+#[command(about = "Symbolic Causal Chain General Universal Blockchain -- Node CLI")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Data directory for chain storage.
