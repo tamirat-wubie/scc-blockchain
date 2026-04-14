@@ -4405,7 +4405,7 @@ mod tests {
         config1.proposer_loop_enabled = false;
         config1.round_timeout_ms = 60_000; // High to prevent timeout races on slow CI.
         config1.max_rounds = 2;
-        config1.min_connected_peers = 1;
+        config1.min_connected_peers = 0;
         config1.max_same_subnet_pct = 100;
 
         let mut config2 = config1.clone();
