@@ -56,7 +56,7 @@ pub struct NetworkRuntime {
     chain_id: Hash,
 }
 
-/// Consensus round state — persisted to survive validator restarts.
+/// Consensus round state -- persisted to survive validator restarts.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RoundState {
     round: ConsensusRound,
@@ -183,6 +183,7 @@ impl NetworkRuntime {
         let validator_key = guard.validator_key.clone();
         let chain_id = guard.chain_id;
         let chain_validators = guard.validator_set.clone();
+        let finality_mode = guard.state.state.governance_state.finality_mode.clone();
         drop(guard);
         if !config.validators.is_empty() {
             let validators = Self::validators_from_config(&config)?;
@@ -200,6 +201,24 @@ impl NetworkRuntime {
                 validator_set.insert(validator_id, validator_id);
             }
         }
+        let validator_count = validator_set.len();
+        if config.enable {
+            if matches!(finality_mode, FinalityMode::BftCertified { .. }) && validator_count < 2 {
+                tracing::warn!(
+                    "BFT finality configured with {} validators; multi-validator consensus requires >= 2",
+                    validator_count
+                );
+            }
+            if validator_count > 0 && config.min_connected_peers > validator_count.saturating_sub(1)
+            {
+                tracing::warn!(
+                    "Peer diversity gate requires {} peers but only {} validators are configured",
+                    config.min_connected_peers,
+                    validator_count.saturating_sub(1)
+                );
+            }
+        }
+
         let peer_seeds = config.peers.iter().cloned().collect::<HashSet<_>>();
 
         Ok(Self {
