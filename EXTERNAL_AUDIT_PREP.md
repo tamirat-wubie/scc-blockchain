@@ -233,6 +233,7 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-34: `AntiConcentrationTracker::record_action` bare `+= 1`. Replaced with `saturating_add`.
 - N-35: `select_validator` governance level subtraction could go negative if enum grows. Clamped with `.max(0)`.
 - N-36: `SafetyCertificate::from_round` quorum `as u32` missing `.min()` guard. Aligned with protocol.rs pattern.
+- N-37: P2P integration tests used `free_port()` bind-get-drop pattern causing TOCTOU race (OS error 10048 on Windows). Replaced with hold-then-drop pattern in all 3 P2P tests.
 
 ### Open items:
 - None currently tracked in this hardening pass.
