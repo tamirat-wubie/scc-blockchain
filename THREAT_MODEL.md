@@ -14,7 +14,7 @@ does not defend against, and the concrete security boundaries at each layer.
 
 | Threat | Defense | Bound |
 |---|---|---|
-| Byzantine validators | BFT quorum: block finalized only when >2/3 prevote AND >2/3 precommit | f < n/3 |
+| Byzantine validators | BFT quorum (u64 intermediate arithmetic): block finalized only when >2/3 prevote AND >2/3 precommit | f < n/3 |
 | Double-signing | Equivocation detection + 32% stake slash | Per-evidence, immediate |
 | Validator absence | 1% stake slash per epoch, forced removal after 10 epochs | Configurable |
 | Law set divergence | 10% stake slash on hash mismatch | Per-evidence |
@@ -75,7 +75,7 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 ## 4. Validation Pipeline Invariants
 
 1. **Single source of truth for per-tx checks:** `phi_check_single_tx()`. Both block-level and gas-loop validation call it.
-2. **Every rejection produces a receipt.** No silent drops — mempool admission uses lightweight `admit_check()`, all semantic rejections happen in the gas loop with `Verdict::Reject` receipts.
+2. **Every rejection produces a receipt.** No silent drops — mempool admission uses lightweight `admit_check()` (with checked nonce arithmetic), all semantic rejections happen in the gas loop with `Verdict::Reject` receipts.
 3. **Checks-effects-interactions** in state application. All transfers computed, then state writes, then trie commitment.
 4. **Zero unwrap/expect in consensus crates.** Verified across sccgub-execution, sccgub-state, sccgub-consensus, sccgub-governance.
 5. **Constraint key null-byte termination.** Prevents prefix collision (N-1 fix). `constraint_key()` returns `Result`, not panic.
@@ -117,8 +117,8 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 
 ## 8. Audit History
 
-- 6 hardening passes across 15+ sessions
-- 50+ findings identified, all closed
+- 7 hardening passes across 18+ sessions
+- 55+ findings identified, all closed
 - 12 false positives dismissed with documented reasoning
 - Zero unwrap/expect in consensus-critical production code
-- 639+ tests, CI green on Linux + Windows + security audit
+- 654 tests, CI green on Linux + Windows + security audit
