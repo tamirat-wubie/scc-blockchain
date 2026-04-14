@@ -783,6 +783,16 @@ impl Chain {
         if other_finalized < self_finalized {
             return false;
         }
+        if !matches!(
+            self.state.state.governance_state.finality_mode,
+            FinalityMode::Deterministic
+        ) || !matches!(
+            other.state.state.governance_state.finality_mode,
+            FinalityMode::Deterministic
+        ) {
+            // In BFT mode, never switch chains once finality is tied.
+            return false;
+        }
         // Equal finalized height — prefer higher total height.
         other.height() > self.height()
     }
@@ -4039,6 +4049,27 @@ mod tests {
         assert!(
             !chain_a.should_switch_to(&chain_b),
             "Lower finalized height: no switch"
+        );
+    }
+
+    #[test]
+    fn test_bft_fork_choice_refuses_equal_finality_switch() {
+        let mut chain_a = Chain::init();
+        let mut chain_b = Chain::init();
+        chain_b.chain_id = chain_a.chain_id;
+
+        chain_a.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+            quorum_threshold: 2,
+        };
+        chain_b.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+            quorum_threshold: 2,
+        };
+        chain_a.finality.finalized_height = 5;
+        chain_b.finality.finalized_height = 5;
+
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "BFT finality tie: should not switch"
         );
     }
 
