@@ -1,7 +1,6 @@
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::SymbolicTransition;
-use std::collections::BTreeSet;
 
 /// Symbolic Constraint Cognition Engine (SCCE) — validates transitions
 /// through constraint propagation on the symbol mesh.

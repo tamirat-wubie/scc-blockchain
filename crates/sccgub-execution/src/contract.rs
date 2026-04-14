@@ -3,7 +3,6 @@ use sccgub_types::contract::SymbolicCausalContract;
 use sccgub_types::receipt::Verdict;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{StateDelta, StateWrite, SymbolicTransition};
-use std::collections::BTreeSet;
 
 pub fn default_max_steps_for_state(state: &ManagedWorldState) -> u64 {
     state.consensus_params.default_max_steps

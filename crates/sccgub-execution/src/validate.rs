@@ -7,7 +7,6 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{
     StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
 };
-use std::collections::BTreeSet;
 
 /// Sentinel value for an unsealed receipt (post_state_root not yet committed).
 /// Any receipt with this root is NOT final and must be sealed before inclusion.
