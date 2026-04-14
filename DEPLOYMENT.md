@@ -2,7 +2,8 @@
 
 **Version:** 0.3.0
 
-This guide covers deploying SCCGUB in single-validator and multi-validator configurations.
+This guide covers deploying SCCGUB in single-validator and multi-validator configurations. Multi-validator mode
+is alpha and not production-hardened yet.
 
 ---
 

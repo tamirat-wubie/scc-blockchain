@@ -20,7 +20,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Hardening posture: 650 tests, CI green on Ubuntu + Windows + security audit.
 
 **What it cannot do yet**  
-- Multi-validator consensus is not wired into the live runtime; default mode is single proposer.
+- Multi-validator consensus is wired in the p2p alpha path but not production-hardened; default mode is single proposer.
 - No durable state database: state is replay-authoritative from persisted blocks + snapshots (optional sled-backed trie mirror).
 - Contract VM is not implemented (contract types exist, structural validation only).
 - No ZK/privacy implementation (placeholders only).
@@ -37,7 +37,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 
 ## Known Limits (MVP)
 
-- **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator; validator set snapshots persist across restarts.
+- **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator; multi-validator BFT remains alpha.
 - **Replay-authoritative state:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional sled-backed state store can mirror the trie, but replay remains authoritative.
 - **P2P networking is minimal:** Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits.
 - **No ZK/privacy layer:** Placeholder types exist (ZkCommitment) but no implementation.
