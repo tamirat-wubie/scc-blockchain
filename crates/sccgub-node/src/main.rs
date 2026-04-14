@@ -570,8 +570,9 @@ fn cmd_produce(
         eprintln!("Warning: state store flush failed: {}", e);
     }
 
-    // Save state snapshot every 10 blocks for fast reload.
-    if produced_height % 10 == 0 && produced_height > 0 {
+    // Save state snapshot periodically for fast reload.
+    let snap_interval = config.chain.snapshot_interval.max(1);
+    if produced_height % snap_interval == 0 && produced_height > 0 {
         let snapshot = chain.create_snapshot();
         store
             .save_snapshot(&snapshot)
