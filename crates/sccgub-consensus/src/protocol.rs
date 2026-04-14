@@ -99,6 +99,12 @@ impl ConsensusRound {
         max_rounds: u32,
     ) -> Self {
         let validator_count = validator_set.len() as u32;
+        if validator_count > 0 && validator_count < 4 {
+            tracing::warn!(
+                "Consensus round with {} validators provides no BFT fault tolerance (need >= 4)",
+                validator_count
+            );
+        }
         // Use u64 intermediate to prevent overflow on large validator sets.
         let quorum = ((2u64 * validator_count as u64) / 3 + 1).min(u32::MAX as u64) as u32;
         Self {
