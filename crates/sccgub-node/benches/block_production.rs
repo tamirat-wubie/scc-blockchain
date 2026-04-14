@@ -220,9 +220,9 @@ fn main() {
             chain2.submit_transition(tx).unwrap_or_else(|e| {
                 panic!("submit #{} failed at height {}: {}", i, chain2.height(), e)
             });
-            chain2.produce_block().unwrap_or_else(|e| {
-                panic!("block #{} failed: {}", i, e)
-            });
+            chain2
+                .produce_block()
+                .unwrap_or_else(|e| panic!("block #{} failed: {}", i, e));
         }
         let elapsed = start.elapsed();
         println!(
