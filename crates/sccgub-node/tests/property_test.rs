@@ -299,6 +299,60 @@ fn prop_state_root_deterministic_under_same_writes() {
     }
 }
 
+// === Balance root determinism under insertion order ===
+
+#[test]
+fn prop_balance_root_deterministic_under_insertion_order() {
+    let mut seed = 4242u64;
+
+    for _ in 0..50 {
+        let num_agents = (prng(&mut seed) % 10 + 2) as usize;
+        let agents: Vec<[u8; 32]> = (0..num_agents)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                let val = (prng(&mut seed) ^ i as u64).to_le_bytes();
+                id[..8].copy_from_slice(&val);
+                id[8] = i as u8;
+                id
+            })
+            .collect();
+
+        let amounts: Vec<TensionValue> = (0..num_agents)
+            .map(|_| TensionValue::from_integer((prng(&mut seed) % 10_000 + 1) as i64))
+            .collect();
+
+        // Insert in forward order.
+        let mut ledger1 = BalanceLedger::new();
+        for (agent, amount) in agents.iter().zip(amounts.iter()) {
+            ledger1.credit(agent, *amount);
+        }
+
+        // Insert in reverse order.
+        let mut ledger2 = BalanceLedger::new();
+        for (agent, amount) in agents.iter().zip(amounts.iter()).rev() {
+            ledger2.credit(agent, *amount);
+        }
+
+        assert_eq!(
+            ledger1.balance_root(),
+            ledger2.balance_root(),
+            "Balance root must be deterministic regardless of insertion order"
+        );
+
+        // Different balances must produce a different root.
+        let mut ledger3 = BalanceLedger::new();
+        for (agent, amount) in agents.iter().zip(amounts.iter()) {
+            ledger3.credit(agent, *amount);
+        }
+        ledger3.credit(&agents[0], TensionValue::from_integer(1));
+        assert_ne!(
+            ledger1.balance_root(),
+            ledger3.balance_root(),
+            "Different balances must produce different roots"
+        );
+    }
+}
+
 // === Gas metering determinism ===
 
 #[test]
