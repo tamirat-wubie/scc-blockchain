@@ -451,17 +451,22 @@ fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphras
         }
     }
     let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
-    let genesis = chain.latest_block().unwrap();
+    let genesis = chain
+        .latest_block()
+        .expect("Chain::init must produce genesis");
 
-    store
-        .save_block(genesis)
-        .expect("Failed to save genesis block");
-    store
-        .save_metadata(&chain.chain_id)
-        .expect("Failed to save metadata");
-    store
-        .save_validator_key(&chain.validator_key, passphrase)
-        .expect("Failed to save validator key");
+    if let Err(e) = store.save_block(genesis) {
+        eprintln!("Failed to save genesis block: {}", e);
+        std::process::exit(1);
+    }
+    if let Err(e) = store.save_metadata(&chain.chain_id) {
+        eprintln!("Failed to save metadata: {}", e);
+        std::process::exit(1);
+    }
+    if let Err(e) = store.save_validator_key(&chain.validator_key, passphrase) {
+        eprintln!("Failed to save validator key: {}", e);
+        std::process::exit(1);
+    }
 
     println!("Chain initialized at {:?}", data_dir);
     println!("  Chain ID:      {}", hex::encode(chain.chain_id));
@@ -555,7 +560,10 @@ fn cmd_produce(
 
     let produced_height = match chain.produce_block() {
         Ok(block) => {
-            store.save_block(block).expect("Failed to save block");
+            if let Err(e) = store.save_block(block) {
+                eprintln!("Failed to save block: {}", e);
+                std::process::exit(1);
+            }
             println!("Block #{} produced and saved.", block.header.height);
             print_block_summary(block);
             block.header.height
@@ -574,10 +582,11 @@ fn cmd_produce(
     let snap_interval = config.chain.snapshot_interval.max(1);
     if produced_height % snap_interval == 0 && produced_height > 0 {
         let snapshot = chain.create_snapshot();
-        store
-            .save_snapshot(&snapshot)
-            .expect("Failed to save snapshot");
-        println!("  Snapshot saved at height {}.", produced_height);
+        if let Err(e) = store.save_snapshot(&snapshot) {
+            eprintln!("Warning: failed to save snapshot: {}", e);
+        } else {
+            println!("  Snapshot saved at height {}.", produced_height);
+        }
         // Keep only the 3 most recent snapshots to avoid unbounded disk growth.
         if let Ok(removed) = store.rotate_snapshots(3) {
             if removed > 0 {
@@ -674,12 +683,10 @@ fn cmd_status(data_dir: &std::path::Path, schema: bool) {
         }
     };
 
-    if blocks.is_empty() {
+    let Some(latest) = blocks.last() else {
         println!("No chain found. Run `sccgub init` first.");
         return;
-    }
-
-    let latest = blocks.last().unwrap();
+    };
     let total_txs: u64 = blocks.iter().map(|b| b.body.transition_count as u64).sum();
 
     println!("=== SCCGUB Chain Status ===");
@@ -734,10 +741,11 @@ fn cmd_show_state(data_dir: &std::path::Path) {
         }
     };
 
-    if blocks.is_empty() {
+    let Some(tip) = blocks.last() else {
         println!("No chain found. Run `sccgub init` first.");
         return;
-    }
+    };
+    let tip_height = tip.header.height;
 
     let (state, _balances) = match replay_chain_state(&blocks) {
         Ok(replayed) => replayed,
@@ -747,10 +755,7 @@ fn cmd_show_state(data_dir: &std::path::Path) {
         }
     };
 
-    println!(
-        "=== World State (height {}) ===",
-        blocks.last().unwrap().header.height
-    );
+    println!("=== World State (height {}) ===", tip_height);
     println!("  State root: {}", hex::encode(state.state_root()));
     println!("  Entries:    {}", state.trie.len());
     println!();
@@ -942,26 +947,40 @@ fn cmd_export(data_dir: &std::path::Path, output: &std::path::Path) {
         }
     };
 
+    // Safe: blocks guaranteed non-empty by load guard above.
+    let tip_height = blocks[blocks.len() - 1].header.height;
     let snapshot = serde_json::json!({
         "format": "sccgub-chain-export",
         "version": "1.0",
         "chain_id": hex::encode(blocks[0].header.chain_id),
-        "height": blocks.last().unwrap().header.height,
+        "height": tip_height,
         "block_count": blocks.len(),
         "blocks": blocks,
     });
 
-    let json = serde_json::to_string_pretty(&snapshot).expect("Serialization failed");
+    let json = match serde_json::to_string_pretty(&snapshot) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("Serialization failed: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Write atomically.
     let tmp = output.with_extension("tmp");
-    std::fs::write(&tmp, &json).expect("Failed to write export file");
-    std::fs::rename(&tmp, output).expect("Failed to finalize export file");
+    if let Err(e) = std::fs::write(&tmp, &json) {
+        eprintln!("Failed to write export file: {}", e);
+        std::process::exit(1);
+    }
+    if let Err(e) = std::fs::rename(&tmp, output) {
+        eprintln!("Failed to finalize export file: {}", e);
+        std::process::exit(1);
+    }
 
     println!(
         "Exported {} blocks (height {}) to {:?} ({:.1} KB)",
         blocks.len(),
-        blocks.last().unwrap().header.height,
+        tip_height,
         output,
         json.len() as f64 / 1024.0
     );
@@ -985,8 +1004,20 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
         std::process::exit(1);
     }
 
-    let json = std::fs::read_to_string(input).expect("Failed to read import file");
-    let snapshot: serde_json::Value = serde_json::from_str(&json).expect("Invalid JSON");
+    let json = match std::fs::read_to_string(input) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("Failed to read import file {:?}: {}", input, e);
+            std::process::exit(1);
+        }
+    };
+    let snapshot: serde_json::Value = match serde_json::from_str(&json) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Invalid JSON in import file: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     let format = snapshot
         .get("format")
@@ -1001,8 +1032,13 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
     }
 
     let blocks: Vec<sccgub_types::block::Block> =
-        serde_json::from_value(snapshot.get("blocks").cloned().unwrap_or_default())
-            .expect("Failed to parse blocks from export");
+        match serde_json::from_value(snapshot.get("blocks").cloned().unwrap_or_default()) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Failed to parse blocks from export: {}", e);
+                std::process::exit(1);
+            }
+        };
 
     let replayed = Chain::from_blocks(blocks.clone()).unwrap_or_else(|e| {
         eprintln!("Import verification failed: {}", e);
@@ -1010,17 +1046,25 @@ fn cmd_import(data_dir: &std::path::Path, input: &std::path::Path) {
     });
 
     for block in &blocks {
-        store.save_block(block).expect("Failed to save block");
+        if let Err(e) = store.save_block(block) {
+            eprintln!(
+                "Failed to save block at height {}: {}",
+                block.header.height, e
+            );
+            std::process::exit(1);
+        }
     }
 
     if let Some(chain_id) = blocks.first().map(|b| b.header.chain_id) {
-        store
-            .save_metadata(&chain_id)
-            .expect("Failed to save metadata");
+        if let Err(e) = store.save_metadata(&chain_id) {
+            eprintln!("Failed to save metadata: {}", e);
+            std::process::exit(1);
+        }
     }
-    store
-        .save_snapshot(&replayed.create_snapshot())
-        .expect("Failed to save imported snapshot");
+    if let Err(e) = store.save_snapshot(&replayed.create_snapshot()) {
+        eprintln!("Failed to save imported snapshot: {}", e);
+        std::process::exit(1);
+    }
 
     println!(
         "Imported {} blocks (height {}) from {:?}",
@@ -1210,7 +1254,10 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
     let produced_block = match chain.produce_block() {
         Ok(block) => {
             let cloned = block.clone();
-            store.save_block(block).expect("Failed to save block");
+            if let Err(e) = store.save_block(block) {
+                eprintln!("Failed to save block: {}", e);
+                std::process::exit(1);
+            }
             cloned
         }
         Err(e) => {
@@ -1366,7 +1413,7 @@ fn cmd_stats(data_dir: &std::path::Path) {
         }
     };
 
-    let latest = blocks.last().unwrap();
+    let latest = &blocks[blocks.len() - 1];
     let mfidel_cycle = sccgub_types::mfidel::MfidelAtomicSeal::cycle_number(latest.header.height);
 
     println!("=== SCCGUB Chain Statistics ===");
@@ -1457,7 +1504,7 @@ fn cmd_health(data_dir: &std::path::Path) {
     metrics.state_entries = state.trie.len() as u64;
     metrics.causal_edges = total_causal_edges;
 
-    let latest = blocks.last().unwrap();
+    let latest = &blocks[blocks.len() - 1];
     // Compute finality using the on-chain configuration snapshot.
     let finality_config = sccgub_consensus::finality::FinalityConfig {
         confirmation_depth: latest.governance.finality_config.confirmation_depth,
@@ -1702,8 +1749,17 @@ async fn cmd_serve(
     println!("Legacy routes (/api/*) also available.");
     println!();
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Failed to bind to {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("Server error: {}", e);
+        std::process::exit(1);
+    }
 }
 
 fn cmd_demo() {
