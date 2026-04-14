@@ -2877,6 +2877,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_proposer_loop_skips_non_proposer() {
+        use std::net::TcpListener;
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.enable = true;
+        config.bind = "127.0.0.1".into();
+        config.port = port;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2)];
+        config.block_interval_ms = 200;
+        config.min_connected_peers = 1;
+        config.max_same_subnet_pct = 100;
+        config.proposer_loop_enabled = true;
+
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, 1)
+            .expect("validator set must pick proposer");
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = if proposer.node_id == pk1 {
+                key2.clone()
+            } else {
+                key1.clone()
+            };
+            guard.set_validator_set(validators);
+        }
+
+        let runtime = Arc::new(NetworkRuntime::new(chain.clone(), config).await.unwrap());
+        {
+            let mut registry = runtime.registry.lock().await;
+            registry
+                .upsert(PeerInfo {
+                    validator_id: if proposer.node_id == pk1 { pk1 } else { pk2 },
+                    address: "127.0.0.1:8001".to_string(),
+                    current_height: 0,
+                    finalized_height: 0,
+                    protocol_version: runtime.config.protocol_version,
+                    last_seen_ms: now_ms(),
+                    score: runtime.config.peer_score_initial,
+                    violations: 0,
+                    last_score_decay_ms: now_ms(),
+                    last_violation_forgive_ms: now_ms(),
+                    state: PeerState::Connected,
+                })
+                .unwrap();
+        }
+
+        runtime.run().await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let height = { chain.read().await.height() };
+        assert_eq!(height, 0, "Non-proposer should not auto-produce blocks");
+    }
+
+    #[tokio::test]
     async fn test_peer_restart_matches_synced_chain_state() {
         let dir = std::env::temp_dir().join(format!("sccgub_peer_restart_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

@@ -1392,3 +1392,158 @@ fn test_presence_resets_absence_counter_prevents_removal() {
 
 // Replay determinism and fork choice tests are in chain.rs tests module
 // (test_chain_from_blocks_replay, test_fork_choice_*).
+
+// ── Consensus stall and multi-slash adversarial tests ───────────────
+
+#[test]
+fn test_minority_cannot_reach_quorum() {
+    // With 4 validators (quorum=3), only 2 prevotes must NOT finalize.
+    let keys: Vec<_> = (0..4).map(|_| generate_keypair()).collect();
+    let pks: Vec<[u8; 32]> = keys.iter().map(|k| *k.verifying_key().as_bytes()).collect();
+    let chain_id = [0u8; 32];
+    let block_hash = [1u8; 32];
+
+    let mut validator_set = HashMap::new();
+    for pk in &pks {
+        validator_set.insert(*pk, *pk);
+    }
+
+    let mut round = ConsensusRound::new(chain_id, 0, block_hash, 1, 0, validator_set, 3);
+    assert_eq!(round.quorum, 3, "Quorum for 4 validators must be 3");
+
+    let vote_data = sccgub_consensus::protocol::vote_sign_data(
+        &chain_id,
+        0,
+        &block_hash,
+        1,
+        0,
+        VoteType::Prevote,
+    );
+
+    // Only 2 validators vote — minority.
+    for (i, pk) in pks[..2].iter().enumerate() {
+        let signature = sccgub_crypto::signature::sign(&keys[i], &vote_data);
+        let vote = Vote {
+            validator_id: *pk,
+            block_hash,
+            height: 1,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            signature,
+        };
+        round.add_prevote(vote).unwrap();
+    }
+
+    assert!(
+        !round.has_prevote_quorum(),
+        "2/4 prevotes must NOT reach quorum"
+    );
+    match round.evaluate() {
+        ConsensusResult::Finalized { .. } => {
+            panic!("Minority must NEVER finalize a block")
+        }
+        _ => {} // NextRound or Aborted — both correct.
+    }
+}
+
+#[test]
+fn test_repeated_slashing_never_goes_negative() {
+    // Slash the same validator repeatedly. Stake must never go below zero.
+    // Use 100% penalty to guarantee reaching zero on first slash.
+    let mut engine = SlashingEngine::new(SlashingConfig {
+        double_sign_penalty_pct: 100,
+        ..Default::default()
+    });
+    let validator = [5u8; 32];
+    engine.set_stake(validator, TensionValue::from_integer(100));
+
+    for epoch in 1..=5 {
+        let proof = EquivocationProof {
+            validator_id: validator,
+            height: epoch as u64,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            block_hash_a: [epoch as u8; 32],
+            block_hash_b: [(epoch + 100) as u8; 32],
+        };
+        let _ = engine.slash_double_sign(proof, epoch as u64);
+
+        let stake = engine.stakes[&validator];
+        assert!(
+            stake.raw() >= 0,
+            "Stake must never go negative after {} slashes: {}",
+            epoch,
+            stake
+        );
+    }
+
+    // First slash at 100% should have removed the validator.
+    assert!(
+        engine.is_removed(&validator),
+        "Validator must be removed after 100% slash"
+    );
+}
+
+#[test]
+fn test_equivocation_proof_requires_different_blocks() {
+    // An equivocation proof where both block hashes are the same is not equivocation.
+    let evidence = EquivocationEvidence {
+        validator_id: [1u8; 32],
+        height: 10,
+        round_a: 0,
+        round_b: 0,
+        block_hash_a: [5u8; 32],
+        block_hash_b: [5u8; 32], // Same block — not equivocation.
+        signature_a: vec![0u8; 64],
+        signature_b: vec![0u8; 64],
+    };
+
+    let result = evidence.verify(&[1u8; 32]);
+    assert!(
+        result.is_err(),
+        "Same block hash must be rejected as non-equivocation"
+    );
+}
+
+#[test]
+fn test_safety_certificate_requires_quorum_signatures() {
+    // A safety certificate with fewer than quorum signatures must fail verification.
+    let keys: Vec<_> = (0..4).map(|_| generate_keypair()).collect();
+    let pks: Vec<[u8; 32]> = keys.iter().map(|k| *k.verifying_key().as_bytes()).collect();
+    let chain_id = [0u8; 32];
+
+    let mut validator_set = HashMap::new();
+    for pk in &pks {
+        validator_set.insert(*pk, *pk);
+    }
+
+    // Certificate with only 1 signature (quorum is 3 for 4 validators).
+    let mut signatures: Vec<([u8; 32], Vec<u8>)> = Vec::new();
+    let block_hash = [1u8; 32];
+    let vote_data = sccgub_consensus::protocol::vote_sign_data(
+        &chain_id,
+        0,
+        &block_hash,
+        1,
+        0,
+        VoteType::Precommit,
+    );
+    signatures.push((pks[0], sccgub_crypto::signature::sign(&keys[0], &vote_data)));
+
+    let cert = SafetyCertificate {
+        chain_id,
+        epoch: 0,
+        block_hash,
+        height: 1,
+        round: 0,
+        precommit_signatures: signatures,
+        validator_count: 4,
+        quorum: 3,
+    };
+
+    let result = cert.verify_cryptographic(&validator_set);
+    assert!(
+        result.is_err(),
+        "Certificate with 1/4 signatures must fail quorum check"
+    );
+}
