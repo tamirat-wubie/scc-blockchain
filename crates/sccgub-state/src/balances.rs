@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use sccgub_crypto::hash::blake3_hash;
 use sccgub_types::tension::TensionValue;
-use sccgub_types::AgentId;
+use sccgub_types::{AgentId, Hash, ZERO_HASH};
 
 /// Balance ledger for asset tracking.
 /// Balances are stored as fixed-point TensionValues for deterministic arithmetic.
@@ -76,6 +77,23 @@ impl BalanceLedger {
     /// This bypasses dirty tracking so replay/snapshot reconstruction stays O(1).
     pub fn import_balance(&mut self, agent: AgentId, amount: TensionValue) {
         self.balances.insert(agent, amount);
+    }
+
+    /// Compute a deterministic root hash over all balances.
+    /// Entries are sorted by agent ID for deterministic ordering.
+    pub fn balance_root(&self) -> Hash {
+        let mut entries: Vec<_> = self.balances.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        if entries.is_empty() {
+            ZERO_HASH
+        } else {
+            let mut data = Vec::new();
+            for (agent_id, balance) in &entries {
+                data.extend_from_slice(*agent_id);
+                data.extend_from_slice(&balance.raw().to_le_bytes());
+            }
+            blake3_hash(&data)
+        }
     }
 }
 

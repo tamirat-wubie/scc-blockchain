@@ -68,18 +68,7 @@ fn initialize_genesis_state(
 }
 
 pub fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
-    let mut bal_entries: Vec<_> = balances.balances.iter().collect();
-    bal_entries.sort_by_key(|(k, _)| *k);
-    if bal_entries.is_empty() {
-        ZERO_HASH
-    } else {
-        let mut hasher_data = Vec::new();
-        for (agent_id, balance) in &bal_entries {
-            hasher_data.extend_from_slice(*agent_id);
-            hasher_data.extend_from_slice(&balance.raw().to_le_bytes());
-        }
-        blake3_hash(&hasher_data)
-    }
+    balances.balance_root()
 }
 
 fn load_genesis_consensus_params(genesis: &Block) -> Result<ConsensusParams, ImportError> {

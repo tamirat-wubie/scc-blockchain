@@ -182,6 +182,16 @@ pub fn validate_cpog(
                 hex::encode(computed_state_root),
             ));
         }
+
+        // 10b. Balance root verification.
+        let computed_balance_root = spec_balances.balance_root();
+        if block.header.balance_root != computed_balance_root {
+            errors.push(format!(
+                "Balance root mismatch: header={}, computed={}",
+                hex::encode(block.header.balance_root),
+                hex::encode(computed_balance_root),
+            ));
+        }
     }
 
     // 11. Run full 13-phase Phi traversal.
