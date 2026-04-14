@@ -239,6 +239,25 @@ impl NetworkRuntime {
         self
     }
 
+    async fn sync_validator_set_from_chain_if_unconfigured(&self) {
+        if !self.config.validators.is_empty() {
+            return;
+        }
+        let chain = self.chain.read().await;
+        let mut next = HashMap::new();
+        for validator in chain.validator_set.iter().filter(|v| v.active) {
+            next.insert(validator.node_id, validator.node_id);
+        }
+        if next.is_empty() {
+            next.insert(self.validator_id, self.validator_id);
+        }
+        drop(chain);
+        let mut current = self.validator_set.write().await;
+        if *current != next {
+            *current = next;
+        }
+    }
+
     /// Persist current consensus round state to disk for crash recovery.
     async fn persist_consensus_state(&self) {
         if let Some(store) = &self.store {
@@ -772,6 +791,7 @@ impl NetworkRuntime {
         if !verify_block_proposal_signature(&msg) {
             return Err("Block proposal signature invalid".into());
         }
+        self.sync_validator_set_from_chain_if_unconfigured().await;
         let should_gossip = msg.proposer_id != self.validator_id;
         let BlockProposalMessage {
             proposer_id,
@@ -932,6 +952,7 @@ impl NetworkRuntime {
         if vote.height == 0 {
             return Ok(());
         }
+        self.sync_validator_set_from_chain_if_unconfigured().await;
         let pending = {
             self.pending_blocks
                 .lock()
@@ -1784,6 +1805,7 @@ impl NetworkRuntime {
         let mut ticker = interval(Duration::from_millis(self.config.block_interval_ms));
         loop {
             ticker.tick().await;
+            self.sync_validator_set_from_chain_if_unconfigured().await;
             let next_height = { self.chain.read().await.height().saturating_add(1) };
             if !self.proposer_diversity_gate_allows().await {
                 continue;
