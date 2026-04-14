@@ -4143,10 +4143,8 @@ mod tests {
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
-        chain
-            .mempool
-            .containment
-            .hostility_threshold = sccgub_types::tension::TensionValue::from_integer(1_000_000);
+        chain.mempool.containment.hostility_threshold =
+            sccgub_types::tension::TensionValue::from_integer(1_000_000);
 
         let actor_key = chain.validator_key.clone();
         let actor_pk = *actor_key.verifying_key().as_bytes();

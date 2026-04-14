@@ -234,7 +234,6 @@ fn main() {
         );
     }
 
-
     // 4c. Batched blocks: submit N txs from one agent, produce 1 block.
     //     Tests multi-tx block packing (requires batch nonce fix).
     let batch_sizes = [10, 50, 100];

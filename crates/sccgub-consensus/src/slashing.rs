@@ -113,8 +113,7 @@ impl SlashingEngine {
             .ok_or("Validator not found")?;
 
         let stake_raw = stake.raw().max(0);
-        let penalty_raw = (stake_raw
-            .saturating_mul(self.config.double_sign_penalty_pct as i128)
+        let penalty_raw = (stake_raw.saturating_mul(self.config.double_sign_penalty_pct as i128)
             / 100)
             .min(stake_raw); // Cap at available stake.
         let penalty = TensionValue(penalty_raw);
@@ -155,8 +154,7 @@ impl SlashingEngine {
             .ok_or("Validator not found")?;
 
         let stake_raw = stake.raw().max(0);
-        let penalty_raw = (stake_raw
-            .saturating_mul(self.config.divergence_penalty_pct as i128)
+        let penalty_raw = (stake_raw.saturating_mul(self.config.divergence_penalty_pct as i128)
             / 100)
             .min(stake_raw);
         let penalty = TensionValue(penalty_raw);
@@ -185,10 +183,9 @@ impl SlashingEngine {
 
         let stake = self.stakes.get(&validator).copied()?;
         let stake_raw = stake.raw().max(0);
-        let penalty_raw = (stake_raw
-            .saturating_mul(self.config.absence_penalty_pct_per_epoch as i128)
-            / 100)
-            .min(stake_raw);
+        let penalty_raw =
+            (stake_raw.saturating_mul(self.config.absence_penalty_pct_per_epoch as i128) / 100)
+                .min(stake_raw);
         let penalty = TensionValue(penalty_raw);
 
         let new_stake = TensionValue(stake.raw().saturating_sub(penalty_raw).max(0));
