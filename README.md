@@ -64,7 +64,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Consensus:** Deterministic proposer rotation with optional p2p block gossip and vote propagation (single-height, multi-round timeouts); BFT voting and safety machinery are implemented in `sccgub-consensus`
 - **Peer diversity gate (configurable):** `network.min_connected_peers` and `network.max_same_subnet_pct` enforce eclipse-resistance when p2p is enabled
 - **Peer seed exchange (bounded):** Hello messages exchange a bounded seed list to expand connectivity without unbounded discovery
-- **Finality:** Deterministic finality in the active runtime, with Soft/Economic/Legal settlement classes modeled in governance
+- **Finality:** Deterministic by default; BFT finality is available in the p2p alpha path via `finality.mode` governance settings
 - **Validation:** 13-phase Phi traversal — all 13 phases enforce real invariants (Phase 3: namespace ontology, Phase 8: payload consistency)
 - **Contracts:** Decidable step-bounded symbolic programs with chain-bound gas metering and default step limits
 - **Identity:** Mfidel 34x8 Ge'ez atomic seal + cryptographic agent binding

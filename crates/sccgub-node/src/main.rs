@@ -3,13 +3,8 @@
 //! Dependencies: clap, sccgub-node modules, sccgub-types.
 //! Invariants: explicit error paths, deterministic command outputs.
 
-mod api_bridge;
-mod chain;
-pub mod config;
-mod mempool;
-mod network;
-mod observability;
-mod persistence;
+use sccgub_node::config;
+use sccgub_node::network;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -27,8 +22,8 @@ use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::*;
 
-use chain::Chain;
-use persistence::ChainStore;
+use sccgub_node::chain::Chain;
+use sccgub_node::persistence::ChainStore;
 
 const DEFAULT_DATA_DIR: &str = ".sccgub";
 const GOVERNED_PARAMETER_KEYS: [&str; 10] = [
@@ -301,7 +296,7 @@ fn restore_snapshot_if_available(
     for (agent_id, raw_balance) in &snapshot.balances {
         balances.import_balance(*agent_id, sccgub_types::tension::TensionValue(*raw_balance));
     }
-    let balance_root = crate::chain::balance_root_from_ledger(&balances);
+    let balance_root = sccgub_node::chain::balance_root_from_ledger(&balances);
     if balance_root != block.header.balance_root {
         eprintln!(
             "Warning: snapshot balance root mismatch at height {}; skipping restore.",
@@ -429,7 +424,32 @@ fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphras
         std::process::exit(1);
     }
 
-    let mut chain = Chain::init();
+    if config.chain.initial_finality_mode.is_none()
+        && config.network.enable
+        && config.network.validators.len() > 1
+    {
+        eprintln!(
+            "Warning: multiple validators configured but initial_finality_mode is not set. \
+            Set chain.initial_finality_mode = \"bft:<quorum>\" in config for multi-validator BFT."
+        );
+    }
+
+    let mut chain = match config.chain.initial_finality_mode.as_deref() {
+        Some(mode) => match sccgub_node::chain::parse_finality_mode(mode) {
+            Ok(parsed) => Chain::init_with_finality_mode(parsed),
+            Err(e) => {
+                eprintln!("Invalid chain.initial_finality_mode: {}", e);
+                std::process::exit(1);
+            }
+        },
+        None => Chain::init(),
+    };
+    if !config.network.validators.is_empty() {
+        match network::NetworkRuntime::validators_from_config(&config.network) {
+            Ok(validators) => chain.set_validator_set(validators),
+            Err(e) => eprintln!("Warning: validator set config ignored: {}", e),
+        }
+    }
     let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
     let genesis = chain.latest_block().unwrap();
 
@@ -484,6 +504,12 @@ fn cmd_produce(
         eprintln!("Chain import failed: {}", e);
         std::process::exit(1);
     });
+    if !config.network.validators.is_empty() {
+        match network::NetworkRuntime::validators_from_config(&config.network) {
+            Ok(validators) => chain.set_validator_set(validators),
+            Err(e) => eprintln!("Warning: validator set config ignored: {}", e),
+        }
+    }
 
     let durable_store = bind_state_store_for_snapshot(&store, &config);
     let restored = restore_snapshot_if_available(&store, &mut chain, true, durable_store.clone());
@@ -1399,7 +1425,7 @@ fn cmd_health(data_dir: &std::path::Path) {
         }
     };
 
-    let mut metrics = observability::ChainMetrics::default();
+    let mut metrics = sccgub_node::observability::ChainMetrics::default();
 
     let mut total_causal_edges = 0u64;
     let mut state = sccgub_state::world::ManagedWorldState::new();
@@ -1583,7 +1609,7 @@ async fn cmd_serve(
         }),
     ));
 
-    let bridge = crate::api_bridge::ApiBridge::new(app_state.clone())
+    let bridge = sccgub_node::api_bridge::ApiBridge::new(app_state.clone())
         .with_min_interval_ms(config.api_sync.min_interval_ms);
     {
         let chain = chain_ref.read().await;

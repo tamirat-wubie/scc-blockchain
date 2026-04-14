@@ -91,6 +91,7 @@ Create `config.toml` on each validator:
 [chain]
 genesis_supply = 1000000
 max_txs_per_block = 1000
+initial_finality_mode = "bft:2"
 
 [network]
 enable = true

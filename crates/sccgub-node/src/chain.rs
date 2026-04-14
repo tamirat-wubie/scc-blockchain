@@ -49,10 +49,11 @@ fn initialize_genesis_state(
     block_version: u32,
     validator_public_key: &[u8; 32],
     consensus_params: ConsensusParams,
+    finality_mode: FinalityMode,
 ) -> (ManagedWorldState, BalanceLedger) {
     let mut state = ManagedWorldState::with_consensus_params(consensus_params);
     state.state.governance_state = GovernanceState {
-        finality_mode: FinalityMode::Deterministic,
+        finality_mode,
         ..GovernanceState::default()
     };
     commit_consensus_params(&mut state);
@@ -66,7 +67,7 @@ fn initialize_genesis_state(
     (state, balances)
 }
 
-pub(crate) fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
+pub fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
     let mut bal_entries: Vec<_> = balances.balances.iter().collect();
     bal_entries.sort_by_key(|(k, _)| *k);
     if bal_entries.is_empty() {
@@ -135,7 +136,28 @@ impl Chain {
         Self::init_with_consensus_params(block_version, ConsensusParams::default())
     }
 
+    /// Create a new chain with an explicit finality mode at genesis.
+    pub fn init_with_finality_mode(finality_mode: FinalityMode) -> Self {
+        Self::init_with_consensus_params_and_finality(
+            CURRENT_BLOCK_VERSION,
+            ConsensusParams::default(),
+            finality_mode,
+        )
+    }
+
     fn init_with_consensus_params(block_version: u32, consensus_params: ConsensusParams) -> Self {
+        Self::init_with_consensus_params_and_finality(
+            block_version,
+            consensus_params,
+            FinalityMode::Deterministic,
+        )
+    }
+
+    fn init_with_consensus_params_and_finality(
+        block_version: u32,
+        consensus_params: ConsensusParams,
+        finality_mode: FinalityMode,
+    ) -> Self {
         assert!(
             is_supported_block_version(block_version),
             "unsupported block version {}",
@@ -151,8 +173,12 @@ impl Chain {
         let chain_id = blake3_hash(b"sccgub-genesis-chain");
 
         let genesis_consensus_params = consensus_params.to_canonical_bytes();
-        let (state, balances) =
-            initialize_genesis_state(block_version, &validator_id, consensus_params);
+        let (state, balances) = initialize_genesis_state(
+            block_version,
+            &validator_id,
+            consensus_params,
+            finality_mode,
+        );
         let genesis = build_genesis_block(
             chain_id,
             validator_id,
@@ -237,6 +263,7 @@ impl Chain {
             block_version,
             &genesis.header.validator_id,
             genesis_consensus_params,
+            FinalityMode::Deterministic,
         );
         match &genesis.body.genesis_consensus_params {
             Some(_) => {
@@ -1783,27 +1810,30 @@ fn apply_governance_parameter_static(
             Ok(())
         }
         "finality.mode" => {
-            let trimmed = value.trim().to_ascii_lowercase();
-            if trimmed == "deterministic" {
-                *finality_mode = FinalityMode::Deterministic;
-                return Ok(());
-            }
-            if let Some(quorum) = trimmed.strip_prefix("bft:") {
-                let parsed = quorum
-                    .parse::<u32>()
-                    .map_err(|_| "finality.mode bft quorum must be u32".to_string())?;
-                if parsed == 0 {
-                    return Err("finality.mode bft quorum must be >= 1".into());
-                }
-                *finality_mode = FinalityMode::BftCertified {
-                    quorum_threshold: parsed,
-                };
-                return Ok(());
-            }
-            Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
+            *finality_mode = parse_finality_mode(value)?;
+            Ok(())
         }
         _ => Err(format!("Unknown governance parameter key: {}", key)),
     }
+}
+
+pub fn parse_finality_mode(value: &str) -> Result<FinalityMode, String> {
+    let trimmed = value.trim().to_ascii_lowercase();
+    if trimmed == "deterministic" {
+        return Ok(FinalityMode::Deterministic);
+    }
+    if let Some(quorum) = trimmed.strip_prefix("bft:") {
+        let parsed = quorum
+            .parse::<u32>()
+            .map_err(|_| "finality.mode bft quorum must be u32".to_string())?;
+        if parsed == 0 {
+            return Err("finality.mode bft quorum must be >= 1".into());
+        }
+        return Ok(FinalityMode::BftCertified {
+            quorum_threshold: parsed,
+        });
+    }
+    Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
 }
 
 fn parse_governance_param_write(value: &[u8]) -> Option<(String, String)> {

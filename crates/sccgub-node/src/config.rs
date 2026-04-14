@@ -29,6 +29,9 @@ pub struct ChainConfig {
     pub snapshot_interval: u64,
     /// Finality confirmation depth.
     pub finality_depth: u64,
+    /// Initial finality mode for genesis (e.g. "deterministic" or "bft:2").
+    #[serde(default)]
+    pub initial_finality_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +139,7 @@ impl Default for NodeConfig {
                 max_txs_per_block: 1000,
                 snapshot_interval: 10,
                 finality_depth: 2,
+                initial_finality_mode: None,
             },
             api: ApiConfig {
                 port: 3000,
@@ -230,6 +234,7 @@ mod tests {
         assert_eq!(config.api.port, 3000);
         assert_eq!(config.api.bind, "127.0.0.1");
         assert_eq!(config.api_sync.min_interval_ms, 250);
+        assert!(config.chain.initial_finality_mode.is_none());
         assert!(config.storage.snapshot_restore_enabled);
         assert!(!config.storage.state_store_enabled);
         assert_eq!(config.storage.state_store_dir, PathBuf::from("state_db"));
