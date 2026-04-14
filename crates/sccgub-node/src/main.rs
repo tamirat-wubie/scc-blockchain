@@ -296,7 +296,7 @@ fn restore_snapshot_if_available(
     for (agent_id, raw_balance) in &snapshot.balances {
         balances.import_balance(*agent_id, sccgub_types::tension::TensionValue(*raw_balance));
     }
-    let balance_root = sccgub_node::chain::balance_root_from_ledger(&balances);
+    let balance_root = balances.balance_root();
     if balance_root != block.header.balance_root {
         eprintln!(
             "Warning: snapshot balance root mismatch at height {}; skipping restore.",

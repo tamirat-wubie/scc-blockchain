@@ -67,10 +67,6 @@ fn initialize_genesis_state(
     (state, balances)
 }
 
-pub fn balance_root_from_ledger(balances: &BalanceLedger) -> Hash {
-    balances.balance_root()
-}
-
 fn load_genesis_consensus_params(genesis: &Block) -> Result<ConsensusParams, ImportError> {
     match genesis.body.genesis_consensus_params.as_ref() {
         Some(bytes) => ConsensusParams::from_canonical_bytes(bytes)
@@ -174,7 +170,7 @@ impl Chain {
             block_version,
             &validator_key,
             state.state_root(),
-            balance_root_from_ledger(&balances),
+            balances.balance_root(),
             Some(genesis_consensus_params),
         );
 
@@ -266,7 +262,7 @@ impl Chain {
                         ),
                     });
                 }
-                let expected_balance_root = balance_root_from_ledger(&balances);
+                let expected_balance_root = balances.balance_root();
                 if genesis.header.balance_root != expected_balance_root {
                     return Err(ImportError::GenesisStateMismatch {
                         detail: format!(
@@ -1256,19 +1252,8 @@ impl Chain {
         // Use same canonical derivation as validator_id_for_check (line 178).
         let validator_id = validator_id_for_check;
 
-        // Compute balance root: sort by agent_id for determinism, hash concatenation.
-        let mut bal_entries: Vec<_> = speculative_balances.balances.iter().collect();
-        bal_entries.sort_by_key(|(k, _)| *k);
-        let balance_root = if bal_entries.is_empty() {
-            ZERO_HASH
-        } else {
-            let mut hasher_data = Vec::new();
-            for (agent_id, balance) in &bal_entries {
-                hasher_data.extend_from_slice(*agent_id);
-                hasher_data.extend_from_slice(&balance.raw().to_le_bytes());
-            }
-            blake3_hash(&hasher_data)
-        };
+        // Compute balance root via canonical BalanceLedger method.
+        let balance_root = speculative_balances.balance_root();
 
         let block = build_block(BlockBuildParams {
             chain_id: self.chain_id,
@@ -2288,10 +2273,7 @@ mod tests {
             Some(embedded)
         );
         assert_eq!(genesis.header.state_root, chain.state.state_root());
-        assert_eq!(
-            genesis.header.balance_root,
-            balance_root_from_ledger(&chain.balances)
-        );
+        assert_eq!(genesis.header.balance_root, chain.balances.balance_root());
     }
 
     #[test]
@@ -2453,7 +2435,7 @@ mod tests {
         chain.set_validator_set(validators);
 
         let parent = chain.latest_block().unwrap();
-        let balance_root = balance_root_from_ledger(&chain.balances);
+        let balance_root = chain.balances.balance_root();
         let block = build_block(BlockBuildParams {
             chain_id: chain.chain_id,
             height: parent.header.height + 1,
@@ -2549,17 +2531,14 @@ mod tests {
         for (agent_id, raw_balance) in &snapshot.balances {
             ledger.import_balance(*agent_id, TensionValue(*raw_balance));
         }
-        let snapshot_balance_root = balance_root_from_ledger(&ledger);
+        let snapshot_balance_root = ledger.balance_root();
         assert_eq!(snapshot_balance_root, tip.header.balance_root);
 
         let mut replayed = Chain::from_blocks(chain.blocks.clone())
             .expect("from_blocks should succeed for valid chain");
         replayed.restore_from_snapshot(&snapshot);
         assert_eq!(replayed.state.state_root(), tip.header.state_root);
-        assert_eq!(
-            balance_root_from_ledger(&replayed.balances),
-            tip.header.balance_root
-        );
+        assert_eq!(replayed.balances.balance_root(), tip.header.balance_root);
     }
 
     #[test]
