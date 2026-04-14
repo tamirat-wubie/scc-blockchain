@@ -4399,21 +4399,17 @@ mod tests {
         use sccgub_types::governance::FinalityMode;
         use std::net::TcpListener;
 
-        fn free_port() -> u16 {
-            TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
-        }
+        // Hold listeners open to reserve ports, then drop before runtime bind.
+        let hold1 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let hold2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port1 = hold1.local_addr().unwrap().port();
+        let port2 = hold2.local_addr().unwrap().port();
 
         let key1 = sccgub_crypto::keys::generate_keypair();
         let key2 = sccgub_crypto::keys::generate_keypair();
         let pk1 = *key1.verifying_key().as_bytes();
         let pk2 = *key2.verifying_key().as_bytes();
 
-        let port1 = free_port();
-        let port2 = free_port();
         let addr1 = format!("127.0.0.1:{}", port1);
         let addr2 = format!("127.0.0.1:{}", port2);
 
@@ -4460,6 +4456,10 @@ mod tests {
 
         let runtime1 = Arc::new(NetworkRuntime::new(chain1.clone(), config1).await.unwrap());
         let runtime2 = Arc::new(NetworkRuntime::new(chain2.clone(), config2).await.unwrap());
+
+        // Release reserved ports so runtime.run() can bind them.
+        drop(hold1);
+        drop(hold2);
 
         runtime1.clone().run().await.unwrap();
         runtime2.clone().run().await.unwrap();
@@ -4740,21 +4740,17 @@ mod tests {
         use sccgub_types::governance::FinalityMode;
         use std::net::TcpListener;
 
-        fn free_port() -> u16 {
-            TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
-        }
+        // Hold listeners open to reserve ports, then drop before runtime bind.
+        let hold1 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let hold2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port1 = hold1.local_addr().unwrap().port();
+        let port2 = hold2.local_addr().unwrap().port();
 
         let key1 = sccgub_crypto::keys::generate_keypair();
         let key2 = sccgub_crypto::keys::generate_keypair();
         let pk1 = *key1.verifying_key().as_bytes();
         let pk2 = *key2.verifying_key().as_bytes();
 
-        let port1 = free_port();
-        let port2 = free_port();
         let addr1 = format!("127.0.0.1:{}", port1);
         let addr2 = format!("127.0.0.1:{}", port2);
 
@@ -4801,6 +4797,10 @@ mod tests {
 
         let runtime1 = Arc::new(NetworkRuntime::new(chain1.clone(), config1).await.unwrap());
         let runtime2 = Arc::new(NetworkRuntime::new(chain2.clone(), config2).await.unwrap());
+
+        // Release reserved ports so runtime.run() can bind them.
+        drop(hold1);
+        drop(hold2);
 
         runtime1.clone().run().await.unwrap();
         runtime2.clone().run().await.unwrap();
@@ -5016,13 +5016,13 @@ mod tests {
         use sccgub_types::governance::FinalityMode;
         use std::net::TcpListener;
 
-        fn free_port() -> u16 {
-            TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
-        }
+        // Hold listeners open to reserve ports, then drop before runtime bind.
+        let hold1 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let hold2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let hold3 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port1 = hold1.local_addr().unwrap().port();
+        let port2 = hold2.local_addr().unwrap().port();
+        let port3 = hold3.local_addr().unwrap().port();
 
         let key1 = sccgub_crypto::keys::generate_keypair();
         let key2 = sccgub_crypto::keys::generate_keypair();
@@ -5031,9 +5031,6 @@ mod tests {
         let pk2 = *key2.verifying_key().as_bytes();
         let pk3 = *key3.verifying_key().as_bytes();
 
-        let port1 = free_port();
-        let port2 = free_port();
-        let port3 = free_port();
         let addr1 = format!("127.0.0.1:{}", port1);
         let addr2 = format!("127.0.0.1:{}", port2);
         let addr3 = format!("127.0.0.1:{}", port3);
@@ -5096,6 +5093,11 @@ mod tests {
         let runtime1 = Arc::new(NetworkRuntime::new(chain1.clone(), config1).await.unwrap());
         let runtime2 = Arc::new(NetworkRuntime::new(chain2.clone(), config2).await.unwrap());
         let runtime3 = Arc::new(NetworkRuntime::new(chain3.clone(), config3).await.unwrap());
+
+        // Release reserved ports so runtime.run() can bind them.
+        drop(hold1);
+        drop(hold2);
+        drop(hold3);
 
         runtime1.clone().run().await.unwrap();
         runtime2.clone().run().await.unwrap();
