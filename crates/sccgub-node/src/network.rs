@@ -1458,7 +1458,7 @@ impl NetworkRuntime {
                 let block = { self.pending_blocks.lock().await.remove(&hash) };
                 if let Some(block) = block {
                     let mut imported = false;
-                    let (block_to_persist, snapshot_to_persist) = {
+                    let (block_to_persist, snapshot_to_persist, safety_to_persist) = {
                         let mut chain = self.chain.write().await;
                         let import = chain.import_block(block);
                         if import.is_ok() {
@@ -1482,17 +1482,24 @@ impl NetworkRuntime {
                             } else {
                                 None
                             };
-                            (block, snapshot)
+                            let safety = chain.safety_certificates.clone();
+                            (block, snapshot, safety)
                         } else {
-                            (None, None)
+                            (None, None, Vec::new())
                         }
                     };
 
                     if let (Some(store), Some(block)) = (self.store.clone(), block_to_persist) {
                         let snapshot = snapshot_to_persist.clone();
+                        let safety = safety_to_persist.clone();
                         tokio::task::spawn_blocking(move || {
                             if let Err(e) = store.save_block(&block) {
                                 eprintln!("Warning: failed to persist block: {}", e);
+                            }
+                            if !safety.is_empty() {
+                                if let Err(e) = store.save_safety_certificates(&safety) {
+                                    eprintln!("Warning: failed to persist safety certs: {}", e);
+                                }
                             }
                             if let Some(snapshot) = snapshot {
                                 if let Err(e) = store.save_snapshot(&snapshot) {
