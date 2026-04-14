@@ -334,9 +334,10 @@ pub fn validate_transition_metered(
                 causes: vec![],
                 resource_used: ResourceUsage {
                     compute_steps: gas.used,
-                    state_reads: (gas.breakdown.state_reads / gas.pricing.state_read.max(1)).min(u32::MAX as u64) as u32,
-                    state_writes: (gas.breakdown.state_writes / gas.pricing.state_write.max(1)).min(u32::MAX as u64)
-                        as u32,
+                    state_reads: (gas.breakdown.state_reads / gas.pricing.state_read.max(1))
+                        .min(u32::MAX as u64) as u32,
+                    state_writes: (gas.breakdown.state_writes / gas.pricing.state_write.max(1))
+                        .min(u32::MAX as u64) as u32,
                     proof_size_bytes: gas.breakdown.proof,
                 },
                 emitted_events: vec![],

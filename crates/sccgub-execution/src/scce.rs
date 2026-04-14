@@ -166,7 +166,10 @@ fn select_relevant_subgraph(
     state: &ManagedWorldState,
     _weights: &ConstraintWeights,
 ) -> u64 {
-    let total_cap = state.consensus_params.max_scan_per_symbol.saturating_mul(active_symbols.len() as u64);
+    let total_cap = state
+        .consensus_params
+        .max_scan_per_symbol
+        .saturating_mul(active_symbols.len() as u64);
     let mut count = 0u64;
     for symbol in active_symbols {
         // Use efficient prefix range scan instead of full trie iteration.

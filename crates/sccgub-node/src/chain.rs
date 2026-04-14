@@ -632,8 +632,7 @@ impl Chain {
         if block.header.height != expected_height {
             return Err(format!(
                 "Block height mismatch: expected {}, got {}",
-                expected_height,
-                block.header.height
+                expected_height, block.header.height
             ));
         }
         if block.header.parent_id != parent.header.block_id {
