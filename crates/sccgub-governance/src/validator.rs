@@ -18,7 +18,7 @@ pub fn select_validator(validators: &[ValidatorAuthority]) -> Option<&ValidatorA
     let w3 = TensionValue::from_integer(3); // governance level weight
 
     eligible.into_iter().max_by_key(|v| {
-        let gov_score = TensionValue::from_integer(5 - v.governance_level as i64);
+        let gov_score = TensionValue::from_integer(5_i64.saturating_sub(v.governance_level as i64).max(0));
         let score =
             w1.mul_fp(v.norm_compliance) + w2.mul_fp(v.causal_reliability) + w3.mul_fp(gov_score);
         score.raw()

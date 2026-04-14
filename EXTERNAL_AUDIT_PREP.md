@@ -222,6 +222,18 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - Proven by integration test: `test_scce_rejects_tx_targeting_constrained_symbol`
   asserts that a semantically-bad tx produces a reject receipt.
 
+### Post-sweep arithmetic hardening (8th sweep):
+- N-27: `BlockGasMeter::tx_count += 1` bare u32 increment. Replaced with `saturating_add`.
+- N-28: `FinalityTracker::check_finality` bare u64 additions (`finalized_height + depth`, `+ 1`, subtraction). All replaced with saturating ops.
+- N-29: `FinalityConfig::expected_finality_ms` unchecked u64 multiply. Replaced with `saturating_mul`.
+- N-30: `produce_block` / `validate_candidate_block` bare `height + 1`. Replaced with `saturating_add`.
+- N-31: `select_relevant_subgraph` unchecked `max_scan_per_symbol * len`. Replaced with `saturating_mul`.
+- N-32: `utilization_pct` cast to u8 could exceed 100. Clamped with `.min(100)`.
+- N-33: `ResourceUsage` state_reads/state_writes `as u32` truncation. Clamped with `.min(u32::MAX)`.
+- N-34: `AntiConcentrationTracker::record_action` bare `+= 1`. Replaced with `saturating_add`.
+- N-35: `select_validator` governance level subtraction could go negative if enum grows. Clamped with `.max(0)`.
+- N-36: `SafetyCertificate::from_round` quorum `as u32` missing `.min()` guard. Aligned with protocol.rs pattern.
+
 ### Open items:
 - None currently tracked in this hardening pass.
 

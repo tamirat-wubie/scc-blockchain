@@ -249,7 +249,7 @@ impl BlockGasMeter {
     /// Record a transaction's gas usage.
     pub fn record_tx(&mut self, tx_gas: u64) {
         self.used = self.used.saturating_add(tx_gas);
-        self.tx_count += 1;
+        self.tx_count = self.tx_count.saturating_add(1);
     }
 
     pub fn remaining(&self) -> u64 {
@@ -261,7 +261,7 @@ impl BlockGasMeter {
         if self.limit == 0 {
             return 100;
         }
-        ((self.used as u128 * 100) / self.limit as u128) as u8
+        ((self.used as u128 * 100) / self.limit as u128).min(100) as u8
     }
 }
 

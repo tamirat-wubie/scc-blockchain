@@ -628,10 +628,11 @@ impl Chain {
     /// Validate an externally produced block without mutating state.
     pub fn validate_candidate_block(&self, block: &Block) -> Result<(), String> {
         let parent = self.blocks.last().ok_or("No blocks in chain")?;
-        if block.header.height != parent.header.height + 1 {
+        let expected_height = parent.header.height.saturating_add(1);
+        if block.header.height != expected_height {
             return Err(format!(
                 "Block height mismatch: expected {}, got {}",
-                parent.header.height + 1,
+                expected_height,
                 block.header.height
             ));
         }
@@ -833,7 +834,7 @@ impl Chain {
     pub fn produce_block(&mut self) -> Result<&Block, String> {
         let parent = self.blocks.last().ok_or("No blocks in chain")?;
         let parent_id = parent.header.block_id;
-        let height = parent.header.height + 1;
+        let height = parent.header.height.saturating_add(1);
 
         // Anti-concentration: check consecutive proposal limit.
         // validator_id = public_key directly (Position A).

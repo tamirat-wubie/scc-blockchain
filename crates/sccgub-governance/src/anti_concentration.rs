@@ -77,7 +77,8 @@ impl GovernancePowerTracker {
 
     /// Record a governance action by an agent.
     pub fn record_action(&mut self, agent: &AgentId) {
-        *self.actions_this_epoch.entry(*agent).or_insert(0) += 1;
+        let entry = self.actions_this_epoch.entry(*agent).or_insert(0);
+        *entry = entry.saturating_add(1);
         self.total_actions_epoch = self.total_actions_epoch.saturating_add(1);
     }
 

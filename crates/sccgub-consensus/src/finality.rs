@@ -39,7 +39,7 @@ impl Default for FinalityConfig {
 impl FinalityConfig {
     /// Compute expected finality latency.
     pub fn expected_finality_ms(&self) -> u64 {
-        self.confirmation_depth * self.target_block_time_ms
+        self.confirmation_depth.saturating_mul(self.target_block_time_ms)
     }
 
     /// Check if finality SLA is met.
@@ -86,13 +86,13 @@ impl FinalityTracker {
     ) -> Vec<FinalityCertificate> {
         let mut new_certs = Vec::new();
 
-        while self.finalized_height + config.confirmation_depth <= self.tip_height {
-            let target_height = self.finalized_height + 1;
+        while self.finalized_height.saturating_add(config.confirmation_depth) <= self.tip_height {
+            let target_height = self.finalized_height.saturating_add(1);
             if let Some(hash) = block_hash_at(target_height) {
                 let cert = FinalityCertificate {
                     block_hash: hash,
                     height: target_height,
-                    confirmations: self.tip_height - target_height,
+                    confirmations: self.tip_height.saturating_sub(target_height),
                     attestations: vec![], // Filled by consensus layer.
                     finalized_at_ms: 0,   // Filled by caller.
                 };

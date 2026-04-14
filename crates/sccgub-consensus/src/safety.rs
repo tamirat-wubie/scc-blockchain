@@ -116,7 +116,7 @@ impl SafetyCertificate {
         precommits: &HashMap<Hash, crate::protocol::Vote>,
         validator_count: u32,
     ) -> Self {
-        let quorum = ((2u64 * validator_count as u64) / 3 + 1) as u32;
+        let quorum = ((2u64 * validator_count as u64) / 3 + 1).min(u32::MAX as u64) as u32;
         let precommit_signatures: Vec<(Hash, Vec<u8>)> = precommits
             .values()
             .filter(|v| v.block_hash == block_hash)
