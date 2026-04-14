@@ -1050,6 +1050,7 @@ impl NetworkRuntime {
     }
 
     async fn handle_finality_certificate(&self, cert: SafetyCertificate) -> Result<(), String> {
+        self.sync_validator_set_from_chain_if_unconfigured().await;
         let validator_set = self.validator_set.read().await;
         cert.verify_cryptographic(&validator_set)?;
         let mut chain = self.chain.write().await;
