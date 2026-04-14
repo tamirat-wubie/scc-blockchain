@@ -1424,30 +1424,31 @@ fn cmd_health(data_dir: &std::path::Path) {
     metrics.state_entries = state.trie.len() as u64;
     metrics.causal_edges = total_causal_edges;
 
-    // Compute finality.
-    let finality_config = sccgub_consensus::finality::FinalityConfig::default();
+    let latest = blocks.last().unwrap();
+    // Compute finality using the on-chain configuration snapshot.
+    let finality_config = sccgub_consensus::finality::FinalityConfig {
+        confirmation_depth: latest.governance.finality_config.confirmation_depth,
+        max_finality_ms: latest.governance.finality_config.max_finality_ms,
+        target_block_time_ms: latest.governance.finality_config.target_block_time_ms,
+    };
     let mut finality = sccgub_consensus::finality::FinalityTracker::default();
-    if let Some(last) = blocks.last() {
-        for h in 1..=last.header.height {
-            finality.on_new_block(h);
+    for h in 1..=latest.header.height {
+        finality.on_new_block(h);
+    }
+    match latest.governance.finality_mode {
+        sccgub_types::governance::FinalityMode::Deterministic => {
+            finality.check_finality(&finality_config, |h| {
+                blocks.get(h as usize).map(|b| b.header.block_id)
+            });
         }
-        match last.governance.finality_mode {
-            sccgub_types::governance::FinalityMode::Deterministic => {
-                finality.check_finality(&finality_config, |h| {
-                    blocks.get(h as usize).map(|b| b.header.block_id)
-                });
-            }
-            sccgub_types::governance::FinalityMode::BftCertified { .. } => {
-                if let Ok(certs) = store.load_safety_certificates() {
-                    if let Some(max_height) = certs.iter().map(|c| c.height).max() {
-                        finality.finalized_height = max_height;
-                    }
+        sccgub_types::governance::FinalityMode::BftCertified { .. } => {
+            if let Ok(certs) = store.load_safety_certificates() {
+                if let Some(max_height) = certs.iter().map(|c| c.height).max() {
+                    finality.finalized_height = max_height;
                 }
             }
         }
     }
-
-    let latest = blocks.last().unwrap();
 
     println!("{}", metrics.report());
     println!("  Finality");
