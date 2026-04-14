@@ -1431,9 +1431,20 @@ fn cmd_health(data_dir: &std::path::Path) {
         for h in 1..=last.header.height {
             finality.on_new_block(h);
         }
-        finality.check_finality(&finality_config, |h| {
-            blocks.get(h as usize).map(|b| b.header.block_id)
-        });
+        match latest.governance.finality_mode {
+            sccgub_types::governance::FinalityMode::Deterministic => {
+                finality.check_finality(&finality_config, |h| {
+                    blocks.get(h as usize).map(|b| b.header.block_id)
+                });
+            }
+            sccgub_types::governance::FinalityMode::BftCertified { .. } => {
+                if let Ok(certs) = store.load_safety_certificates() {
+                    if let Some(max_height) = certs.iter().map(|c| c.height).max() {
+                        finality.finalized_height = max_height;
+                    }
+                }
+            }
+        }
     }
 
     let latest = blocks.last().unwrap();
