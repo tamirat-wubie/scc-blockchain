@@ -6,7 +6,7 @@ All notable changes to SCCGUB are documented here.
 
 ### Production Hardening Release
 
-**654 tests, 9 crates, persistent block log + snapshots, all CI green.**
+**655 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
 - Argon2id + ChaCha20-Poly1305 keystore with constant-time comparison (subtle crate)
@@ -50,7 +50,7 @@ All notable changes to SCCGUB are documented here.
 - Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)
-- ContractInvoke namespace still maps to both `contract/` and `data/`
+- ContractInvoke namespace tightened to `contract/` only (was `contract/` + `data/`)
 - No state pruning implementation yet
 
 #### API
@@ -90,7 +90,7 @@ All notable changes to SCCGUB are documented here.
 - Autonomy budgets for off-chain decision authority
 
 #### Testing
-- 654 tests across 9 crates
+- 655 tests across 9 crates
 - Property-based tests (3000+ random scenarios)
 - Adversarial consensus tests (Byzantine, partition, equivocation)
 - Full-pipeline integration tests (treasury, escrow, artifacts, delegation, events)

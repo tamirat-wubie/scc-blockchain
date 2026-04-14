@@ -121,4 +121,4 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 - 65+ findings identified, all closed
 - 12 false positives dismissed with documented reasoning
 - Zero unwrap/expect in consensus-critical production code
-- 654 tests, CI green on Linux + Windows + security audit
+- 655 tests, CI green on Linux + Windows + security audit

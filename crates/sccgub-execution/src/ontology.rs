@@ -31,11 +31,9 @@ fn allowed_namespaces(kind: TransitionKind) -> &'static [Namespace] {
         // Agent lifecycle.
         TransitionKind::AgentRegistration => &[NS_AGENTS],
 
-        // Contract operations.
-        // NOTE: ContractInvoke → NS_DATA is intentionally loose for MVP.
-        // Future: tighten to per-contract namespace (data/contract/<id>/).
+        // Contract operations — scoped to contract/ prefix only.
         TransitionKind::ContractDeploy => &[NS_CONTRACT],
-        TransitionKind::ContractInvoke => &[NS_CONTRACT, NS_DATA],
+        TransitionKind::ContractInvoke => &[NS_CONTRACT],
 
         // Dispute resolution — deny everything until dispute machinery exists.
         // Empty allowlist is an INTENTIONAL GATE: any TransitionKind variant
@@ -213,9 +211,18 @@ mod tests {
     }
 
     #[test]
-    fn contract_invoke_to_data_allowed() {
-        let tx = tx_with(TransitionKind::ContractInvoke, b"data/contract_state/foo");
+    fn contract_invoke_to_contract_allowed() {
+        let tx = tx_with(
+            TransitionKind::ContractInvoke,
+            b"contract/my_contract/state",
+        );
         assert!(check_ontology(&tx).is_allowed());
+    }
+
+    #[test]
+    fn contract_invoke_to_data_rejected() {
+        let tx = tx_with(TransitionKind::ContractInvoke, b"data/contract_state/foo");
+        assert!(!check_ontology(&tx).is_allowed());
     }
 
     #[test]

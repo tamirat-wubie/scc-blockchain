@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 654 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 655 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -13,7 +13,7 @@
 - Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)
-- ContractInvoke namespace still maps to both `contract/` and `data/`
+- ContractInvoke namespace tightened to `contract/` only (closed)
 - No state pruning implementation yet
 
 ---
@@ -92,7 +92,7 @@ Auditors should focus on these files first:
 2. **Replay-authoritative state** — Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional sled-backed trie mirror exists, but replay remains authoritative
 3. **P2P networking is minimal** — Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits
 4. **No ZK/privacy layer** — Placeholder types exist (ZkCommitment) but no implementation
-5. **ContractInvoke namespace is loose** — Maps to both NS_CONTRACT and NS_DATA; should tighten to per-contract namespace
+5. **ContractInvoke namespace tightened** — Now maps to NS_CONTRACT only (was NS_CONTRACT + NS_DATA). Per-contract sub-namespace is a future item
 6. **No state pruning** — RetentionClass types exist but no pruning implementation
 
 ### 4.3 Hardening Applied
@@ -161,7 +161,7 @@ NormProposal      => [norms/]
 ConstraintAddition => [constraints/]
 AgentRegistration => [agents/]
 ContractDeploy    => [contract/]
-ContractInvoke    => [contract/, data/]
+ContractInvoke    => [contract/]
 DisputeResolution => []  (intentional gate — denied until machinery exists)
 ```
 
