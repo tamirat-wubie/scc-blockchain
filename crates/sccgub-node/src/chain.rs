@@ -598,8 +598,24 @@ impl Chain {
                 && existing.block_hash == cert.block_hash
                 && existing.round == cert.round
         });
-        if !exists {
-            self.safety_certificates.push(cert);
+        if exists {
+            return;
+        }
+        let height = cert.height;
+        let block_hash = cert.block_hash;
+        self.safety_certificates.push(cert);
+        if matches!(
+            self.state.state.governance_state.finality_mode,
+            FinalityMode::BftCertified { .. }
+        ) && height > self.finality.finalized_height
+        {
+            self.finality.finalized_height = height;
+            self.latest_events
+                .emit(sccgub_types::events::ChainEvent::BlockFinalized {
+                    block_height: height,
+                    block_hash,
+                    finality_class: "bft".into(),
+                });
         }
     }
 
@@ -796,9 +812,133 @@ impl Chain {
         // Record validator presence (resets absence counter).
         self.slashing.record_presence(&block.header.validator_id);
 
+        // E-2: Replay governance transitions (proposals, votes, activation).
+        // This must match the governance replay in produce_block and from_blocks.
+        let height = block.header.height;
+        self.replay_governance_transitions(&block.body.transitions, height);
+
         self.blocks.push(block);
         self.maybe_sync_api_bridge(self.mempool.pending_snapshot());
         Ok(())
+    }
+
+    /// Replay governance side-effects from block transitions.
+    /// Called by produce_block, import_block, and from_blocks.
+    fn replay_governance_transitions(
+        &mut self,
+        transitions: &[sccgub_types::transition::SymbolicTransition],
+        height: u64,
+    ) {
+        // Parse and submit proposals from block transitions.
+        for tx in transitions {
+            if let sccgub_types::transition::OperationPayload::ProposeNorm { name, description } =
+                &tx.payload
+            {
+                let _ = self.proposals.submit(
+                    tx.actor.agent_id,
+                    tx.actor.governance_level,
+                    sccgub_governance::proposals::ProposalKind::AddNorm {
+                        name: name.clone(),
+                        description: description.clone(),
+                        initial_fitness: sccgub_types::tension::TensionValue::from_integer(5),
+                        enforcement_cost: sccgub_types::tension::TensionValue::from_integer(1),
+                    },
+                    height,
+                    5,
+                );
+            }
+            if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
+                if let sccgub_types::transition::OperationPayload::Write { key, value } =
+                    &tx.payload
+                {
+                    if key.starts_with(b"norms/governance/params/propose") {
+                        if let Some((param_key, param_value)) = parse_governance_param_write(value)
+                        {
+                            let _ = self.proposals.submit(
+                                tx.actor.agent_id,
+                                tx.actor.governance_level,
+                                sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                    key: param_key,
+                                    value: param_value,
+                                },
+                                height,
+                                5,
+                            );
+                        }
+                    }
+                    if key.starts_with(b"governance/proposals/")
+                        || key.starts_with(b"norms/governance/proposals/")
+                    {
+                        if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
+                            let _ = self.proposals.vote(
+                                &proposal_id,
+                                tx.actor.agent_id,
+                                tx.actor.governance_level,
+                                true,
+                                height,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Finalize proposals whose voting period ended.
+        let _ = self.proposals.finalize(height);
+
+        // Activate timelocked proposals.
+        for proposal in self.proposals.proposals.clone() {
+            if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
+                && height >= proposal.timelock_until
+            {
+                match self.proposals.activate(&proposal.id, height) {
+                    Ok(Some(norm)) => {
+                        self.state
+                            .state
+                            .governance_state
+                            .active_norms
+                            .insert(norm.id, norm);
+                    }
+                    Ok(None) => match proposal.kind {
+                        sccgub_governance::proposals::ProposalKind::DeactivateNorm { norm_id } => {
+                            if let Some(mut norm) = self
+                                .state
+                                .state
+                                .governance_state
+                                .active_norms
+                                .get(&norm_id)
+                                .cloned()
+                            {
+                                norm.active = false;
+                                self.state
+                                    .state
+                                    .governance_state
+                                    .active_norms
+                                    .insert(norm_id, norm);
+                            }
+                        }
+                        sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                            ref key,
+                            ref value,
+                        } => {
+                            if let Err(e) = self.apply_governance_parameter(key, value) {
+                                tracing::warn!("Governance parameter update rejected: {}", e);
+                            }
+                        }
+                        sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
+                            self.state.state.governance_state.emergency_mode = true;
+                        }
+                        sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
+                            self.state.state.governance_state.emergency_mode = false;
+                        }
+                        sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
+                    },
+                    Err(e) => {
+                        tracing::warn!("Proposal activation failed: {}", e);
+                    }
+                }
+            }
+        }
     }
 
     /// Submit a transition to the mempool.
@@ -960,7 +1100,15 @@ impl Chain {
                 block_gas.record_tx(gas_used);
                 filter_balances = post_tx_balances;
                 if let Err(e) = filter_state.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                    // E-4: nonce drift is a consensus invariant violation.
+                    // Reject the tx instead of silently accepting.
                     tracing::error!("Nonce filter drift during block production: {}", e);
+                    rejected_receipts.push(make_prefilter_reject_receipt(
+                        &tx,
+                        self.state.state_root(),
+                        &format!("Nonce drift: {}", e),
+                    ));
+                    continue;
                 }
 
                 accepted_transitions.push(tx);
