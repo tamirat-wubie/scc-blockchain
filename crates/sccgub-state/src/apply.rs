@@ -403,7 +403,7 @@ mod tests {
     use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::BTreeSet;
 
     fn make_write_tx(key: &[u8], value: &[u8], nonce: u128) -> SymbolicTransition {
         let mut tx_id = [0u8; 32];

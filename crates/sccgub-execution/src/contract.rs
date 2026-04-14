@@ -241,6 +241,7 @@ mod tests {
     use sccgub_types::contract::SymbolicCausalContract;
     use sccgub_types::governance::PrecedenceLevel;
     use sccgub_types::transition::Constraint;
+    use std::collections::BTreeSet;
 
     fn test_contract() -> SymbolicCausalContract {
         SymbolicCausalContract {

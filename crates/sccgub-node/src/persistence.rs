@@ -1,5 +1,3 @@
-#[allow(unused_imports)]
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -398,6 +396,7 @@ mod tests {
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
     use sccgub_types::ZERO_HASH;
+    use std::collections::BTreeSet;
 
     fn test_block(height: u64) -> Block {
         Block {
