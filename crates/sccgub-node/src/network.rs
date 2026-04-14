@@ -183,7 +183,7 @@ impl NetworkRuntime {
         let validator_key = guard.validator_key.clone();
         let chain_id = guard.chain_id;
         let chain_validators = guard.validator_set.clone();
-        let finality_mode = guard.state.state.governance_state.finality_mode.clone();
+        let finality_mode = guard.state.state.governance_state.finality_mode;
         drop(guard);
         if !config.validators.is_empty() {
             let validators = Self::validators_from_config(&config)?;
