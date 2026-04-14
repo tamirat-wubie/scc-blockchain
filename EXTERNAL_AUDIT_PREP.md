@@ -68,7 +68,7 @@ Auditors should focus on these files first:
 | `sccgub-execution/src/payload_check.rs` | Payload-intent consistency | ~280 |
 | `sccgub-execution/src/scce.rs` | Constraint propagation walker | ~570 |
 | `sccgub-execution/src/wh_check.rs` | WHBinding completeness checker | ~170 |
-| `sccgub-node/src/chain.rs` | Chain lifecycle, block production | ~1370 |
+| `sccgub-node/src/chain.rs` | Chain lifecycle, block production | ~2240 |
 | `sccgub-state/src/apply.rs` | State application (checks-effects-interactions) | ~320 |
 
 ## 4. Security Properties
@@ -111,6 +111,12 @@ Auditors should focus on these files first:
 - **Peer diversity thresholds configurable** — `network.min_connected_peers` and `network.max_same_subnet_pct` control eclipse-resistance gating in networked mode
 
 - **Peer seed exchange bounded** — Hello messages carry a bounded peer hint list to expand seed connectivity without unbounded growth
+- **Balance root verification in CPoG** — `validate_cpog()` now verifies balance_root against speculative replay, closing a consensus safety gap
+- **Slashing overflow protection** — All penalty calculations use `saturating_mul` to prevent i128 overflow before division
+- **Quorum overflow protection** — `safety.rs` quorum calculation widened to u64 to match `protocol.rs` pattern
+- **Checked nonce arithmetic** — `checked_add` on nonce successor prevents u64::MAX wrap-around
+- **Fail-closed seal receipt errors** — `seal_receipt_post_state` propagates errors instead of logging and continuing
+- **Canonical balance_root** — Single `BalanceLedger::balance_root()` method used by both production and CPoG validation, eliminating inline duplication
 
 ## 5. Phi Traversal Architecture
 
@@ -134,6 +140,11 @@ nonce sequence, size limits, WHBinding structural completeness). It does NOT
 run Phi traversal, Ed25519 verification, SCCE constraint propagation, or
 ontology checks. Those all run in the gas loop where every rejection produces
 a receipt (N-3-mempool closed).
+
+`admit_check_structural()` is the nonce-free variant used by `drain_validated`
+in the mempool, which tracks local nonces independently to allow multiple
+transactions per agent per block. `admit_check()` adds the committed-state
+nonce check and delegates structural validation to `admit_check_structural()`.
 
 **Recommended audit action**: Verify that `phi_check_single_tx` covers all
 per-tx-relevant checks, and that `admit_check` does not accidentally run
