@@ -42,15 +42,7 @@ pub fn seal_receipt_post_state(
 /// Those all run in `validate_transition_metered` inside the gas loop, where every
 /// rejection produces a receipt (closing N-3-mempool).
 pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result<(), String> {
-    // 1. Signature length (cheap, defends against malformed input).
-    if tx.signature.len() < 64 {
-        return Err(format!(
-            "Signature too short: {} bytes, need >= 64",
-            tx.signature.len()
-        ));
-    }
-
-    // 2. Nonce must be >= 1 and sequential.
+    // Nonce must be >= 1 and sequential against committed state.
     if tx.nonce == 0 {
         return Err("Nonce must be >= 1".into());
     }
@@ -67,7 +59,28 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
         ));
     }
 
-    // 3. Size limits.
+    admit_check_structural(tx, state)
+}
+
+/// Structural admission checks WITHOUT nonce validation.
+///
+/// Use this when the caller already tracks nonces locally (e.g. `drain_validated`
+/// which maintains a local nonce map across a batch of transactions from the
+/// same agent). Calling `admit_check` in that case would reject sequential
+/// nonces (2, 3, ...) because committed state still shows the pre-batch value.
+pub fn admit_check_structural(
+    tx: &SymbolicTransition,
+    state: &ManagedWorldState,
+) -> Result<(), String> {
+    // 1. Signature length (cheap, defends against malformed input).
+    if tx.signature.len() < 64 {
+        return Err(format!(
+            "Signature too short: {} bytes, need >= 64",
+            tx.signature.len()
+        ));
+    }
+
+    // 2. Size limits.
     let max_symbol_address_len = state.consensus_params.max_symbol_address_len as usize;
     let max_state_entry_size = state.consensus_params.max_state_entry_size as usize;
     if tx.intent.target.len() > max_symbol_address_len {
@@ -103,7 +116,7 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
         _ => {} // Noop, AssetTransfer, RegisterAgent, ProposeNorm — all bounded by fixed fields.
     }
 
-    // 4. WHBinding structural completeness (cheap checks only, no cross-checks).
+    // 3. WHBinding structural completeness (cheap checks only, no cross-checks).
     if tx.wh_binding_intent.who == sccgub_types::ZERO_HASH {
         return Err("WHBinding: 'who' is zero".into());
     }

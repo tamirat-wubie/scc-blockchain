@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use sccgub_execution::validate::admit_check;
+use sccgub_execution::validate::admit_check_structural;
 use sccgub_governance::containment::ContainmentState;
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::tension::TensionValue;
@@ -86,8 +86,9 @@ impl Mempool {
                 continue;
             }
 
-            // Lightweight admission: structural checks only, no Phi/SCCE/Ed25519.
-            match admit_check(tx, state) {
+            // Lightweight structural checks (no nonce — already checked above with
+            // local tracking that allows sequential nonces within the same batch).
+            match admit_check_structural(tx, state) {
                 Ok(()) => {
                     // Update local nonce tracker.
                     local_nonces.insert(node_id, tx.nonce);
