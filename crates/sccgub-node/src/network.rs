@@ -4634,6 +4634,282 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_p2p_two_validator_finalizes_with_delay() {
+        use sccgub_types::governance::FinalityMode;
+        use std::net::TcpListener;
+
+        fn free_port() -> u16 {
+            TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        }
+
+        let key1 = sccgub_crypto::keys::generate_keypair();
+        let key2 = sccgub_crypto::keys::generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+
+        let port1 = free_port();
+        let port2 = free_port();
+        let addr1 = format!("127.0.0.1:{}", port1);
+        let addr2 = format!("127.0.0.1:{}", port2);
+
+        let mut config1 = crate::config::NodeConfig::default().network;
+        config1.enable = true;
+        config1.bind = "127.0.0.1".into();
+        config1.port = port1;
+        config1.peers = vec![addr2.clone()];
+        config1.validators = vec![hex::encode(pk1), hex::encode(pk2)];
+        config1.block_interval_ms = 60_000;
+        config1.proposer_loop_enabled = false;
+        config1.round_timeout_ms = 60_000;
+        config1.max_rounds = 2;
+        config1.min_connected_peers = 1;
+        config1.max_same_subnet_pct = 100;
+
+        let mut config2 = config1.clone();
+        config2.port = port2;
+        config2.peers = vec![addr1.clone()];
+
+        let validators = NetworkRuntime::validators_from_config(&config1).unwrap();
+
+        let chain1 = Arc::new(RwLock::new(Chain::init()));
+        let chain2 = Arc::new(RwLock::new(Chain::init()));
+
+        {
+            let mut guard = chain1.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key1.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 2,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+        {
+            let mut guard = chain2.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key2.clone();
+            guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+                quorum_threshold: 2,
+            };
+            guard.set_validator_set(validators.clone());
+        }
+
+        let runtime1 = Arc::new(NetworkRuntime::new(chain1.clone(), config1).await.unwrap());
+        let runtime2 = Arc::new(NetworkRuntime::new(chain2.clone(), config2).await.unwrap());
+
+        runtime1.clone().run().await.unwrap();
+        runtime2.clone().run().await.unwrap();
+
+        let wait_connected = |runtime: Arc<NetworkRuntime>, addr: String| async move {
+            for _ in 0..80 {
+                if runtime.connections.lock().await.contains_key(&addr) {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        };
+
+        let connected1 = wait_connected(runtime1.clone(), addr2.clone()).await;
+        let connected2 = wait_connected(runtime2.clone(), addr1.clone()).await;
+        assert!(connected1 && connected2, "p2p peers must connect");
+
+        let _ = runtime1.send_hello(&addr2).await;
+        let _ = runtime2.send_hello(&addr1).await;
+
+        let height = { chain1.read().await.height().saturating_add(1) };
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
+            .expect("validator set must pick proposer");
+
+        let (proposer_runtime, proposer_key, proposer_pk, peer_addr) = if proposer.node_id == pk1 {
+            (runtime1.clone(), key1.clone(), pk1, addr2.clone())
+        } else {
+            (runtime2.clone(), key2.clone(), pk2, addr1.clone())
+        };
+
+        let block = {
+            let guard = proposer_runtime.chain.read().await;
+            guard.build_candidate_block_unchecked().unwrap()
+        };
+
+        let proposal = NetworkMessage::BlockProposal(signed_block_proposal(
+            &proposer_key,
+            BlockProposalMessage {
+                proposer_id: proposer_pk,
+                block: block.clone(),
+                round: 0,
+                signature: Vec::new(),
+            },
+        ));
+        proposer_runtime
+            .handle_message(proposal.clone(), "local")
+            .await
+            .unwrap();
+        proposer_runtime
+            .send_to_peer(&peer_addr, proposal)
+            .await
+            .unwrap();
+
+        let epoch = proposer_runtime.current_epoch().await;
+        let prevote_payload = vote_sign_data(
+            &proposer_runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Prevote,
+        );
+        let prevote_proposer = Vote {
+            validator_id: proposer_pk,
+            block_hash: block.header.block_id,
+            height: block.header.height,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            signature: sign(&proposer_key, &prevote_payload),
+        };
+        let prevote_peer = Vote {
+            validator_id: if proposer_pk == pk1 { pk2 } else { pk1 },
+            block_hash: block.header.block_id,
+            height: block.header.height,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            signature: if proposer_pk == pk1 {
+                sign(&key2, &prevote_payload)
+            } else {
+                sign(&key1, &prevote_payload)
+            },
+        };
+        proposer_runtime
+            .handle_message(
+                NetworkMessage::ConsensusVote(prevote_proposer.clone()),
+                "local",
+            )
+            .await
+            .unwrap();
+        if proposer_pk == pk1 {
+            runtime2
+                .handle_message(NetworkMessage::ConsensusVote(prevote_peer.clone()), "local")
+                .await
+                .unwrap();
+            runtime1
+                .send_to_peer(&addr2, NetworkMessage::ConsensusVote(prevote_proposer))
+                .await
+                .unwrap();
+            runtime2
+                .send_to_peer(&addr1, NetworkMessage::ConsensusVote(prevote_peer))
+                .await
+                .unwrap();
+        } else {
+            runtime1
+                .handle_message(NetworkMessage::ConsensusVote(prevote_peer.clone()), "local")
+                .await
+                .unwrap();
+            runtime2
+                .send_to_peer(&addr1, NetworkMessage::ConsensusVote(prevote_proposer))
+                .await
+                .unwrap();
+            runtime1
+                .send_to_peer(&addr2, NetworkMessage::ConsensusVote(prevote_peer))
+                .await
+                .unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let precommit_payload = vote_sign_data(
+            &proposer_runtime.chain_id,
+            epoch,
+            &block.header.block_id,
+            block.header.height,
+            0,
+            VoteType::Precommit,
+        );
+        let precommit_proposer = Vote {
+            validator_id: proposer_pk,
+            block_hash: block.header.block_id,
+            height: block.header.height,
+            round: 0,
+            vote_type: VoteType::Precommit,
+            signature: sign(&proposer_key, &precommit_payload),
+        };
+        let precommit_peer = Vote {
+            validator_id: if proposer_pk == pk1 { pk2 } else { pk1 },
+            block_hash: block.header.block_id,
+            height: block.header.height,
+            round: 0,
+            vote_type: VoteType::Precommit,
+            signature: if proposer_pk == pk1 {
+                sign(&key2, &precommit_payload)
+            } else {
+                sign(&key1, &precommit_payload)
+            },
+        };
+        proposer_runtime
+            .handle_message(
+                NetworkMessage::ConsensusVote(precommit_proposer.clone()),
+                "local",
+            )
+            .await
+            .unwrap();
+        if proposer_pk == pk1 {
+            runtime2
+                .handle_message(
+                    NetworkMessage::ConsensusVote(precommit_peer.clone()),
+                    "local",
+                )
+                .await
+                .unwrap();
+            runtime1
+                .send_to_peer(&addr2, NetworkMessage::ConsensusVote(precommit_proposer))
+                .await
+                .unwrap();
+            runtime2
+                .send_to_peer(&addr1, NetworkMessage::ConsensusVote(precommit_peer))
+                .await
+                .unwrap();
+        } else {
+            runtime1
+                .handle_message(
+                    NetworkMessage::ConsensusVote(precommit_peer.clone()),
+                    "local",
+                )
+                .await
+                .unwrap();
+            runtime2
+                .send_to_peer(&addr1, NetworkMessage::ConsensusVote(precommit_proposer))
+                .await
+                .unwrap();
+            runtime1
+                .send_to_peer(&addr2, NetworkMessage::ConsensusVote(precommit_peer))
+                .await
+                .unwrap();
+        }
+
+        let finalize = |chain: Arc<RwLock<Chain>>, height: u64| async move {
+            for _ in 0..80 {
+                {
+                    let guard = chain.read().await;
+                    if guard.height() >= height && !guard.safety_certificates.is_empty() {
+                        return true;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        };
+
+        let finalized = finalize(chain1.clone(), block.header.height).await
+            || finalize(chain2.clone(), block.header.height).await;
+        assert!(
+            finalized,
+            "expected finality certificate after delayed votes"
+        );
+    }
+
+    #[tokio::test]
     async fn test_p2p_three_validator_proposer_rotation_finalizes() {
         use sccgub_types::governance::FinalityMode;
         use std::net::TcpListener;
