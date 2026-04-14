@@ -322,6 +322,20 @@ fn restore_snapshot_if_available(
     true
 }
 
+fn restore_safety_certificates_if_available(store: &ChainStore, chain: &mut Chain) {
+    let certs = match store.load_safety_certificates() {
+        Ok(certs) => certs,
+        Err(e) => {
+            eprintln!("Warning: safety certificate load failed: {}", e);
+            return;
+        }
+    };
+    if certs.is_empty() {
+        return;
+    }
+    chain.restore_safety_certificates(certs);
+}
+
 fn bind_state_store_if_enabled(
     store: &ChainStore,
     chain: &mut Chain,
@@ -1498,6 +1512,7 @@ async fn cmd_serve(
         config.storage.snapshot_restore_enabled,
         durable_store.clone(),
     );
+    restore_safety_certificates_if_available(store.as_ref(), &mut chain);
     if !restored {
         let _ = bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
     }
@@ -2165,6 +2180,7 @@ fn load_chain_with_key(data_dir: &std::path::Path, passphrase: &str) -> (Chain, 
         eprintln!("Chain import failed: {}", e);
         std::process::exit(1);
     });
+    restore_safety_certificates_if_available(&store, &mut chain);
 
     if !store.has_validator_key() {
         eprintln!("Validator key not found. Run `sccgub init` first.");

@@ -34,6 +34,7 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::SymbolicTransition;
 use sccgub_types::{Hash, MerkleRoot, ZERO_HASH};
+use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
@@ -616,6 +617,37 @@ impl Chain {
                     block_hash,
                     finality_class: "bft".into(),
                 });
+        }
+    }
+
+    /// Restore safety certificates from storage without emitting events.
+    pub fn restore_safety_certificates(&mut self, certs: Vec<SafetyCertificate>) {
+        if certs.is_empty() {
+            return;
+        }
+        let mut seen = BTreeSet::new();
+        let mut merged = Vec::new();
+        for cert in self
+            .safety_certificates
+            .iter()
+            .cloned()
+            .chain(certs.into_iter())
+        {
+            let key = (cert.height, cert.round, cert.block_hash);
+            if seen.insert(key) {
+                merged.push(cert);
+            }
+        }
+        self.safety_certificates = merged;
+        if matches!(
+            self.state.state.governance_state.finality_mode,
+            FinalityMode::BftCertified { .. }
+        ) {
+            if let Some(max_height) = self.safety_certificates.iter().map(|c| c.height).max() {
+                if max_height > self.finality.finalized_height {
+                    self.finality.finalized_height = max_height;
+                }
+            }
         }
     }
 

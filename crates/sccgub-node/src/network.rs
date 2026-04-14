@@ -1066,6 +1066,7 @@ impl NetworkRuntime {
         chain.record_safety_certificate(cert);
         if let Some(store) = &self.store {
             if let Some(block) = chain.block_at(height).cloned() {
+                let safety_certs = chain.safety_certificates.clone();
                 let snapshot = if self.snapshot_interval > 0
                     && height > 0
                     && height.is_multiple_of(self.snapshot_interval)
@@ -1078,6 +1079,9 @@ impl NetworkRuntime {
                 tokio::task::spawn_blocking(move || {
                     if let Err(e) = store.save_block(&block) {
                         eprintln!("Warning: failed to persist block: {}", e);
+                    }
+                    if let Err(e) = store.save_safety_certificates(&safety_certs) {
+                        eprintln!("Warning: failed to persist safety certs: {}", e);
                     }
                     if let Some(snapshot) = snapshot {
                         if let Err(e) = store.save_snapshot(&snapshot) {

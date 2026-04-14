@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::StorageConfig;
+use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_state::store::SledStateStore;
 use sccgub_types::block::Block;
 
@@ -240,6 +241,17 @@ impl ChainStore {
         fs::rename(&tmp_path, &path)
     }
 
+    pub fn save_safety_certificates(
+        &self,
+        certificates: &[SafetyCertificate],
+    ) -> std::io::Result<()> {
+        let path = self.base_dir.join("safety_certs.json");
+        let tmp_path = self.base_dir.join("safety_certs.json.tmp");
+        let json = serde_json::to_string_pretty(certificates).map_err(std::io::Error::other)?;
+        fs::write(&tmp_path, &json)?;
+        fs::rename(&tmp_path, &path)
+    }
+
     /// Load persisted consensus round state on restart.
     /// Returns empty map if no state exists (clean start).
     pub fn load_consensus_state(
@@ -262,9 +274,28 @@ impl ChainStore {
         Ok(parsed)
     }
 
+    pub fn load_safety_certificates(&self) -> std::io::Result<Vec<SafetyCertificate>> {
+        let path = self.base_dir.join("safety_certs.json");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let data = fs::read_to_string(&path)?;
+        let certs: Vec<SafetyCertificate> =
+            serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        Ok(certs)
+    }
+
     /// Clear persisted consensus state (after successful finalization).
     pub fn clear_consensus_state(&self) -> std::io::Result<()> {
         let path = self.base_dir.join("consensus_rounds.json");
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_safety_certificates(&self) -> std::io::Result<()> {
+        let path = self.base_dir.join("safety_certs.json");
         if path.exists() {
             fs::remove_file(&path)?;
         }
@@ -532,6 +563,36 @@ mod tests {
             .expect("legacy validator key should still load");
         assert_eq!(loaded.as_bytes(), key.as_bytes());
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_save_and_load_safety_certificates() {
+        let dir = std::env::temp_dir().join(format!("sccgub_safety_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).unwrap();
+
+        let cert = SafetyCertificate {
+            chain_id: [1u8; 32],
+            epoch: 7,
+            height: 12,
+            block_hash: [2u8; 32],
+            round: 1,
+            precommit_signatures: vec![([3u8; 32], vec![0u8; 64])],
+            quorum: 1,
+            validator_count: 1,
+        };
+
+        store
+            .save_safety_certificates(&[cert.clone()])
+            .expect("safety certs should save");
+        let loaded = store
+            .load_safety_certificates()
+            .expect("safety certs should load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].height, cert.height);
+        assert_eq!(loaded[0].block_hash, cert.block_hash);
+        assert_eq!(loaded[0].round, cert.round);
         let _ = fs::remove_dir_all(&dir);
     }
 
