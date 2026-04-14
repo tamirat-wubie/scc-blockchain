@@ -630,4 +630,61 @@ mod tests {
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].validator_id, [3u8; 32]);
     }
+
+    #[test]
+    fn test_from_round_builds_certificate() {
+        use crate::protocol::{vote_sign_data, Vote, VoteType};
+        use sccgub_crypto::keys::generate_keypair;
+
+        let chain_id = [0xCC; 32];
+        let epoch = 1u64;
+        let block_hash = [0xAA; 32];
+        let height = 5u64;
+        let round = 0u32;
+
+        let keys: Vec<_> = (0..4).map(|_| generate_keypair()).collect();
+        let mut precommits = std::collections::HashMap::new();
+        for (i, key) in keys.iter().enumerate() {
+            let id = [i as u8 + 1; 32];
+            let pk = *key.verifying_key().as_bytes();
+            let data = vote_sign_data(
+                &chain_id,
+                epoch,
+                &block_hash,
+                height,
+                round,
+                VoteType::Precommit,
+            );
+            let sig = sccgub_crypto::signature::sign(key, &data);
+            precommits.insert(
+                id,
+                Vote {
+                    validator_id: id,
+                    block_hash,
+                    height,
+                    round,
+                    vote_type: VoteType::Precommit,
+                    signature: sig,
+                },
+            );
+            // Store pk for later verification.
+            let _ = pk;
+        }
+
+        let cert = SafetyCertificate::from_round(
+            chain_id,
+            epoch,
+            block_hash,
+            height,
+            round,
+            &precommits,
+            4,
+        );
+
+        assert_eq!(cert.height, height);
+        assert_eq!(cert.block_hash, block_hash);
+        assert_eq!(cert.validator_count, 4);
+        assert_eq!(cert.quorum, 3); // floor(2*4/3) + 1 = 3
+        assert_eq!(cert.precommit_signatures.len(), 4);
+    }
 }

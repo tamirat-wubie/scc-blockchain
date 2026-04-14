@@ -148,4 +148,19 @@ mod tests {
         round.submit([1u8; 32], [10u8; 32]).unwrap();
         assert!(round.submit([1u8; 32], [20u8; 32]).is_err());
     }
+
+    #[test]
+    fn test_is_complete() {
+        let mut round = LawSyncRound::new(10, 3);
+        assert!(!round.is_complete());
+
+        round.submit([1u8; 32], [10u8; 32]).unwrap();
+        assert!(!round.is_complete());
+
+        round.submit([2u8; 32], [10u8; 32]).unwrap();
+        assert!(!round.is_complete());
+
+        round.submit([3u8; 32], [10u8; 32]).unwrap();
+        assert!(round.is_complete());
+    }
 }

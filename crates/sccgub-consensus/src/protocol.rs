@@ -591,4 +591,92 @@ mod tests {
         let vote = signed_vote(outsider_id, &outsider_key, block, 1, 0, VoteType::Prevote);
         assert!(round.add_prevote(vote).is_err());
     }
+
+    #[test]
+    fn test_prevote_and_precommit_counts() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+
+        assert_eq!(round.prevote_count(), 0);
+        assert_eq!(round.precommit_count(), 0);
+
+        round
+            .add_prevote(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
+            .unwrap();
+        assert_eq!(round.prevote_count(), 1);
+        assert_eq!(round.precommit_count(), 0);
+
+        round
+            .add_precommit(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Precommit,
+            ))
+            .unwrap();
+        assert_eq!(round.prevote_count(), 1);
+        assert_eq!(round.precommit_count(), 1);
+    }
+
+    #[test]
+    fn test_detect_equivocation_empty_when_no_conflict() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+
+        for (id, key) in &keys {
+            round
+                .add_prevote(signed_vote(*id, key, block, 1, 0, VoteType::Prevote))
+                .unwrap();
+        }
+
+        let proofs = round.detect_equivocation();
+        assert!(
+            proofs.is_empty(),
+            "no equivocation expected with honest votes"
+        );
+    }
+
+    #[test]
+    fn test_detect_equivocation_finds_conflicting_prevotes() {
+        let block_a = [1u8; 32];
+        let block_b = [2u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block_a, 1, 0, vs);
+
+        // Validator 0 votes for block_a.
+        round
+            .add_prevote(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block_a,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
+            .unwrap();
+
+        // Manually inject a conflicting prevote for block_b from the same validator.
+        // (In production, add_prevote rejects duplicates; this simulates cross-round evidence.)
+        let conflicting = signed_vote(keys[0].0, &keys[0].1, block_b, 1, 0, VoteType::Prevote);
+        round.prevotes.insert([99u8; 32], conflicting);
+
+        let proofs = round.detect_equivocation();
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(proofs[0].validator_id, keys[0].0);
+        // HashMap iteration order is non-deterministic, so check both hashes are present.
+        let hashes = [proofs[0].block_hash_a, proofs[0].block_hash_b];
+        assert!(hashes.contains(&block_a));
+        assert!(hashes.contains(&block_b));
+    }
 }

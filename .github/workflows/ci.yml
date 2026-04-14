@@ -30,7 +30,7 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-repo-truth.ps1
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
   security:
     runs-on: ubuntu-latest
