@@ -1294,16 +1294,17 @@ impl Chain {
                     .distribute_reward(economics_outcome.actual_reward);
 
                 self.blocks.push(block);
+                let tip_idx = self.blocks.len() - 1;
                 self.maybe_sync_api_bridge(self.mempool.pending_snapshot());
 
                 // Apply governance transitions via shared method (single source of truth).
                 {
-                    let txs: Vec<_> = self.blocks.last().unwrap().body.transitions.clone();
+                    let txs: Vec<_> = self.blocks[tip_idx].body.transitions.clone();
                     self.replay_governance_transitions(&txs, height);
                 }
 
                 // N-7: Record governance actions for anti-concentration tracking.
-                for tx in &self.blocks.last().unwrap().body.transitions {
+                for tx in &self.blocks[tip_idx].body.transitions {
                     if matches!(
                         tx.intent.kind,
                         sccgub_types::transition::TransitionKind::GovernanceUpdate
@@ -1338,7 +1339,7 @@ impl Chain {
                 let mut events = sccgub_types::events::BlockEventLog::new();
 
                 // Emit events for each accepted transition.
-                for tx in &self.blocks.last().unwrap().body.transitions {
+                for tx in &self.blocks[tip_idx].body.transitions {
                     match &tx.payload {
                         sccgub_types::transition::OperationPayload::Write { key, .. } => {
                             events.emit(sccgub_types::events::ChainEvent::StateWrite {
@@ -1365,14 +1366,11 @@ impl Chain {
                 }
 
                 // Emit fee and reward events.
-                for ((tx, receipt), (payer, fee)) in self
-                    .blocks
-                    .last()
-                    .unwrap()
+                for ((tx, receipt), (payer, fee)) in self.blocks[tip_idx]
                     .body
                     .transitions
                     .iter()
-                    .zip(self.blocks.last().unwrap().receipts.iter())
+                    .zip(self.blocks[tip_idx].receipts.iter())
                     .zip(
                         economics_outcome
                             .tx_fee_payers
@@ -1416,7 +1414,7 @@ impl Chain {
 
                 // N-6: Responsibility tracking — record contributions
                 // for each accepted transition in this block.
-                for tx in &self.blocks.last().unwrap().body.transitions {
+                for tx in &self.blocks[tip_idx].body.transitions {
                     let agent_resp = self.responsibility.entry(tx.actor.agent_id).or_default();
                     sccgub_governance::responsibility::record_positive(
                         agent_resp,
@@ -1430,7 +1428,7 @@ impl Chain {
                     sccgub_governance::responsibility::apply_decay(resp, height);
                 }
 
-                Ok(self.blocks.last().unwrap())
+                Ok(&self.blocks[tip_idx])
             }
             CpogResult::Invalid { errors } => {
                 Err(format!("CPoG validation failed: {}", errors.join("; ")))

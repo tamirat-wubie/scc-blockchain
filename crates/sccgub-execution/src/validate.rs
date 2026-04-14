@@ -51,11 +51,16 @@ pub fn admit_check(tx: &SymbolicTransition, state: &ManagedWorldState) -> Result
         .get(&tx.actor.agent_id)
         .copied()
         .unwrap_or(0);
-    if tx.nonce != last_nonce + 1 {
+    let expected_nonce = last_nonce.checked_add(1).ok_or_else(|| {
+        format!(
+            "Nonce overflow: last nonce {} has no valid successor",
+            last_nonce
+        )
+    })?;
+    if tx.nonce != expected_nonce {
         return Err(format!(
             "Nonce sequence: expected {}, got {}",
-            last_nonce + 1,
-            tx.nonce
+            expected_nonce, tx.nonce
         ));
     }
 
@@ -196,11 +201,20 @@ pub fn validate_transition(
         .get(&tx.actor.agent_id)
         .copied()
         .unwrap_or(0);
-    if tx.nonce != last_nonce + 1 {
+    let expected_nonce = match last_nonce.checked_add(1) {
+        Some(n) => n,
+        None => {
+            errors.push(format!(
+                "Nonce overflow: last nonce {} has no valid successor",
+                last_nonce
+            ));
+            return Err(errors);
+        }
+    };
+    if tx.nonce != expected_nonce {
         errors.push(format!(
             "Nonce must be sequential: expected {}, got {}",
-            last_nonce + 1,
-            tx.nonce
+            expected_nonce, tx.nonce
         ));
     }
 

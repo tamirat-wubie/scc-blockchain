@@ -34,8 +34,8 @@ pub struct SafetyCertificate {
 impl SafetyCertificate {
     /// Verify that the certificate is structurally valid (quorum size, no duplicates).
     pub fn verify_structure(&self) -> Result<(), String> {
-        let expected_quorum = (2 * self.validator_count) / 3 + 1;
-        if self.quorum != expected_quorum {
+        let expected_quorum = (2u64 * self.validator_count as u64) / 3 + 1;
+        if self.quorum as u64 != expected_quorum {
             return Err(format!(
                 "Quorum mismatch: claimed {} but expected {} for n={}",
                 self.quorum, expected_quorum, self.validator_count
@@ -116,7 +116,7 @@ impl SafetyCertificate {
         precommits: &HashMap<Hash, crate::protocol::Vote>,
         validator_count: u32,
     ) -> Self {
-        let quorum = (2 * validator_count) / 3 + 1;
+        let quorum = ((2u64 * validator_count as u64) / 3 + 1) as u32;
         let precommit_signatures: Vec<(Hash, Vec<u8>)> = precommits
             .values()
             .filter(|v| v.block_hash == block_hash)
