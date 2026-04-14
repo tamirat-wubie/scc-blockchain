@@ -480,9 +480,14 @@ impl Chain {
         let mut finality = FinalityTracker::default();
         if let Some(last) = blocks.last() {
             finality.on_new_block(last.header.height);
-            finality.check_finality(&finality_config, |h| {
-                blocks.get(h as usize).map(|b| b.header.block_id)
-            });
+            if matches!(
+                state.state.governance_state.finality_mode,
+                FinalityMode::Deterministic
+            ) {
+                finality.check_finality(&finality_config, |h| {
+                    blocks.get(h as usize).map(|b| b.header.block_id)
+                });
+            }
         }
 
         Ok(Chain {
@@ -846,10 +851,15 @@ impl Chain {
 
         // Update finality tracker.
         self.finality.on_new_block(block.header.height);
-        let blocks_ref = &self.blocks;
-        self.finality.check_finality(&self.finality_config, |h| {
-            blocks_ref.get(h as usize).map(|b| b.header.block_id)
-        });
+        if matches!(
+            self.state.state.governance_state.finality_mode,
+            FinalityMode::Deterministic
+        ) {
+            let blocks_ref = &self.blocks;
+            self.finality.check_finality(&self.finality_config, |h| {
+                blocks_ref.get(h as usize).map(|b| b.header.block_id)
+            });
+        }
 
         // Record validator presence (resets absence counter).
         self.slashing.record_presence(&block.header.validator_id);
@@ -1424,10 +1434,15 @@ impl Chain {
 
                 // Update finality tracker.
                 self.finality.on_new_block(height);
-                let blocks_ref = &self.blocks;
-                let _new_finals = self.finality.check_finality(&self.finality_config, |h| {
-                    blocks_ref.get(h as usize).map(|b| b.header.block_id)
-                });
+                if matches!(
+                    self.state.state.governance_state.finality_mode,
+                    FinalityMode::Deterministic
+                ) {
+                    let blocks_ref = &self.blocks;
+                    let _new_finals = self.finality.check_finality(&self.finality_config, |h| {
+                        blocks_ref.get(h as usize).map(|b| b.header.block_id)
+                    });
+                }
 
                 // Record validator presence (resets absence counter).
                 self.slashing.record_presence(&validator_id_for_check);
