@@ -410,6 +410,9 @@ pub struct StateSnapshot {
     /// Finality config snapshot (for restart-safe parameters).
     #[serde(default)]
     pub finality_config: sccgub_consensus::finality::FinalityConfig,
+    /// In-flight governance proposals (E-3: survives restart via snapshot).
+    #[serde(default)]
+    pub proposals: Vec<sccgub_governance::proposals::GovernanceProposal>,
 }
 
 #[cfg(test)]

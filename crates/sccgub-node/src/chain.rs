@@ -1494,6 +1494,7 @@ impl Chain {
             validator_set: self.validator_set.clone(),
             governance_limits: self.governance_limits.clone(),
             finality_config: self.finality_config.clone(),
+            proposals: self.proposals.proposals.clone(),
         }
     }
 
@@ -1556,6 +1557,8 @@ impl Chain {
         self.validator_set = snapshot.validator_set.clone();
         self.governance_limits = snapshot.governance_limits.clone();
         self.finality_config = snapshot.finality_config.clone();
+        // E-3: Restore in-flight governance proposals from snapshot.
+        self.proposals.proposals = snapshot.proposals.clone();
     }
 
     pub fn restore_from_snapshot_with_store(
