@@ -258,4 +258,61 @@ mod tests {
         assert!(state.is_allowed(&node));
         assert_eq!(state.nodes[&node].containment, ContainmentLevel::None);
     }
+
+    #[test]
+    fn test_tick_block_decrements_quarantine() {
+        let mut state = ContainmentState::default();
+        let node = [1u8; 32];
+
+        state.nodes.insert(
+            node,
+            NodeBehaviorProfile {
+                node_id: node,
+                positive_delta: TensionValue::ZERO,
+                negative_delta: TensionValue::from_integer(100),
+                containment: ContainmentLevel::Quarantine {
+                    blocks_remaining: 2,
+                },
+                invalid_count: 50,
+                valid_count: 0,
+            },
+        );
+
+        assert!(!state.is_allowed(&node));
+
+        state.tick_block();
+        // blocks_remaining: 2 → 1, still quarantined.
+        assert!(!state.is_allowed(&node));
+
+        state.tick_block();
+        // blocks_remaining: 1 → 0, transitions to ReducedThroughput (allowed).
+        assert!(state.is_allowed(&node));
+        assert!(matches!(
+            state.nodes[&node].containment,
+            ContainmentLevel::ReducedThroughput { .. }
+        ));
+    }
+
+    #[test]
+    fn test_tick_block_decays_negative_delta() {
+        let mut state = ContainmentState::default();
+        let node = [1u8; 32];
+
+        state.nodes.insert(
+            node,
+            NodeBehaviorProfile {
+                node_id: node,
+                positive_delta: TensionValue::ZERO,
+                negative_delta: TensionValue::from_integer(100),
+                containment: ContainmentLevel::None,
+                invalid_count: 0,
+                valid_count: 0,
+            },
+        );
+
+        let before = state.nodes[&node].negative_delta;
+        state.tick_block();
+        let after = state.nodes[&node].negative_delta;
+        assert!(after < before, "tick_block should decay negative_delta");
+    }
 }

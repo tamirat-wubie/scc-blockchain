@@ -348,4 +348,17 @@ mod tests {
         concentrated.record_action(&[4u8; 32]);
         assert!(concentrated.concentration_score() > 0.8);
     }
+
+    #[test]
+    fn test_reset_epoch_clears_counters() {
+        let mut tracker = GovernancePowerTracker::default();
+        tracker.record_action(&[1u8; 32]);
+        tracker.record_action(&[2u8; 32]);
+        assert_eq!(tracker.total_actions_epoch, 2);
+        assert_eq!(tracker.actions_this_epoch.len(), 2);
+
+        tracker.reset_epoch();
+        assert_eq!(tracker.total_actions_epoch, 0);
+        assert!(tracker.actions_this_epoch.is_empty());
+    }
 }

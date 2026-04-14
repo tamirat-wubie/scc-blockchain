@@ -159,4 +159,33 @@ mod tests {
         let strict_max = TensionValue::from_integer(10);
         assert!(!check_responsibility_bound(&[&s1, &s2], strict_max));
     }
+
+    #[test]
+    fn test_apply_decay_reduces_values() {
+        let mut state = ResponsibilityState::default();
+        record_positive(&mut state, [1u8; 32], TensionValue::from_integer(100), 1);
+        record_negative(&mut state, [2u8; 32], TensionValue::from_integer(30), 1);
+
+        let initial_net = state.net_responsibility;
+        assert_eq!(initial_net, TensionValue::from_integer(70));
+
+        // Decay over 10 blocks.
+        apply_decay(&mut state, 11);
+
+        // Both contributions should have decayed, but net should still be positive.
+        assert!(state.positive_contributions[0].r_value < TensionValue::from_integer(100));
+        assert!(state.negative_contributions[0].r_value < TensionValue::from_integer(30));
+        // Block heights updated to prevent double-decay.
+        assert_eq!(state.positive_contributions[0].block_height, 11);
+    }
+
+    #[test]
+    fn test_apply_decay_prunes_near_zero() {
+        let mut state = ResponsibilityState::default();
+        record_positive(&mut state, [1u8; 32], TensionValue(1), 1); // Near-zero value.
+
+        // Decay over many blocks should prune the entry.
+        apply_decay(&mut state, 201);
+        assert!(state.positive_contributions.is_empty());
+    }
 }

@@ -122,4 +122,4 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 - 12 false positives dismissed with documented reasoning
 - Zero unwrap/expect in consensus-critical production code
 - All `.len() as u32` casts guarded with `.min(u32::MAX as usize)`
-- 661 tests, CI green on Linux + Windows + security audit
+- 675 tests, CI green on Linux + Windows + security audit

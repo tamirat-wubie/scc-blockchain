@@ -179,4 +179,45 @@ mod tests {
         let decision = evaluate_emergency(&tension, &gov, &policy);
         assert!(decision.is_emergency());
     }
+
+    #[test]
+    fn test_validate_valid_policy() {
+        let policy = EmergencyPolicy::default();
+        assert!(policy.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_activation_must_exceed_deactivation() {
+        let policy = EmergencyPolicy {
+            activation_threshold: TensionValue::from_integer(100),
+            deactivation_threshold: TensionValue::from_integer(200),
+            ..EmergencyPolicy::default()
+        };
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_zero_max_txs_rejected() {
+        let policy = EmergencyPolicy {
+            emergency_max_txs: 0,
+            ..EmergencyPolicy::default()
+        };
+        assert!(policy.validate().is_err());
+
+        let policy2 = EmergencyPolicy {
+            normal_max_txs: 0,
+            ..EmergencyPolicy::default()
+        };
+        assert!(policy2.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_normal_must_exceed_emergency() {
+        let policy = EmergencyPolicy {
+            emergency_max_txs: 100,
+            normal_max_txs: 50,
+            ..EmergencyPolicy::default()
+        };
+        assert!(policy.validate().is_err());
+    }
 }

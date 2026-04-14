@@ -278,4 +278,67 @@ mod tests {
             .check_action(&[1u8; 32], &b"agent/data/x".to_vec(), None)
             .is_err());
     }
+
+    #[test]
+    fn test_can_read_default_deny() {
+        let policy = test_policy();
+        // allowed_read_prefixes is empty → default-deny.
+        assert!(!policy.can_read(&b"agent/data/output".to_vec()));
+
+        let mut readable = test_policy();
+        readable.allowed_read_prefixes = vec![b"agent/data/".to_vec()];
+        assert!(readable.can_read(&b"agent/data/output".to_vec()));
+        assert!(!readable.can_read(&b"system/config".to_vec()));
+    }
+
+    #[test]
+    fn test_can_read_inactive_denied() {
+        let mut policy = test_policy();
+        policy.allowed_read_prefixes = vec![b"agent/data/".to_vec()];
+        policy.active = false;
+        assert!(!policy.can_read(&b"agent/data/output".to_vec()));
+    }
+
+    #[test]
+    fn test_registry_get() {
+        let mut registry = AgentPolicyRegistry::default();
+        assert!(registry.get(&[1u8; 32]).is_none());
+
+        registry.register(test_policy()).unwrap();
+        let policy = registry.get(&[1u8; 32]).unwrap();
+        assert_eq!(policy.agent_id, [1u8; 32]);
+    }
+
+    #[test]
+    fn test_check_action_count() {
+        let mut registry = AgentPolicyRegistry::default();
+        registry.register(test_policy()).unwrap();
+
+        // Under limit (max_actions_per_block = 10).
+        assert!(registry.check_action_count(&[1u8; 32], 5).is_ok());
+
+        // At limit.
+        assert!(registry.check_action_count(&[1u8; 32], 10).is_err());
+
+        // Over limit.
+        assert!(registry.check_action_count(&[1u8; 32], 15).is_err());
+
+        // Unknown agent (no policy) → allowed.
+        assert!(registry.check_action_count(&[99u8; 32], 100).is_ok());
+    }
+
+    #[test]
+    fn test_check_chain_depth() {
+        let mut registry = AgentPolicyRegistry::default();
+        registry.register(test_policy()).unwrap();
+
+        // Under limit (max_chain_depth = 5).
+        assert!(registry.check_chain_depth(&[1u8; 32], 3).is_ok());
+
+        // At limit.
+        assert!(registry.check_chain_depth(&[1u8; 32], 5).is_ok());
+
+        // Over limit.
+        assert!(registry.check_chain_depth(&[1u8; 32], 6).is_err());
+    }
 }
