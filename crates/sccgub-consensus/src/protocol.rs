@@ -98,7 +98,7 @@ impl ConsensusRound {
         validator_set: HashMap<Hash, [u8; 32]>,
         max_rounds: u32,
     ) -> Self {
-        let validator_count = validator_set.len() as u32;
+        let validator_count = validator_set.len().min(u32::MAX as usize) as u32;
         if validator_count > 0 && validator_count < 4 {
             tracing::warn!(
                 "Consensus round with {} validators provides no BFT fault tolerance (need >= 4)",
@@ -228,8 +228,8 @@ impl ConsensusRound {
         }
 
         // If we have enough votes total but not quorum on the block, move to next round.
-        let total_prevotes = self.prevotes.len() as u32;
-        let total_precommits = self.precommits.len() as u32;
+        let total_prevotes = self.prevotes.len().min(u32::MAX as usize) as u32;
+        let total_precommits = self.precommits.len().min(u32::MAX as usize) as u32;
 
         if total_prevotes >= self.validator_count && !self.has_prevote_quorum() {
             return ConsensusResult::NextRound {

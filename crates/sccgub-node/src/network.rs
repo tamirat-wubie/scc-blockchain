@@ -131,7 +131,7 @@ fn persisted_to_round_state(persisted: PersistedRoundState) -> RoundState {
     for vote in persisted.round.precommits {
         precommits.insert(vote.validator_id, vote);
     }
-    let validator_count = validator_set.len() as u32;
+    let validator_count = validator_set.len().min(u32::MAX as usize) as u32;
     RoundState {
         round: ConsensusRound {
             chain_id: persisted.round.chain_id,
@@ -1392,7 +1392,7 @@ impl NetworkRuntime {
         let finality_mode = chain.state.state.governance_state.finality_mode;
         drop(chain);
         let validator_set = self.validator_set.read().await;
-        let validator_count = validator_set.len() as u32;
+        let validator_count = validator_set.len().min(u32::MAX as usize) as u32;
         match finality_mode {
             FinalityMode::BftCertified { quorum_threshold } => {
                 let mut quorum = quorum_threshold.max(1);

@@ -41,7 +41,7 @@ impl SafetyCertificate {
                 self.quorum, expected_quorum, self.validator_count
             ));
         }
-        if (self.precommit_signatures.len() as u32) < self.quorum {
+        if (self.precommit_signatures.len().min(u32::MAX as usize) as u32) < self.quorum {
             return Err(format!(
                 "Insufficient signatures: {} < quorum {}",
                 self.precommit_signatures.len(),

@@ -91,7 +91,7 @@ impl LawSyncRound {
 
     /// Check if all validators have submitted.
     pub fn is_complete(&self) -> bool {
-        self.proposals.len() as u32 >= self.validator_count
+        self.proposals.len().min(u32::MAX as usize) as u32 >= self.validator_count
     }
 }
 

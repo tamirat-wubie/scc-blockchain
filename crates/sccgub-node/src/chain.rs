@@ -2015,7 +2015,12 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         state_hash: blake3_hash(&sccgub_crypto::canonical::canonical_bytes(
             &state.state.governance_state,
         )),
-        active_norm_count: state.state.governance_state.active_norms.len() as u32,
+        active_norm_count: state
+            .state
+            .governance_state
+            .active_norms
+            .len()
+            .min(u32::MAX as usize) as u32,
         emergency_mode: state.state.governance_state.emergency_mode,
         finality_mode: state.state.governance_state.finality_mode,
         governance_limits,
@@ -2109,7 +2114,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
     let signing_hash = block_signing_payload(&header, &proof);
     proof.validator_signature = sign(validator_key, &signing_hash);
 
-    let transition_count = transitions.len() as u32;
+    let transition_count = transitions.len().min(u32::MAX as usize) as u32;
     Block {
         header,
         body: BlockBody {

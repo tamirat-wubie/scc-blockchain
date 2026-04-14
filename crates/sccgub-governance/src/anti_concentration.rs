@@ -180,7 +180,7 @@ impl GovernancePowerTracker {
             PrecedenceLevel::Safety => limits.safety_change_min_signers,
             _ => 1,
         };
-        if (unique.len() as u32) < required {
+        if (unique.len().min(u32::MAX as usize) as u32) < required {
             return Err(format!(
                 "{:?}-level change requires {} distinct signers, got {}",
                 level,
