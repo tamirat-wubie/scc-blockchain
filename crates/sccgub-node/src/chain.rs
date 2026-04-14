@@ -4142,4 +4142,105 @@ mod tests {
             "Replayed chain must have identical balance supply"
         );
     }
+
+    #[test]
+    fn test_batch_nonce_multiple_txs_per_block() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::BTreeSet;
+
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain
+            .mempool
+            .containment
+            .hostility_threshold = sccgub_types::tension::TensionValue::from_integer(1_000_000);
+
+        let actor_key = chain.validator_key.clone();
+        let actor_pk = *actor_key.verifying_key().as_bytes();
+        let actor_id = sccgub_state::apply::validator_spend_account(chain.block_version, &actor_pk);
+
+        // Submit 5 transactions with sequential nonces (1..=5) before producing a block.
+        let tx_count = 5u128;
+        for nonce in 1..=tx_count {
+            let target = format!("data/batch/{}", nonce).into_bytes();
+            let mut tx = SymbolicTransition {
+                tx_id: [0u8; 32],
+                actor: AgentIdentity {
+                    agent_id: actor_id,
+                    public_key: actor_pk,
+                    mfidel_seal: MfidelAtomicSeal::from_height(0),
+                    registration_block: 0,
+                    governance_level: PrecedenceLevel::Meaning,
+                    norm_set: BTreeSet::new(),
+                    responsibility: ResponsibilityState::default(),
+                },
+                intent: TransitionIntent {
+                    kind: TransitionKind::StateWrite,
+                    target: target.clone(),
+                    declared_purpose: format!("batch nonce test #{}", nonce),
+                },
+                preconditions: vec![],
+                postconditions: vec![],
+                payload: OperationPayload::Write {
+                    key: target.clone(),
+                    value: format!("val_{}", nonce).into_bytes(),
+                },
+                causal_chain: vec![],
+                wh_binding_intent: WHBindingIntent {
+                    who: actor_id,
+                    when: CausalTimestamp::genesis(),
+                    r#where: target,
+                    why: CausalJustification {
+                        invoking_rule: [1u8; 32],
+                        precedence_level: PrecedenceLevel::Meaning,
+                        causal_ancestors: vec![],
+                        constraint_proof: vec![],
+                    },
+                    how: TransitionMechanism::DirectStateWrite,
+                    which: BTreeSet::new(),
+                    what_declared: format!("batch nonce test #{}", nonce),
+                },
+                nonce,
+                signature: vec![],
+            };
+
+            let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+            tx.tx_id = blake3_hash(&canonical);
+            tx.signature = sccgub_crypto::signature::sign(&actor_key, &canonical);
+
+            chain
+                .submit_transition(tx)
+                .unwrap_or_else(|e| panic!("submit nonce {} failed: {}", nonce, e));
+        }
+
+        // All 5 txs should be included in a single block.
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed")
+            .clone();
+
+        assert_eq!(
+            block.body.transitions.len(),
+            tx_count as usize,
+            "All {} txs with sequential nonces must be included in one block (got {})",
+            tx_count,
+            block.body.transitions.len()
+        );
+        assert_eq!(
+            block.receipts.len(),
+            tx_count as usize,
+            "Each included tx must have a receipt"
+        );
+        for receipt in &block.receipts {
+            assert!(
+                receipt.verdict.is_accepted(),
+                "All batch txs should be accepted, got: {:?}",
+                receipt.verdict
+            );
+        }
+    }
 }

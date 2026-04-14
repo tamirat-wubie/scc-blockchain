@@ -233,6 +233,52 @@ fn main() {
             count as f64 / elapsed.as_secs_f64(),
         );
     }
+
+
+    // 4c. Batched blocks: submit N txs from one agent, produce 1 block.
+    //     Tests multi-tx block packing (requires batch nonce fix).
+    let batch_sizes = [10, 50, 100];
+    for &batch in &batch_sizes {
+        let mut chain3 = Chain::init();
+        chain3.governance_limits.max_consecutive_proposals = 10_000;
+        chain3.mempool.containment.hostility_threshold = TensionValue::from_integer(1_000_000);
+
+        let key3 = chain3.validator_key.clone();
+        let pk3 = *key3.verifying_key().as_bytes();
+        let agent_id3 = sccgub_state::apply::validator_spend_account(chain3.block_version, &pk3);
+        let agent3 = AgentIdentity {
+            agent_id: agent_id3,
+            public_key: pk3,
+            mfidel_seal: MfidelAtomicSeal::from_height(0),
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: BTreeSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        for i in 1..=batch {
+            let tx = create_bench_tx(&agent3, &key3, i as u128);
+            chain3
+                .submit_transition(tx)
+                .unwrap_or_else(|e| panic!("submit #{} failed: {}", i, e));
+        }
+
+        let start = Instant::now();
+        let block = chain3
+            .produce_block()
+            .unwrap_or_else(|e| panic!("batch block failed: {}", e))
+            .clone();
+        let elapsed = start.elapsed();
+
+        let included = block.body.transitions.len();
+        println!(
+            "Batch block {:>5} txs, {:>5} included: {:>8.2?}  ({:>8.0} tx/s effective)",
+            batch,
+            included,
+            elapsed,
+            included as f64 / elapsed.as_secs_f64(),
+        );
+    }
     println!();
 
     // ---------------------------------------------------------------
