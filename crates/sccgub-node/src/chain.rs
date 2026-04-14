@@ -886,7 +886,7 @@ impl Chain {
             if let sccgub_types::transition::OperationPayload::ProposeNorm { name, description } =
                 &tx.payload
             {
-                let _ = self.proposals.submit(
+                if let Err(e) = self.proposals.submit(
                     tx.actor.agent_id,
                     tx.actor.governance_level,
                     sccgub_governance::proposals::ProposalKind::AddNorm {
@@ -897,7 +897,9 @@ impl Chain {
                     },
                     height,
                     5,
-                );
+                ) {
+                    tracing::warn!("Proposal submit failed: {}", e);
+                }
             }
             if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
                 if let sccgub_types::transition::OperationPayload::Write { key, value } =
@@ -906,7 +908,7 @@ impl Chain {
                     if key.starts_with(b"norms/governance/params/propose") {
                         if let Some((param_key, param_value)) = parse_governance_param_write(value)
                         {
-                            let _ = self.proposals.submit(
+                            if let Err(e) = self.proposals.submit(
                                 tx.actor.agent_id,
                                 tx.actor.governance_level,
                                 sccgub_governance::proposals::ProposalKind::ModifyParameter {
@@ -915,20 +917,24 @@ impl Chain {
                                 },
                                 height,
                                 5,
-                            );
+                            ) {
+                                tracing::warn!("Parameter proposal failed: {}", e);
+                            }
                         }
                     }
                     if key.starts_with(b"governance/proposals/")
                         || key.starts_with(b"norms/governance/proposals/")
                     {
                         if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
-                            let _ = self.proposals.vote(
+                            if let Err(e) = self.proposals.vote(
                                 &proposal_id,
                                 tx.actor.agent_id,
                                 tx.actor.governance_level,
                                 true,
                                 height,
-                            );
+                            ) {
+                                tracing::warn!("Proposal vote failed: {}", e);
+                            }
                         }
                     }
                 }
