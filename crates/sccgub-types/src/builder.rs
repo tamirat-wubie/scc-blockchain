@@ -2,7 +2,7 @@ use crate::governance::PrecedenceLevel;
 use crate::timestamp::CausalTimestamp;
 use crate::transition::*;
 use crate::{Hash, SymbolAddress};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 /// SimpleTransaction builder — reduces semantic burden for developers.
 /// Wraps the full WHBinding + TransitionIntent + OperationPayload complexity
@@ -91,7 +91,7 @@ impl SimpleTransaction {
             mfidel_seal: seal,
             registration_block: 0,
             governance_level: self.precedence,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: crate::agent::ResponsibilityState::default(),
         };
 
@@ -112,7 +112,7 @@ impl SimpleTransaction {
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: self.purpose.clone(),
         };
 

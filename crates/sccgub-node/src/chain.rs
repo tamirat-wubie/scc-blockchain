@@ -2472,7 +2472,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -2491,7 +2491,7 @@ mod tests {
                 mfidel_seal: actor_seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -2517,7 +2517,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "economics replay test".into(),
             },
             nonce: 1,
@@ -2580,7 +2580,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
         use std::path::PathBuf;
         use std::sync::Arc;
 
@@ -2618,7 +2618,7 @@ mod tests {
                 mfidel_seal: actor_seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -2644,7 +2644,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "state store bind test".into(),
             },
             nonce: 1,
@@ -2682,7 +2682,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
         use std::path::PathBuf;
         use std::sync::Arc;
 
@@ -2721,7 +2721,7 @@ mod tests {
                     mfidel_seal: actor_seal.clone(),
                     registration_block: 0,
                     governance_level: PrecedenceLevel::Meaning,
-                    norm_set: HashSet::new(),
+                    norm_set: BTreeSet::new(),
                     responsibility: ResponsibilityState::default(),
                 },
                 intent: TransitionIntent {
@@ -2747,7 +2747,7 @@ mod tests {
                         constraint_proof: vec![],
                     },
                     how: TransitionMechanism::DirectStateWrite,
-                    which: HashSet::new(),
+                    which: BTreeSet::new(),
                     what_declared: "state store snapshot test".into(),
                 },
                 nonce: (idx + 1) as u128,
@@ -2835,7 +2835,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init_with_version(sccgub_types::block::LEGACY_BLOCK_VERSION);
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -2864,7 +2864,7 @@ mod tests {
                 mfidel_seal: sender_seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -2891,7 +2891,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "compat transfer".into(),
             },
             nonce: 1,
@@ -3064,7 +3064,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -3085,7 +3085,7 @@ mod tests {
             mfidel_seal: seal,
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
 
@@ -3116,7 +3116,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "SCCE e2e test".into(),
             },
             nonce: 1,
@@ -3397,7 +3397,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 300;
@@ -3411,7 +3411,7 @@ mod tests {
             mfidel_seal: seal,
             registration_block: 0,
             governance_level: PrecedenceLevel::Safety,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
 
@@ -3443,7 +3443,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "Propose finality depth update".into(),
             },
             nonce: 1,
@@ -3505,7 +3505,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "Vote for governance proposal".into(),
             },
             nonce: 2,
@@ -3570,7 +3570,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -3591,7 +3591,7 @@ mod tests {
                 mfidel_seal: seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -3618,7 +3618,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "Phase 8 e2e test".into(),
             },
             nonce: 1,
@@ -3683,7 +3683,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -3698,7 +3698,7 @@ mod tests {
             mfidel_seal: seal,
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
 
@@ -3729,7 +3729,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "N-9 test".into(),
             },
             nonce: 1,
@@ -3921,7 +3921,7 @@ mod tests {
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::timestamp::CausalTimestamp;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -3939,7 +3939,7 @@ mod tests {
                 mfidel_seal: seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -3965,7 +3965,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "replay test".into(),
             },
             nonce: 1,

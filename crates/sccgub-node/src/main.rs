@@ -11,7 +11,7 @@ mod network;
 mod observability;
 mod persistence;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -500,7 +500,7 @@ fn cmd_produce(
         mfidel_seal: seal,
         registration_block: chain.height(),
         governance_level: PrecedenceLevel::Meaning,
-        norm_set: HashSet::new(),
+        norm_set: BTreeSet::new(),
         responsibility: ResponsibilityState::default(),
     };
 
@@ -1088,7 +1088,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
         mfidel_seal: sender_seal,
         registration_block: 0,
         governance_level: PrecedenceLevel::Meaning,
-        norm_set: HashSet::new(),
+        norm_set: BTreeSet::new(),
         responsibility: ResponsibilityState::default(),
     };
 
@@ -1123,7 +1123,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
             constraint_proof: vec![],
         },
         how: TransitionMechanism::DirectStateWrite,
-        which: HashSet::new(),
+        which: BTreeSet::new(),
         what_declared: format!("Transfer {} tokens", amount),
     };
 
@@ -1673,7 +1673,7 @@ fn cmd_demo() {
         mfidel_seal: seal,
         registration_block: 0,
         governance_level: PrecedenceLevel::Meaning,
-        norm_set: HashSet::new(),
+        norm_set: BTreeSet::new(),
         responsibility: ResponsibilityState::default(),
     };
 
@@ -1976,7 +1976,7 @@ fn cmd_governed_propose(data_dir: &std::path::Path, passphrase: &str, key: &str,
             mfidel_seal: MfidelAtomicSeal::from_height(0),
             registration_block: 0,
             governance_level: PrecedenceLevel::Safety,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         },
         intent: TransitionIntent {
@@ -2002,7 +2002,7 @@ fn cmd_governed_propose(data_dir: &std::path::Path, passphrase: &str, key: &str,
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "governed parameter proposal".into(),
         },
         nonce,
@@ -2061,7 +2061,7 @@ fn cmd_governed_vote(data_dir: &std::path::Path, passphrase: &str, proposal_id: 
             mfidel_seal: MfidelAtomicSeal::from_height(0),
             registration_block: 0,
             governance_level: PrecedenceLevel::Safety,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         },
         intent: TransitionIntent {
@@ -2087,7 +2087,7 @@ fn cmd_governed_vote(data_dir: &std::path::Path, passphrase: &str, proposal_id: 
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "governance proposal vote".into(),
         },
         nonce,
@@ -2228,7 +2228,7 @@ fn create_test_transition(
             constraint_proof: vec![],
         },
         how: TransitionMechanism::DirectStateWrite,
-        which: HashSet::new(),
+        which: BTreeSet::new(),
         what_declared: format!("Write entry #{}", index),
     };
 

@@ -2,6 +2,7 @@ use sccgub_types::agent::AgentIdentity;
 use sccgub_types::governance::PrecedenceLevel;
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::AgentId;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 /// Minimum registration cost in tension units (sybil resistance).
@@ -60,7 +61,7 @@ impl AgentRegistry {
             mfidel_seal,
             registration_block: block_height,
             governance_level,
-            norm_set: std::collections::HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: sccgub_types::agent::ResponsibilityState::default(),
         };
 

@@ -685,7 +685,7 @@ mod tests {
                         constraint_proof: vec![],
                     },
                     how: sccgub_types::transition::TransitionMechanism::DirectStateWrite,
-                    which: std::collections::HashSet::new(),
+                    which: std::collections::BTreeSet::new(),
                     what_declared: String::new(),
                 },
                 what_actual: sccgub_types::transition::StateDelta::default(),
@@ -743,7 +743,7 @@ mod tests {
         use sccgub_types::governance::PrecedenceLevel;
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let state = ManagedWorldState::new();
         let tx = SymbolicTransition {
@@ -754,7 +754,7 @@ mod tests {
                 mfidel_seal: MfidelAtomicSeal::from_height(0),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -780,7 +780,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce: 1,
@@ -807,7 +807,7 @@ mod tests {
         use sccgub_types::governance::PrecedenceLevel;
         use sccgub_types::mfidel::MfidelAtomicSeal;
         use sccgub_types::transition::*;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
         let state = ManagedWorldState::with_consensus_params(ConsensusParams {
             max_constraint_propagation_steps: 0,
@@ -821,7 +821,7 @@ mod tests {
                 mfidel_seal: MfidelAtomicSeal::from_height(0),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -847,7 +847,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce: 1,

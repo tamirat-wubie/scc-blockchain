@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use crate::agent::AgentIdentity;
 use crate::contract::SymbolicCausalContract;
@@ -15,7 +15,7 @@ pub struct WorldState {
     /// Agent registry.
     pub agent_registry: HashMap<AgentId, AgentIdentity>,
     /// Active constraints.
-    pub constraint_set: HashSet<ConstraintId>,
+    pub constraint_set: BTreeSet<ConstraintId>,
     /// Tension field.
     pub tension_field: TensionField,
     /// Governance state.
@@ -36,7 +36,7 @@ pub struct SymbolState {
     pub data: Vec<u8>,
     pub owner: AgentId,
     pub version: u64,
-    pub constraints: HashSet<ConstraintId>,
+    pub constraints: BTreeSet<ConstraintId>,
     pub causal_history: VecDeque<Hash>,
 }
 
@@ -57,7 +57,7 @@ impl SymbolState {
             data,
             owner,
             version: 1,
-            constraints: HashSet::new(),
+            constraints: BTreeSet::new(),
             causal_history: VecDeque::new(),
         }
     }

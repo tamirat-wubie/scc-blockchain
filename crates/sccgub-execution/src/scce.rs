@@ -1,6 +1,7 @@
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::SymbolicTransition;
+use std::collections::BTreeSet;
 
 /// Symbolic Constraint Cognition Engine (SCCE) — validates transitions
 /// through constraint propagation on the symbol mesh.
@@ -378,7 +379,7 @@ mod tests {
     use super::*;
     use sccgub_types::agent::AgentIdentity;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     fn test_transition(kind: TransitionKind, target: &[u8]) -> SymbolicTransition {
         SymbolicTransition {
@@ -389,7 +390,7 @@ mod tests {
                 mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: sccgub_types::agent::ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -412,7 +413,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce: 0,

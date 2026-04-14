@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -34,7 +35,7 @@ fn create_bench_tx(
             constraint_proof: vec![],
         },
         how: TransitionMechanism::DirectStateWrite,
-        which: HashSet::new(),
+        which: BTreeSet::new(),
         what_declared: format!("Bench write #{}", nonce),
     };
 
@@ -75,7 +76,7 @@ fn main() {
         mfidel_seal: seal,
         registration_block: 0,
         governance_level: PrecedenceLevel::Meaning,
-        norm_set: HashSet::new(),
+        norm_set: BTreeSet::new(),
         responsibility: ResponsibilityState::default(),
     };
 

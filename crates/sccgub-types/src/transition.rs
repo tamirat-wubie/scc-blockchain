@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::agent::AgentIdentity;
 use crate::governance::PrecedenceLevel;
@@ -68,7 +68,7 @@ pub struct WHBindingIntent {
     /// Execution path.
     pub how: TransitionMechanism,
     /// Which rules apply.
-    pub which: HashSet<ConstraintId>,
+    pub which: BTreeSet<ConstraintId>,
     /// Declared intent (not actual delta — that comes after execution).
     pub what_declared: String,
 }
@@ -197,7 +197,7 @@ mod tests {
     use super::*;
     use crate::governance::PrecedenceLevel;
     use crate::timestamp::CausalTimestamp;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     fn valid_wh_intent() -> WHBindingIntent {
         WHBindingIntent {
@@ -211,7 +211,7 @@ mod tests {
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "test operation".into(),
         }
     }

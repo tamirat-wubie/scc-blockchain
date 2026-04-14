@@ -183,6 +183,7 @@ mod tests {
     };
     use sccgub_types::ZERO_HASH;
     use serde_json::Value;
+    use std::collections::BTreeSet;
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -231,7 +232,7 @@ mod tests {
             mfidel_seal,
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
 
@@ -262,7 +263,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "API contract test write".into(),
             },
             nonce: 1,
@@ -409,7 +410,7 @@ mod tests {
             votes_against: 1,
             required_level: PrecedenceLevel::Meaning,
             voting_deadline: 20,
-            voters: HashSet::new(),
+            voters: BTreeSet::new(),
             timelock_until: 0,
         };
         let proposal_b = sccgub_governance::proposals::GovernanceProposal {
@@ -422,7 +423,7 @@ mod tests {
             votes_against: 3,
             required_level: PrecedenceLevel::Safety,
             voting_deadline: 18,
-            voters: HashSet::new(),
+            voters: BTreeSet::new(),
             timelock_until: 0,
         };
 

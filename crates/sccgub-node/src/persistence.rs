@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -645,7 +646,7 @@ mod tests {
                 mfidel_seal: actor_seal.clone(),
                 registration_block: 0,
                 governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
-                norm_set: std::collections::HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: sccgub_types::agent::ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -671,7 +672,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::GovernanceAction,
-                which: std::collections::HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "persisted norm proposal".into(),
             },
             nonce: 1,
@@ -713,7 +714,7 @@ mod tests {
                 mfidel_seal: actor_seal.clone(),
                 registration_block: 0,
                 governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
-                norm_set: std::collections::HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: sccgub_types::agent::ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -739,7 +740,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: std::collections::HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "vote for norm proposal".into(),
             },
             nonce: 2,
@@ -823,7 +824,7 @@ mod tests {
                 mfidel_seal: actor_seal.clone(),
                 registration_block: 0,
                 governance_level: sccgub_types::governance::PrecedenceLevel::Safety,
-                norm_set: std::collections::HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: sccgub_types::agent::ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -849,7 +850,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: std::collections::HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "propose finality update".into(),
             },
             nonce: 1,
@@ -890,7 +891,7 @@ mod tests {
                 mfidel_seal: actor_seal.clone(),
                 registration_block: 0,
                 governance_level: sccgub_types::governance::PrecedenceLevel::Safety,
-                norm_set: std::collections::HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: sccgub_types::agent::ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -916,7 +917,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: std::collections::HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "vote for param proposal".into(),
             },
             nonce: 2,

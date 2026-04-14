@@ -4,6 +4,7 @@
 //! Covers: Byzantine votes, double-signing, partition recovery,
 //! validator churn, replay determinism, and conservation invariants.
 
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use sccgub_consensus::finality::{FinalityConfig, FinalityTracker};
@@ -853,7 +854,6 @@ fn test_metered_validation_rejects_invalid_tx() {
     use sccgub_types::mfidel::MfidelAtomicSeal;
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
 
     let state = ManagedWorldState::new();
 
@@ -866,7 +866,7 @@ fn test_metered_validation_rejects_invalid_tx() {
             mfidel_seal: MfidelAtomicSeal::from_height(1),
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         },
         intent: TransitionIntent {
@@ -892,7 +892,7 @@ fn test_metered_validation_rejects_invalid_tx() {
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "test".into(),
         },
         nonce: 1,

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::governance::PrecedenceLevel;
 use crate::mfidel::MfidelAtomicSeal;
@@ -20,7 +20,7 @@ pub struct AgentIdentity {
     /// Governance level of this agent.
     pub governance_level: PrecedenceLevel,
     /// Set of norms this agent is bound by.
-    pub norm_set: HashSet<NormId>,
+    pub norm_set: BTreeSet<NormId>,
     /// Responsibility state (causal gradient, not reputation score).
     pub responsibility: ResponsibilityState,
 }
@@ -109,7 +109,7 @@ mod tests {
             mfidel_seal: MfidelAtomicSeal::from_height(0),
             registration_block: 100,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
         let json = serde_json::to_string(&agent).unwrap();

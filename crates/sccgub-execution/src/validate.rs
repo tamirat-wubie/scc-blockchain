@@ -7,6 +7,7 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{
     StateDelta, SymbolicTransition, ValidationResult, WHBindingResolved,
 };
+use std::collections::BTreeSet;
 
 /// Sentinel value for an unsealed receipt (post_state_root not yet committed).
 /// Any receipt with this root is NOT final and must be sealed before inclusion.
@@ -428,7 +429,7 @@ mod tests {
     use sccgub_types::mfidel::MfidelAtomicSeal;
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     fn make_signed_tx() -> SymbolicTransition {
         let key = generate_keypair();
@@ -444,7 +445,7 @@ mod tests {
             mfidel_seal: seal,
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         };
 
@@ -466,7 +467,7 @@ mod tests {
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "test write".into(),
         };
 
@@ -611,7 +612,7 @@ mod tests {
                 mfidel_seal: seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -638,7 +639,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "compat transfer".into(),
             },
             nonce: 1,
@@ -676,7 +677,7 @@ mod tests {
                 mfidel_seal: seal,
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -703,7 +704,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "unauthorized transfer".into(),
             },
             nonce: 1,

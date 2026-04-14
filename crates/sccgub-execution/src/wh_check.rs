@@ -107,7 +107,7 @@ pub fn check_transition_wh(tx: &SymbolicTransition) -> Result<(), String> {
     // `preconditions ∪ postconditions` is the set of constraints actually carried.
     // Strict equality: every declared constraint must be carried, and every carried
     // constraint must be declared. Subset would allow undeclared constraints to slip in.
-    let carried: std::collections::HashSet<sccgub_types::ConstraintId> = tx
+    let carried: std::collections::BTreeSet<sccgub_types::ConstraintId> = tx
         .preconditions
         .iter()
         .chain(tx.postconditions.iter())
@@ -134,7 +134,7 @@ mod tests {
     use sccgub_types::mfidel::MfidelAtomicSeal;
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     fn valid_agent() -> AgentIdentity {
         AgentIdentity {
@@ -143,7 +143,7 @@ mod tests {
             mfidel_seal: MfidelAtomicSeal::from_height(1),
             registration_block: 0,
             governance_level: PrecedenceLevel::Meaning,
-            norm_set: HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: ResponsibilityState::default(),
         }
     }
@@ -160,7 +160,7 @@ mod tests {
                 constraint_proof: vec![],
             },
             how: TransitionMechanism::DirectStateWrite,
-            which: HashSet::new(),
+            which: BTreeSet::new(),
             what_declared: "Write data to state".into(),
         }
     }

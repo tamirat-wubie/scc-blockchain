@@ -2281,6 +2281,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_block_proposal_rejects_mismatched_proposer_id() {
+        let key1 = generate_keypair();
+        let key2 = generate_keypair();
+        let pk1 = *key1.verifying_key().as_bytes();
+        let pk2 = *key2.verifying_key().as_bytes();
+
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk1), hex::encode(pk2)];
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key1.clone();
+            guard.set_validator_set(validators);
+        }
+
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        let block = {
+            chain
+                .read()
+                .await
+                .build_candidate_block_unchecked()
+                .unwrap()
+        };
+        let proposal = signed_block_proposal(
+            &key2,
+            BlockProposalMessage {
+                proposer_id: pk2,
+                block,
+                round: 0,
+                signature: Vec::new(),
+            },
+        );
+
+        let err = runtime.handle_block_proposal(proposal).await.unwrap_err();
+        assert!(
+            err.contains("proposer_id mismatch"),
+            "Expected proposer_id mismatch rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
     async fn test_collect_broadcast_targets_filters_non_validators() {
         let chain = Arc::new(RwLock::new(Chain::init()));
         let local_pk = {

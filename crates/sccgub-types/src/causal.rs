@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::tension::TensionValue;
 use crate::{AgentId, Hash, MerkleRoot, NormId, ObjectId, TransitionId};
@@ -7,7 +7,7 @@ use crate::{AgentId, Hash, MerkleRoot, NormId, ObjectId, TransitionId};
 /// Typed causal graph — DAG with typed edges per v2.0 spec.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CausalGraph {
-    pub vertices: HashSet<CausalVertex>,
+    pub vertices: BTreeSet<CausalVertex>,
     pub edges: Vec<CausalEdge>,
 }
 
@@ -30,7 +30,7 @@ impl CausalGraph {
         // Build adjacency list.
         let mut adj: HashMap<CausalVertex, Vec<CausalVertex>> = HashMap::new();
         // Collect ALL vertices: both declared and referenced in edges.
-        let mut all_vertices: HashSet<CausalVertex> = self.vertices.clone();
+        let mut all_vertices: BTreeSet<CausalVertex> = self.vertices.clone();
         for edge in &self.edges {
             let (src, tgt) = edge.endpoints();
             all_vertices.insert(src.clone());
@@ -85,7 +85,7 @@ impl CausalGraph {
 }
 
 /// Vertex types in the causal graph.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum CausalVertex {
     Transition(TransitionId),
     Receipt(Hash),

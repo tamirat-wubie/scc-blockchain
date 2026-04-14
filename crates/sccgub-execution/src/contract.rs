@@ -3,6 +3,7 @@ use sccgub_types::contract::SymbolicCausalContract;
 use sccgub_types::receipt::Verdict;
 use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::{StateDelta, StateWrite, SymbolicTransition};
+use std::collections::BTreeSet;
 
 pub fn default_max_steps_for_state(state: &ManagedWorldState) -> u64 {
     state.consensus_params.default_max_steps
@@ -267,7 +268,7 @@ mod tests {
             mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
             registration_block: 0,
             governance_level: level,
-            norm_set: std::collections::HashSet::new(),
+            norm_set: BTreeSet::new(),
             responsibility: sccgub_types::agent::ResponsibilityState::default(),
         }
     }
@@ -304,7 +305,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: sccgub_types::transition::TransitionMechanism::DirectStateWrite,
-                which: std::collections::HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce: 0,

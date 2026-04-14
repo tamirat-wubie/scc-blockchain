@@ -142,7 +142,7 @@ mod tests {
     use sccgub_types::mfidel::MfidelAtomicSeal;
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     fn test_tx(agent_id: [u8; 32], nonce: u128) -> SymbolicTransition {
         SymbolicTransition {
@@ -158,7 +158,7 @@ mod tests {
                 mfidel_seal: MfidelAtomicSeal::from_height(1),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -181,7 +181,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce,

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::tension::TensionValue;
 use crate::{AgentId, ConstraintId, Hash, NormId, RuleId};
@@ -39,8 +39,8 @@ impl PrecedenceLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceState {
     pub active_norms: HashMap<NormId, Norm>,
-    pub constraint_catalog: HashSet<ConstraintId>,
-    pub rule_catalog: HashSet<RuleId>,
+    pub constraint_catalog: BTreeSet<ConstraintId>,
+    pub rule_catalog: BTreeSet<RuleId>,
     pub authority_map: HashMap<AgentId, AuthorityLevel>,
     pub emergency_mode: bool,
     pub finality_mode: FinalityMode,
@@ -50,8 +50,8 @@ impl Default for GovernanceState {
     fn default() -> Self {
         Self {
             active_norms: HashMap::new(),
-            constraint_catalog: HashSet::new(),
-            rule_catalog: HashSet::new(),
+            constraint_catalog: BTreeSet::new(),
+            rule_catalog: BTreeSet::new(),
             authority_map: HashMap::new(),
             emergency_mode: false,
             finality_mode: FinalityMode::Deterministic,

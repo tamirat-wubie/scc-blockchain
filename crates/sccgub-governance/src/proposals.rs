@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use sccgub_types::governance::{Norm, PrecedenceLevel};
 use sccgub_types::tension::TensionValue;
@@ -25,7 +25,7 @@ pub struct GovernanceProposal {
     /// Block height at which voting closes.
     pub voting_deadline: u64,
     /// Set of agents who have already voted (prevents duplicate voting).
-    pub voters: HashSet<AgentId>,
+    pub voters: BTreeSet<AgentId>,
     /// Block height at which the timelock expires (activation becomes possible).
     /// Set when proposal is accepted. Activation before this height is rejected.
     pub timelock_until: u64,
@@ -155,7 +155,7 @@ impl ProposalRegistry {
             votes_against: 0,
             required_level: required,
             voting_deadline: current_height + voting_period,
-            voters: HashSet::new(),
+            voters: BTreeSet::new(),
             timelock_until: 0, // Set when accepted.
         });
         self.index.insert(id, self.proposals.len() - 1);

@@ -403,7 +403,7 @@ mod tests {
     use sccgub_types::receipt::{CausalReceipt, ResourceUsage, Verdict};
     use sccgub_types::timestamp::CausalTimestamp;
     use sccgub_types::transition::*;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     fn make_write_tx(key: &[u8], value: &[u8], nonce: u128) -> SymbolicTransition {
         let mut tx_id = [0u8; 32];
@@ -418,7 +418,7 @@ mod tests {
                 mfidel_seal: MfidelAtomicSeal::from_height(0),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -444,7 +444,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce,
@@ -470,7 +470,7 @@ mod tests {
                 mfidel_seal: MfidelAtomicSeal::from_height(0),
                 registration_block: 0,
                 governance_level: PrecedenceLevel::Meaning,
-                norm_set: HashSet::new(),
+                norm_set: BTreeSet::new(),
                 responsibility: ResponsibilityState::default(),
             },
             intent: TransitionIntent {
@@ -493,7 +493,7 @@ mod tests {
                     constraint_proof: vec![],
                 },
                 how: TransitionMechanism::DirectStateWrite,
-                which: HashSet::new(),
+                which: BTreeSet::new(),
                 what_declared: "test".into(),
             },
             nonce,
