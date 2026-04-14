@@ -362,125 +362,16 @@ impl Chain {
             state.set_height(block.header.height);
 
             // Apply governance activations during replay (restart-safe).
-            for tx in &block.body.transitions {
-                if let sccgub_types::transition::OperationPayload::ProposeNorm {
-                    name,
-                    description,
-                } = &tx.payload
-                {
-                    if let Err(e) = proposals.submit(
-                        tx.actor.agent_id,
-                        tx.actor.governance_level,
-                        sccgub_governance::proposals::ProposalKind::AddNorm {
-                            name: name.clone(),
-                            description: description.clone(),
-                            initial_fitness: sccgub_types::tension::TensionValue::from_integer(5),
-                            enforcement_cost: sccgub_types::tension::TensionValue::from_integer(1),
-                        },
-                        block.header.height,
-                        5,
-                    ) {
-                        tracing::warn!("Replay proposal submit failed: {}", e);
-                    }
-                }
-                if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
-                    if let sccgub_types::transition::OperationPayload::Write { key, value } =
-                        &tx.payload
-                    {
-                        if key.starts_with(b"norms/governance/params/propose") {
-                            if let Some((param_key, param_value)) =
-                                parse_governance_param_write(value)
-                            {
-                                if let Err(e) = proposals.submit(
-                                    tx.actor.agent_id,
-                                    tx.actor.governance_level,
-                                    sccgub_governance::proposals::ProposalKind::ModifyParameter {
-                                        key: param_key,
-                                        value: param_value,
-                                    },
-                                    block.header.height,
-                                    5,
-                                ) {
-                                    tracing::warn!("Replay parameter proposal failed: {}", e);
-                                }
-                            }
-                        }
-                        if key.starts_with(b"governance/proposals/")
-                            || key.starts_with(b"norms/governance/proposals/")
-                        {
-                            if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
-                                let _ = proposals.vote(
-                                    &proposal_id,
-                                    tx.actor.agent_id,
-                                    tx.actor.governance_level,
-                                    true,
-                                    block.header.height,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            let _accepted = proposals.finalize(block.header.height);
-            for proposal in proposals.proposals.clone() {
-                if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
-                    && block.header.height >= proposal.timelock_until
-                {
-                    match proposals.activate(&proposal.id, block.header.height) {
-                        Ok(Some(norm)) => {
-                            state
-                                .state
-                                .governance_state
-                                .active_norms
-                                .insert(norm.id, norm);
-                        }
-                        Ok(None) => match proposal.kind {
-                            sccgub_governance::proposals::ProposalKind::DeactivateNorm {
-                                norm_id,
-                            } => {
-                                if let Some(mut norm) = state
-                                    .state
-                                    .governance_state
-                                    .active_norms
-                                    .get(&norm_id)
-                                    .cloned()
-                                {
-                                    norm.active = false;
-                                    state
-                                        .state
-                                        .governance_state
-                                        .active_norms
-                                        .insert(norm_id, norm);
-                                }
-                            }
-                            sccgub_governance::proposals::ProposalKind::ModifyParameter {
-                                ref key,
-                                ref value,
-                            } => {
-                                if let Err(e) = apply_governance_parameter_static(
-                                    &mut governance_limits,
-                                    &mut finality_config,
-                                    &mut state.state.governance_state.finality_mode,
-                                    key,
-                                    value,
-                                ) {
-                                    tracing::warn!("Governance parameter update rejected: {}", e);
-                                }
-                            }
-                            sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
-                                state.state.governance_state.emergency_mode = true;
-                            }
-                            sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
-                                state.state.governance_state.emergency_mode = false;
-                            }
-                            sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
-                        },
-                        Err(e) => {
-                            tracing::warn!("Proposal activation failed: {}", e);
-                        }
-                    }
-                }
-            }
+            // from_blocks has no validator_set, so validator changes are no-ops.
+            replay_governance_from_transitions(
+                &block.body.transitions,
+                block.header.height,
+                &mut proposals,
+                &mut state.state.governance_state,
+                &mut governance_limits,
+                &mut finality_config,
+                &mut |_key, _value| Ok(()), // No validator set in replay context
+            );
         }
 
         if let Some(last) = blocks.last() {
@@ -893,122 +784,16 @@ impl Chain {
         transitions: &[sccgub_types::transition::SymbolicTransition],
         height: u64,
     ) {
-        // Parse and submit proposals from block transitions.
-        for tx in transitions {
-            if let sccgub_types::transition::OperationPayload::ProposeNorm { name, description } =
-                &tx.payload
-            {
-                if let Err(e) = self.proposals.submit(
-                    tx.actor.agent_id,
-                    tx.actor.governance_level,
-                    sccgub_governance::proposals::ProposalKind::AddNorm {
-                        name: name.clone(),
-                        description: description.clone(),
-                        initial_fitness: sccgub_types::tension::TensionValue::from_integer(5),
-                        enforcement_cost: sccgub_types::tension::TensionValue::from_integer(1),
-                    },
-                    height,
-                    5,
-                ) {
-                    tracing::warn!("Proposal submit failed: {}", e);
-                }
-            }
-            if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
-                if let sccgub_types::transition::OperationPayload::Write { key, value } =
-                    &tx.payload
-                {
-                    if key.starts_with(b"norms/governance/params/propose") {
-                        if let Some((param_key, param_value)) = parse_governance_param_write(value)
-                        {
-                            if let Err(e) = self.proposals.submit(
-                                tx.actor.agent_id,
-                                tx.actor.governance_level,
-                                sccgub_governance::proposals::ProposalKind::ModifyParameter {
-                                    key: param_key,
-                                    value: param_value,
-                                },
-                                height,
-                                5,
-                            ) {
-                                tracing::warn!("Parameter proposal failed: {}", e);
-                            }
-                        }
-                    }
-                    if key.starts_with(b"governance/proposals/")
-                        || key.starts_with(b"norms/governance/proposals/")
-                    {
-                        if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
-                            if let Err(e) = self.proposals.vote(
-                                &proposal_id,
-                                tx.actor.agent_id,
-                                tx.actor.governance_level,
-                                true,
-                                height,
-                            ) {
-                                tracing::warn!("Proposal vote failed: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Finalize proposals whose voting period ended.
-        let _ = self.proposals.finalize(height);
-
-        // Activate timelocked proposals.
-        for proposal in self.proposals.proposals.clone() {
-            if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
-                && height >= proposal.timelock_until
-            {
-                match self.proposals.activate(&proposal.id, height) {
-                    Ok(Some(norm)) => {
-                        self.state
-                            .state
-                            .governance_state
-                            .active_norms
-                            .insert(norm.id, norm);
-                    }
-                    Ok(None) => match proposal.kind {
-                        sccgub_governance::proposals::ProposalKind::DeactivateNorm { norm_id } => {
-                            if let Some(mut norm) = self
-                                .state
-                                .state
-                                .governance_state
-                                .active_norms
-                                .get(&norm_id)
-                                .cloned()
-                            {
-                                norm.active = false;
-                                self.state
-                                    .state
-                                    .governance_state
-                                    .active_norms
-                                    .insert(norm_id, norm);
-                            }
-                        }
-                        sccgub_governance::proposals::ProposalKind::ModifyParameter {
-                            ref key,
-                            ref value,
-                        } => {
-                            if let Err(e) = self.apply_governance_parameter(key, value) {
-                                tracing::warn!("Governance parameter update rejected: {}", e);
-                            }
-                        }
-                        sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
-                            self.state.state.governance_state.emergency_mode = true;
-                        }
-                        sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
-                            self.state.state.governance_state.emergency_mode = false;
-                        }
-                        sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
-                    },
-                    Err(e) => {
-                        tracing::warn!("Proposal activation failed: {}", e);
-                    }
-                }
-            }
-        }
+        let vs = &mut self.validator_set;
+        replay_governance_from_transitions(
+            transitions,
+            height,
+            &mut self.proposals,
+            &mut self.state.state.governance_state,
+            &mut self.governance_limits,
+            &mut self.finality_config,
+            &mut |key, value| apply_validator_change(vs, key, value),
+        );
     }
 
     /// Submit a transition to the mempool.
@@ -1593,59 +1378,52 @@ impl Chain {
     pub fn height(&self) -> u64 {
         self.blocks.last().map_or(0, |b| b.header.height)
     }
+}
 
-    fn apply_governance_parameter(&mut self, key: &str, value: &str) -> Result<(), String> {
-        // Validator set changes are handled here (need &mut self for validator_set).
-        if key == "validators.add" {
-            let pk_hex = value.trim();
-            let pk_bytes =
-                hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
-            if pk_bytes.len() != 32 {
-                return Err("Validator pubkey must be 32 bytes".into());
-            }
-            let mut node_id = [0u8; 32];
-            node_id.copy_from_slice(&pk_bytes);
-            // Don't add duplicates.
-            if self.validator_set.iter().any(|v| v.node_id == node_id) {
-                return Ok(()); // Already present, no-op.
-            }
-            self.validator_set
-                .push(sccgub_types::agent::ValidatorAuthority {
-                    node_id,
-                    governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
-                    norm_compliance: sccgub_types::tension::TensionValue::from_integer(1),
-                    causal_reliability: sccgub_types::tension::TensionValue::from_integer(1),
-                    active: true,
-                });
-            self.validator_set.sort_by_key(|v| v.node_id);
+fn apply_validator_change(
+    validator_set: &mut Vec<sccgub_types::agent::ValidatorAuthority>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    if key == "validators.add" {
+        let pk_hex = value.trim();
+        let pk_bytes =
+            hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
+        if pk_bytes.len() != 32 {
+            return Err("Validator pubkey must be 32 bytes".into());
+        }
+        let mut node_id = [0u8; 32];
+        node_id.copy_from_slice(&pk_bytes);
+        if !validator_set.iter().any(|v| v.node_id == node_id) {
+            validator_set.push(sccgub_types::agent::ValidatorAuthority {
+                node_id,
+                governance_level: sccgub_types::governance::PrecedenceLevel::Meaning,
+                norm_compliance: sccgub_types::tension::TensionValue::from_integer(1),
+                causal_reliability: sccgub_types::tension::TensionValue::from_integer(1),
+                active: true,
+            });
+            validator_set.sort_by_key(|v| v.node_id);
             tracing::info!("Governance: added validator {}", pk_hex);
-            return Ok(());
         }
-        if key == "validators.remove" {
-            let pk_hex = value.trim();
-            let pk_bytes =
-                hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
-            if pk_bytes.len() != 32 {
-                return Err("Validator pubkey must be 32 bytes".into());
-            }
-            let mut node_id = [0u8; 32];
-            node_id.copy_from_slice(&pk_bytes);
-            let before = self.validator_set.len();
-            self.validator_set.retain(|v| v.node_id != node_id);
-            if self.validator_set.len() < before {
-                tracing::info!("Governance: removed validator {}", pk_hex);
-            }
-            return Ok(());
-        }
-
-        apply_governance_parameter_static(
-            &mut self.governance_limits,
-            &mut self.finality_config,
-            &mut self.state.state.governance_state.finality_mode,
-            key,
-            value,
-        )
+        return Ok(());
     }
+    if key == "validators.remove" {
+        let pk_hex = value.trim();
+        let pk_bytes =
+            hex::decode(pk_hex).map_err(|e| format!("Invalid validator pubkey hex: {}", e))?;
+        if pk_bytes.len() != 32 {
+            return Err("Validator pubkey must be 32 bytes".into());
+        }
+        let mut node_id = [0u8; 32];
+        node_id.copy_from_slice(&pk_bytes);
+        let before = validator_set.len();
+        validator_set.retain(|v| v.node_id != node_id);
+        if validator_set.len() < before {
+            tracing::info!("Governance: removed validator {}", pk_hex);
+        }
+        return Ok(());
+    }
+    Err(format!("Unknown validator change key: {}", key))
 }
 
 fn governance_limits_snapshot_from(limits: &GovernanceLimits) -> GovernanceLimitsSnapshot {
@@ -1809,6 +1587,122 @@ pub fn parse_finality_mode(value: &str) -> Result<FinalityMode, String> {
         });
     }
     Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
+}
+
+fn replay_governance_from_transitions<F>(
+    transitions: &[SymbolicTransition],
+    height: u64,
+    proposals: &mut sccgub_governance::proposals::ProposalRegistry,
+    governance_state: &mut GovernanceState,
+    governance_limits: &mut GovernanceLimits,
+    finality_config: &mut FinalityConfig,
+    apply_validator_change: &mut F,
+) where
+    F: FnMut(&str, &str) -> Result<(), String>,
+{
+    for tx in transitions {
+        if let sccgub_types::transition::OperationPayload::ProposeNorm { name, description } =
+            &tx.payload
+        {
+            if let Err(e) = proposals.submit(
+                tx.actor.agent_id,
+                tx.actor.governance_level,
+                sccgub_governance::proposals::ProposalKind::AddNorm {
+                    name: name.clone(),
+                    description: description.clone(),
+                    initial_fitness: TensionValue::from_integer(5),
+                    enforcement_cost: TensionValue::from_integer(1),
+                },
+                height,
+                5,
+            ) {
+                tracing::warn!("Replay proposal submit failed: {}", e);
+            }
+        }
+        if tx.intent.kind == sccgub_types::transition::TransitionKind::GovernanceUpdate {
+            if let sccgub_types::transition::OperationPayload::Write { key, value } = &tx.payload {
+                if key.starts_with(b"norms/governance/params/propose") {
+                    if let Some((param_key, param_value)) = parse_governance_param_write(value) {
+                        if let Err(e) = proposals.submit(
+                            tx.actor.agent_id,
+                            tx.actor.governance_level,
+                            sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                                key: param_key,
+                                value: param_value,
+                            },
+                            height,
+                            5,
+                        ) {
+                            tracing::warn!("Replay parameter proposal failed: {}", e);
+                        }
+                    }
+                }
+                if key.starts_with(b"governance/proposals/")
+                    || key.starts_with(b"norms/governance/proposals/")
+                {
+                    if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
+                        let _ = proposals.vote(
+                            &proposal_id,
+                            tx.actor.agent_id,
+                            tx.actor.governance_level,
+                            true,
+                            height,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let _accepted = proposals.finalize(height);
+    for proposal in proposals.proposals.clone() {
+        if proposal.status == sccgub_governance::proposals::ProposalStatus::Timelocked
+            && height >= proposal.timelock_until
+        {
+            match proposals.activate(&proposal.id, height) {
+                Ok(Some(norm)) => {
+                    governance_state.active_norms.insert(norm.id, norm);
+                }
+                Ok(None) => match proposal.kind {
+                    sccgub_governance::proposals::ProposalKind::DeactivateNorm { norm_id } => {
+                        if let Some(mut norm) = governance_state.active_norms.get(&norm_id).cloned()
+                        {
+                            norm.active = false;
+                            governance_state.active_norms.insert(norm_id, norm);
+                        }
+                    }
+                    sccgub_governance::proposals::ProposalKind::ModifyParameter {
+                        ref key,
+                        ref value,
+                    } => {
+                        if key.starts_with("validators.") {
+                            if let Err(e) = apply_validator_change(key, value) {
+                                tracing::warn!("Validator parameter update rejected: {}", e);
+                            }
+                        } else if let Err(e) = apply_governance_parameter_static(
+                            governance_limits,
+                            finality_config,
+                            &mut governance_state.finality_mode,
+                            key,
+                            value,
+                        ) {
+                            tracing::warn!("Governance parameter update rejected: {}", e);
+                        }
+                    }
+                    sccgub_governance::proposals::ProposalKind::ActivateEmergency => {
+                        governance_state.emergency_mode = true;
+                    }
+                    sccgub_governance::proposals::ProposalKind::DeactivateEmergency => {
+                        governance_state.emergency_mode = false;
+                    }
+                    sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
+                },
+                Err(e) => {
+                    tracing::warn!("Proposal activation failed: {}", e);
+                }
+            }
+        }
+    }
 }
 
 fn parse_governance_param_write(value: &[u8]) -> Option<(String, String)> {
