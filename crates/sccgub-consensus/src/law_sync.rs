@@ -41,7 +41,8 @@ pub enum LawSyncResult {
 
 impl LawSyncRound {
     pub fn new(height: u64, validator_count: u32) -> Self {
-        let quorum = (2 * validator_count) / 3 + 1;
+        // Use u64 intermediate to prevent overflow on large validator sets.
+        let quorum = ((2u64 * validator_count as u64) / 3 + 1).min(u32::MAX as u64) as u32;
         Self {
             height,
             proposals: HashMap::new(),

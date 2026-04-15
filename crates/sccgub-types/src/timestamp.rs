@@ -92,7 +92,7 @@ impl BoundedVectorClock {
                 },
             ));
         }
-        if self.entries.len() as u32 > self.max_size {
+        if self.entries.len().min(u32::MAX as usize) as u32 > self.max_size {
             self.prune();
         }
     }
@@ -100,7 +100,7 @@ impl BoundedVectorClock {
     /// Remove least recently active entries to stay within max_size.
     /// O(n log n) via sort + truncate instead of O(n^2) repeated min-scan.
     fn prune(&mut self) {
-        if self.entries.len() as u32 <= self.max_size {
+        if self.entries.len().min(u32::MAX as usize) as u32 <= self.max_size {
             return;
         }
         // Sort by last_active_epoch descending — keep the most recently active.
@@ -120,7 +120,7 @@ impl BoundedVectorClock {
                 self.entries.push((*node_id, other_entry.clone()));
             }
         }
-        if self.entries.len() as u32 > self.max_size {
+        if self.entries.len().min(u32::MAX as usize) as u32 > self.max_size {
             self.prune();
         }
     }

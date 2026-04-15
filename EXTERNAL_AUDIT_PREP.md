@@ -239,6 +239,8 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-40: Escrow `expires_at` computed with unchecked `current_height + timeout_blocks`. Replaced with `saturating_add`.
 - N-41: Mempool `drain_validated` nonce check used unchecked `local + 1`. Replaced with `saturating_add`.
 - N-42: Network sync loop and main.rs used unchecked `height() + 1`. Replaced with `saturating_add`.
+- N-43: `LawSyncRound::new()` computed quorum as `(2 * validator_count) / 3 + 1` in u32 space — would overflow for validator_count > 2^31. Widened to u64 intermediate, matching protocol.rs and safety.rs.
+- N-44: `BoundedVectorClock` in timestamp.rs used `.len() as u32` without truncation guard at 3 sites. Added `.min(u32::MAX as usize)` before each cast.
 
 ### Open items:
 - None currently tracked in this hardening pass.
