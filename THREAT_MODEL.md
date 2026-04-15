@@ -117,9 +117,10 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 
 ## 8. Audit History
 
-- 9 hardening passes across 20+ sessions
-- 68+ findings identified, all closed (N-1 through N-38)
+- 10 hardening passes across 21+ sessions
+- 72+ findings identified, all closed (N-1 through N-42)
 - 12 false positives dismissed with documented reasoning
 - Zero unwrap/expect in consensus-critical production code
 - All `.len() as u32` casts guarded with `.min(u32::MAX as usize)`
+- All `+ 1` arithmetic in production code uses checked/saturating operations
 - 675 tests, CI green on Linux + Windows + security audit

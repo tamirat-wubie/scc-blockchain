@@ -78,7 +78,8 @@ impl Mempool {
             // tracks nonces assigned to earlier txs in this same drain batch.
             let committed = state.agent_nonces.get(&node_id).copied().unwrap_or(0);
             let local = local_nonces.get(&node_id).copied().unwrap_or(committed);
-            if tx.nonce == 0 || tx.nonce != local + 1 {
+            let expected_nonce = local.saturating_add(1);
+            if tx.nonce == 0 || tx.nonce != expected_nonce {
                 // Nonce violation — reject and remove.
                 to_remove.push(tx.tx_id);
                 self.containment

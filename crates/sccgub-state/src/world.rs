@@ -104,7 +104,15 @@ impl ManagedWorldState {
             return Err("Nonce must be >= 1".into());
         }
         let last = self.agent_nonces.get(agent_id).copied().unwrap_or(0);
-        let expected = last + 1;
+        let expected = match last.checked_add(1) {
+            Some(n) => n,
+            None => {
+                return Err(format!(
+                    "Nonce overflow: agent {} at u128::MAX",
+                    hex::encode(agent_id)
+                ));
+            }
+        };
         if nonce != expected {
             return Err(format!(
                 "Nonce must be sequential: expected {}, got {} for agent {}",

@@ -103,7 +103,7 @@ impl EscrowRegistry {
             amount,
             status: EscrowStatus::Active,
             created_at: current_height,
-            expires_at: current_height + timeout_blocks,
+            expires_at: current_height.saturating_add(timeout_blocks),
             condition,
         });
         self.index.insert(id, self.escrows.len() - 1);

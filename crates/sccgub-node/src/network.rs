@@ -1816,7 +1816,11 @@ impl NetworkRuntime {
                 } else {
                     let candidate = registry.sync_candidates(chain.height()).first().cloned();
                     if let Some(peer) = candidate {
-                        (true, chain.height() + 1, Some(peer.address.clone()))
+                        (
+                            true,
+                            chain.height().saturating_add(1),
+                            Some(peer.address.clone()),
+                        )
                     } else {
                         (false, 0, None)
                     }

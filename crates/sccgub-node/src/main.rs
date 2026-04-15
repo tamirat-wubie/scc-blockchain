@@ -533,7 +533,7 @@ fn cmd_produce(
     // Create a test agent with correctly derived agent_id.
     let agent_key = generate_keypair();
     let agent_pk = *agent_key.verifying_key().as_bytes();
-    let seal = MfidelAtomicSeal::from_height(chain.height() + 1);
+    let seal = MfidelAtomicSeal::from_height(chain.height().saturating_add(1));
     let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
         &agent_pk,
         &sccgub_crypto::canonical::canonical_bytes(&seal),
@@ -1186,7 +1186,7 @@ fn cmd_transfer(data_dir: &std::path::Path, amount: u64, passphrase: &str) {
     // Recipient: generate a new agent.
     let recipient_key = generate_keypair();
     let recipient_pk = *recipient_key.verifying_key().as_bytes();
-    let recipient_seal = MfidelAtomicSeal::from_height(chain.height() + 1);
+    let recipient_seal = MfidelAtomicSeal::from_height(chain.height().saturating_add(1));
     let recipient_id = sccgub_crypto::hash::blake3_hash_concat(&[
         &recipient_pk,
         &sccgub_crypto::canonical::canonical_bytes(&recipient_seal),

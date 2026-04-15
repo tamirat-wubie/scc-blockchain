@@ -235,6 +235,10 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-36: `SafetyCertificate::from_round` quorum `as u32` missing `.min()` guard. Aligned with protocol.rs pattern.
 - N-37: P2P integration tests used `free_port()` bind-get-drop pattern causing TOCTOU race (OS error 10048 on Windows). Replaced with hold-then-drop pattern in all 3 P2P tests.
 - N-38: `.len() as u32` truncation risk in 9 consensus-critical sites across protocol.rs, safety.rs, law_sync.rs, network.rs, chain.rs, anti_concentration.rs. Added `.min(u32::MAX as usize)` guard before each cast.
+- N-39: `check_nonce` in world.rs used unchecked `last + 1` (u128 overflow). Replaced with `checked_add`.
+- N-40: Escrow `expires_at` computed with unchecked `current_height + timeout_blocks`. Replaced with `saturating_add`.
+- N-41: Mempool `drain_validated` nonce check used unchecked `local + 1`. Replaced with `saturating_add`.
+- N-42: Network sync loop and main.rs used unchecked `height() + 1`. Replaced with `saturating_add`.
 
 ### Open items:
 - None currently tracked in this hardening pass.
