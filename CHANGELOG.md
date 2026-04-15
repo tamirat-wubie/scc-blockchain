@@ -9,6 +9,7 @@ All notable changes to SCCGUB are documented here.
 **697 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
+- Replace unmaintained `sled` with `redb 4.0` to resolve RUSTSEC-2025-0057 (fxhash) and RUSTSEC-2024-0384 (instant)
 - Argon2id + ChaCha20-Poly1305 keystore with constant-time comparison (subtle crate)
 - Domain-separated vote signatures: chain_id + epoch binding prevents cross-chain replay
 - Signature minimum length enforcement (>= 64 bytes) across all 7 admission points
@@ -47,7 +48,7 @@ All notable changes to SCCGUB are documented here.
 
 #### Known Limits (MVP)
 - Default single-proposer mode when no validator set is configured (validator set snapshots persist across restarts)
-- Replay-authoritative state without a fully durable state database (optional sled-backed trie mirror available)
+- Replay-authoritative state without a fully durable state database (optional redb-backed trie mirror available)
 - Minimal p2p networking (no hardened peer discovery or deeper DoS protection)
 - No ZK/privacy layer (placeholder types only)
 - ContractInvoke namespace tightened to `contract/` only (was `contract/` + `data/`)
