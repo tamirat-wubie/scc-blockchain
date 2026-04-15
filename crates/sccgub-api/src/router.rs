@@ -1649,4 +1649,473 @@ mod tests {
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0]["status"], Value::String("Rejected".into()));
     }
+
+    // ===== Transaction submission edge cases =====
+
+    #[tokio::test]
+    async fn test_v1_submit_duplicate_tx_returns_conflict() {
+        let state = test_state();
+        let tx = make_signed_write_tx();
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+
+        // First submission — accepted.
+        let resp1 = build_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp1.status(), StatusCode::ACCEPTED);
+
+        // Second submission — conflict.
+        let resp2 = build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp2.status(), StatusCode::CONFLICT);
+
+        let json = response_json(resp2).await;
+        assert_error_response_shape(&json);
+        assert_eq!(json["error"]["code"], Value::String("NonceReplay".into()));
+    }
+
+    #[tokio::test]
+    async fn test_v1_submit_pool_full_returns_service_unavailable() {
+        let state = test_state();
+        {
+            let mut app = state.write().await;
+            // Fill the pending pool to MAX_PENDING_TXS.
+            for _ in 0..handlers::MAX_PENDING_TXS {
+                app.pending_txs.push(make_signed_write_tx());
+            }
+        }
+
+        let tx = make_signed_write_tx();
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(json["error"]["code"], Value::String("RateLimited".into()));
+    }
+
+    #[tokio::test]
+    async fn test_v1_submit_invalid_hex_returns_bad_request() {
+        let app = build_router(test_state());
+        let body = serde_json::json!({ "tx_hex": "not-valid-hex!!" });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(json["error"]["code"], Value::String("InvalidHex".into()));
+    }
+
+    #[tokio::test]
+    async fn test_v1_submit_valid_hex_invalid_bincode_returns_bad_request() {
+        let app = build_router(test_state());
+        let body = serde_json::json!({ "tx_hex": hex::encode(b"not valid bincode") });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(
+            json["error"]["code"],
+            Value::String("InvalidTransaction".into())
+        );
+    }
+
+    // ===== Governance param propose endpoint =====
+
+    fn make_governance_propose_tx(key: &str, value: &str) -> SymbolicTransition {
+        let signing_key = generate_keypair();
+        let public_key = *signing_key.verifying_key().as_bytes();
+        let mfidel_seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            sccgub_crypto::hash::blake3_hash_concat(&[&public_key, &canonical_bytes(&mfidel_seal)]);
+        let actor = AgentIdentity {
+            agent_id,
+            public_key,
+            mfidel_seal,
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: BTreeSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        let target = b"norms/governance/params/propose".to_vec();
+        let payload_value = format!("{}={}", key, value);
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor,
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: target.clone(),
+                declared_purpose: "governance param proposal".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: payload_value.into_bytes(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: blake3_hash(b"governance-propose-test"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "governance param proposal".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sign(&signing_key, &canonical);
+        tx
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_propose_valid_param() {
+        let app = build_router(test_state());
+        let tx = make_governance_propose_tx("finality.confirmation_depth", "10");
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/params/propose")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+        let json = response_json(resp).await;
+        assert_success_response_shape(&json, "TxSubmitApiResponse", "TxSubmitResponse");
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_propose_unsupported_key() {
+        let app = build_router(test_state());
+        let tx = make_governance_propose_tx("not.a.real.key", "42");
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/params/propose")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(
+            json["error"]["code"],
+            Value::String("InvalidTransaction".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_propose_empty_body() {
+        let app = build_router(test_state());
+        let body = serde_json::json!({ "tx_hex": "" });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/params/propose")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(json["error"]["code"], Value::String("EmptyPayload".into()));
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_propose_wrong_kind_rejected() {
+        let app = build_router(test_state());
+        // A StateWrite tx submitted to the governance propose endpoint.
+        let tx = make_signed_write_tx();
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/params/propose")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(
+            json["error"]["code"],
+            Value::String("InvalidTransaction".into())
+        );
+    }
+
+    // ===== Governance vote endpoint =====
+
+    fn make_governance_vote_tx() -> SymbolicTransition {
+        let signing_key = generate_keypair();
+        let public_key = *signing_key.verifying_key().as_bytes();
+        let mfidel_seal = MfidelAtomicSeal::from_height(1);
+        let agent_id =
+            sccgub_crypto::hash::blake3_hash_concat(&[&public_key, &canonical_bytes(&mfidel_seal)]);
+        let actor = AgentIdentity {
+            agent_id,
+            public_key,
+            mfidel_seal,
+            registration_block: 0,
+            governance_level: PrecedenceLevel::Meaning,
+            norm_set: BTreeSet::new(),
+            responsibility: ResponsibilityState::default(),
+        };
+
+        let target = b"norms/governance/proposals/vote".to_vec();
+        let proposal_id = [0xAAu8; 32];
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor,
+            intent: TransitionIntent {
+                kind: TransitionKind::GovernanceUpdate,
+                target: target.clone(),
+                declared_purpose: "governance vote".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: proposal_id.to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: blake3_hash(b"governance-vote-test"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "governance vote".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = blake3_hash(&canonical);
+        tx.signature = sign(&signing_key, &canonical);
+        tx
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_vote_accepted() {
+        let app = build_router(test_state());
+        let tx = make_governance_vote_tx();
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/proposals/vote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+        let json = response_json(resp).await;
+        assert_success_response_shape(&json, "TxSubmitApiResponse", "TxSubmitResponse");
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_vote_wrong_kind_rejected() {
+        let app = build_router(test_state());
+        let tx = make_signed_write_tx();
+        let body = serde_json::json!({ "tx_hex": hex::encode(canonical_bytes(&tx)) });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/proposals/vote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(
+            json["error"]["code"],
+            Value::String("InvalidTransaction".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_vote_empty_body() {
+        let app = build_router(test_state());
+        let body = serde_json::json!({ "tx_hex": "" });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/proposals/vote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(resp).await;
+        assert_error_response_shape(&json);
+        assert_eq!(json["error"]["code"], Value::String("EmptyPayload".into()));
+    }
+
+    // ===== Governance proposals pagination =====
+
+    #[tokio::test]
+    async fn test_v1_governance_proposals_limit_zero_returns_error() {
+        let app = build_router(governance_state_with_proposals());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/governance/proposals?limit=0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let json = response_json(response).await;
+        assert_error_response_shape(&json);
+        assert_eq!(
+            json["error"]["code"],
+            Value::String("InvalidRequest".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_proposals_pagination_offset() {
+        let app = build_router(governance_state_with_proposals());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/governance/proposals?offset=1&limit=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let json = response_json(response).await;
+        // Total count is 2 (both proposals), but page has 1 (offset=1, limit=1).
+        assert_eq!(json["data"]["count"], Value::from(2));
+        let proposals = json["data"]["proposals"]
+            .as_array()
+            .expect("proposals must be an array");
+        assert_eq!(proposals.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_v1_governance_proposals_case_insensitive_filter() {
+        let app = build_router(governance_state_with_proposals());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/governance/proposals?status=voting")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["count"], Value::from(1));
+    }
 }
