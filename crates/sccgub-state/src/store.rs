@@ -30,11 +30,9 @@ pub struct RedbStateStore {
 
 impl RedbStateStore {
     pub fn open(dir: &Path) -> Result<Self, String> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("state dir create failed: {}", e))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("state dir create failed: {}", e))?;
         let db_path = dir.join("state.redb");
-        let db =
-            Database::create(&db_path).map_err(|e| format!("redb open failed: {}", e))?;
+        let db = Database::create(&db_path).map_err(|e| format!("redb open failed: {}", e))?;
         Ok(Self { db: Arc::new(db) })
     }
 }
@@ -167,8 +165,7 @@ mod tests {
 
     #[test]
     fn test_redb_state_store_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("sccgub_state_store_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sccgub_state_store_{}", std::process::id()));
         let store = RedbStateStore::open(&dir).expect("store open");
         let key = b"alpha";
         let value = b"beta";
@@ -183,8 +180,7 @@ mod tests {
 
     #[test]
     fn test_redb_state_store_prefix_iter() {
-        let dir =
-            std::env::temp_dir().join(format!("sccgub_state_prefix_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sccgub_state_prefix_{}", std::process::id()));
         let store = RedbStateStore::open(&dir).expect("store open");
         store.put(b"abc/1", b"v1").expect("put");
         store.put(b"abc/2", b"v2").expect("put");
