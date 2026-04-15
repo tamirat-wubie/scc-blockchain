@@ -708,7 +708,16 @@ impl Chain {
     }
 
     /// Validate an externally produced block without mutating state.
-    pub fn validate_candidate_block(&self, block: &Block) -> Result<(), String> {
+    ///
+    /// `consensus_round` is only available on the live proposal path. Imported
+    /// blocks do not currently persist their proposal round in the header, so
+    /// replay/import validation can only enforce that the producer belongs to
+    /// the active validator set.
+    pub fn validate_candidate_block_for_round(
+        &self,
+        block: &Block,
+        consensus_round: Option<u32>,
+    ) -> Result<(), String> {
         let parent = self.blocks.last().ok_or("No blocks in chain")?;
         let expected_height = parent.header.height.saturating_add(1);
         if block.header.height != expected_height {
@@ -727,15 +736,26 @@ impl Chain {
             return Err("Block version mismatch".into());
         }
         if !self.validator_set.is_empty() {
-            let expected = sccgub_governance::validator::round_robin_proposer(
-                &self.validator_set,
-                block.header.height,
-            )
-            .ok_or("No active proposer for height")?;
-            if expected.node_id != block.header.validator_id {
+            if let Some(round) = consensus_round {
+                let expected = sccgub_governance::validator::round_robin_proposer(
+                    &self.validator_set,
+                    block.header.height.saturating_add(round as u64),
+                )
+                .ok_or("No active proposer for height")?;
+                if expected.node_id != block.header.validator_id {
+                    return Err(format!(
+                        "Proposer mismatch: expected {}, got {}",
+                        hex::encode(expected.node_id),
+                        hex::encode(block.header.validator_id)
+                    ));
+                }
+            } else if !self
+                .validator_set
+                .iter()
+                .any(|authority| authority.node_id == block.header.validator_id)
+            {
                 return Err(format!(
-                    "Proposer mismatch: expected {}, got {}",
-                    hex::encode(expected.node_id),
+                    "Block proposer not in authorized set: {}",
                     hex::encode(block.header.validator_id)
                 ));
             }
@@ -748,6 +768,11 @@ impl Chain {
                 Err(format!("CPoG validation failed: {}", errors.join("; ")))
             }
         }
+    }
+
+    /// Validate a candidate block when the proposal round is not available.
+    pub fn validate_candidate_block(&self, block: &Block) -> Result<(), String> {
+        self.validate_candidate_block_for_round(block, None)
     }
 
     /// Import an externally produced block (validated and applied).
@@ -2452,7 +2477,9 @@ mod tests {
             finality_config: finality_config_snapshot_from(&chain.finality_config),
         });
 
-        let err = chain.validate_candidate_block(&block).unwrap_err();
+        let err = chain
+            .validate_candidate_block_for_round(&block, Some(0))
+            .unwrap_err();
         assert!(
             err.contains("Proposer mismatch"),
             "Expected proposer mismatch error, got: {}",

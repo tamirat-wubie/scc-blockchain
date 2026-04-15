@@ -731,10 +731,10 @@ impl NetworkRuntime {
         peers
     }
 
-    async fn is_proposer_for_height(&self, height: u64) -> bool {
+    async fn proposer_for_height_round(&self, height: u64, round: u32) -> Option<Hash> {
         let validator_set = self.validator_set.read().await;
         if validator_set.is_empty() {
-            return true;
+            return Some(self.validator_id);
         }
         let mut validators = Vec::with_capacity(validator_set.len());
         for validator_id in validator_set.keys() {
@@ -747,10 +747,13 @@ impl NetworkRuntime {
             });
         }
         validators.sort_by_key(|v| v.node_id);
-        match sccgub_governance::validator::round_robin_proposer(&validators, height) {
-            Some(expected) => expected.node_id == self.validator_id,
-            None => false,
-        }
+        let proposer_slot = height.saturating_add(round as u64);
+        sccgub_governance::validator::round_robin_proposer(&validators, proposer_slot)
+            .map(|expected| expected.node_id)
+    }
+
+    async fn is_proposer_for_height_round(&self, height: u64, round: u32) -> bool {
+        self.proposer_for_height_round(height, round).await == Some(self.validator_id)
     }
 
     async fn proposer_diversity_gate_allows(&self) -> bool {
@@ -827,9 +830,22 @@ impl NetworkRuntime {
                 return Err("Block proposer not in authorized set".into());
             }
         }
+        if let Some(expected_proposer) = self
+            .proposer_for_height_round(block.header.height, round)
+            .await
+        {
+            if expected_proposer != proposer_id {
+                return Err(format!(
+                    "Block proposal proposer_id mismatch: expected {} for height {} round {}",
+                    hex::encode(expected_proposer),
+                    block.header.height,
+                    round
+                ));
+            }
+        }
         {
             let chain = self.chain.read().await;
-            chain.validate_candidate_block(&block)?;
+            chain.validate_candidate_block_for_round(&block, Some(round))?;
         }
         self.pending_blocks
             .lock()
@@ -1848,10 +1864,6 @@ impl NetworkRuntime {
             if !self.proposer_diversity_gate_allows().await {
                 continue;
             }
-            let is_proposer = self.is_proposer_for_height(next_height).await;
-            if !is_proposer {
-                continue;
-            }
             let (round, phase, existing_hash) = {
                 let rounds = self.consensus_rounds.lock().await;
                 if let Some(state) = rounds.get(&next_height) {
@@ -1865,6 +1877,10 @@ impl NetworkRuntime {
                     (0, sccgub_consensus::protocol::ConsensusPhase::Propose, None)
                 }
             };
+            let is_proposer = self.is_proposer_for_height_round(next_height, round).await;
+            if !is_proposer {
+                continue;
+            }
             if phase != sccgub_consensus::protocol::ConsensusPhase::Propose {
                 continue;
             }
@@ -3990,12 +4006,12 @@ mod tests {
         let validators = NetworkRuntime::validators_from_config(&config).unwrap();
         let base_chain = Chain::init();
         let height = base_chain.height().saturating_add(1);
-        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
-            .expect("validator set must pick proposer");
-
-        let (proposer_key, proposer_pk) = if proposer.node_id == pk1 {
+        let proposer_round0 =
+            sccgub_governance::validator::round_robin_proposer(&validators, height)
+                .expect("validator set must pick proposer");
+        let (proposer_key, proposer_pk) = if proposer_round0.node_id == pk1 {
             (key1.clone(), pk1)
-        } else if proposer.node_id == pk2 {
+        } else if proposer_round0.node_id == pk2 {
             (key2.clone(), pk2)
         } else {
             (key3.clone(), pk3)
@@ -4135,12 +4151,23 @@ mod tests {
         let validators = NetworkRuntime::validators_from_config(&config).unwrap();
         let base_chain = Chain::init();
         let height = base_chain.height().saturating_add(1);
-        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, height)
-            .expect("validator set must pick proposer");
+        let proposer_round0 =
+            sccgub_governance::validator::round_robin_proposer(&validators, height)
+                .expect("validator set must pick proposer");
+        let proposer_round1 =
+            sccgub_governance::validator::round_robin_proposer(&validators, height + 1)
+                .expect("round 1 proposer");
 
-        let (proposer_key, proposer_pk) = if proposer.node_id == pk1 {
+        let (proposer_key, proposer_pk) = if proposer_round0.node_id == pk1 {
             (key1.clone(), pk1)
-        } else if proposer.node_id == pk2 {
+        } else if proposer_round0.node_id == pk2 {
+            (key2.clone(), pk2)
+        } else {
+            (key3.clone(), pk3)
+        };
+        let (proposer_round1_key, proposer_round1_pk) = if proposer_round1.node_id == pk1 {
+            (key1.clone(), pk1)
+        } else if proposer_round1.node_id == pk2 {
             (key2.clone(), pk2)
         } else {
             (key3.clone(), pk3)
@@ -4250,13 +4277,19 @@ mod tests {
             assert_eq!(state.round.round, 1);
         }
 
+        let block_round1 = {
+            let mut guard = chain_proposer.write().await;
+            guard.validator_key = proposer_round1_key.clone();
+            guard.build_candidate_block_unchecked().unwrap()
+        };
+
         runtime_peer
             .handle_message(
                 NetworkMessage::BlockProposal(signed_block_proposal(
-                    &proposer_key,
+                    &proposer_round1_key,
                     BlockProposalMessage {
-                        proposer_id: proposer_pk,
-                        block: block.clone(),
+                        proposer_id: proposer_round1_pk,
+                        block: block_round1.clone(),
                         round: 1,
                         signature: Vec::new(),
                     },
@@ -4269,16 +4302,16 @@ mod tests {
         let prevote_round1 = vote_sign_data(
             &runtime_peer.chain_id,
             epoch,
-            &block.header.block_id,
-            block.header.height,
+            &block_round1.header.block_id,
+            block_round1.header.height,
             1,
             VoteType::Prevote,
         );
         for (idx, (pk, key)) in validators_keys.iter().enumerate() {
             let vote = Vote {
                 validator_id: *pk,
-                block_hash: block.header.block_id,
-                height: block.header.height,
+                block_hash: block_round1.header.block_id,
+                height: block_round1.header.height,
                 round: 1,
                 vote_type: VoteType::Prevote,
                 signature: sign(key, &prevote_round1),
@@ -4293,16 +4326,16 @@ mod tests {
         let precommit_round1 = vote_sign_data(
             &runtime_peer.chain_id,
             epoch,
-            &block.header.block_id,
-            block.header.height,
+            &block_round1.header.block_id,
+            block_round1.header.height,
             1,
             VoteType::Precommit,
         );
         for (idx, (pk, key)) in validators_keys.iter().enumerate() {
             let vote = Vote {
                 validator_id: *pk,
-                block_hash: block.header.block_id,
-                height: block.header.height,
+                block_hash: block_round1.header.block_id,
+                height: block_round1.header.height,
                 round: 1,
                 vote_type: VoteType::Precommit,
                 signature: sign(key, &precommit_round1),
@@ -4315,10 +4348,10 @@ mod tests {
         }
 
         let chain = chain_peer.read().await;
-        assert_eq!(chain.height(), block.header.height);
+        assert_eq!(chain.height(), block_round1.header.height);
         assert_eq!(
             chain.latest_block().unwrap().header.validator_id,
-            proposer_pk
+            proposer_round1_pk
         );
         assert_eq!(chain.safety_certificates.len(), 1);
     }
