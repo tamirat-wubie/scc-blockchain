@@ -483,4 +483,105 @@ mod tests {
         assert_eq!(released.len(), 1, "Correct authority must release escrow");
         assert_eq!(balances.balance_of(&bob), TensionValue::from_integer(100));
     }
+
+    #[test]
+    fn test_create_escrow_timeout_saturates_at_u64_max() {
+        let (mut balances, alice, bob) = setup();
+        let mut registry = EscrowRegistry::new();
+
+        // Create escrow near the u64 ceiling — saturating_add should cap at u64::MAX.
+        let id = registry
+            .create(
+                alice,
+                bob,
+                TensionValue::from_integer(50),
+                EscrowCondition::ArbiterApproval { arbiter: [3u8; 32] },
+                u64::MAX - 5, // current_height near max
+                100,          // timeout that would overflow without saturating
+                &mut balances,
+            )
+            .unwrap();
+
+        let escrow = registry.get(&id).unwrap();
+        assert_eq!(escrow.created_at, u64::MAX - 5);
+        // Should saturate to u64::MAX, not wrap to 94.
+        assert_eq!(escrow.expires_at, u64::MAX);
+        assert_eq!(escrow.status, EscrowStatus::Active);
+    }
+
+    #[test]
+    fn test_create_escrow_zero_amount_rejected() {
+        let (mut balances, alice, bob) = setup();
+        let mut registry = EscrowRegistry::new();
+
+        let result = registry.create(
+            alice,
+            bob,
+            TensionValue::ZERO,
+            EscrowCondition::TimeLocked { release_at: 100 },
+            1,
+            50,
+            &mut balances,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("positive"));
+    }
+
+    #[test]
+    fn test_create_escrow_self_send_rejected() {
+        let (mut balances, alice, _bob) = setup();
+        let mut registry = EscrowRegistry::new();
+
+        let result = registry.create(
+            alice,
+            alice, // self-send
+            TensionValue::from_integer(10),
+            EscrowCondition::TimeLocked { release_at: 100 },
+            1,
+            50,
+            &mut balances,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("self"));
+    }
+
+    #[test]
+    fn test_create_escrow_zero_timeout_rejected() {
+        let (mut balances, alice, bob) = setup();
+        let mut registry = EscrowRegistry::new();
+
+        let result = registry.create(
+            alice,
+            bob,
+            TensionValue::from_integer(10),
+            EscrowCondition::TimeLocked { release_at: 100 },
+            1,
+            0, // zero timeout
+            &mut balances,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("timeout"));
+    }
+
+    #[test]
+    fn test_double_release_rejected() {
+        let (mut balances, alice, bob) = setup();
+        let mut registry = EscrowRegistry::new();
+
+        let id = registry
+            .create(
+                alice,
+                bob,
+                TensionValue::from_integer(100),
+                EscrowCondition::ArbiterApproval { arbiter: [3u8; 32] },
+                1,
+                100,
+                &mut balances,
+            )
+            .unwrap();
+
+        registry.release(&id, &mut balances).unwrap();
+        // Second release should fail.
+        assert!(registry.release(&id, &mut balances).is_err());
+    }
 }

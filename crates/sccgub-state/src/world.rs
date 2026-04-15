@@ -277,4 +277,36 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_check_nonce_sequential() {
+        let mut ws = ManagedWorldState::new();
+        let agent = [1u8; 32];
+
+        assert!(ws.check_nonce(&agent, 1).is_ok());
+        assert!(ws.check_nonce(&agent, 2).is_ok());
+        assert!(ws.check_nonce(&agent, 3).is_ok());
+
+        // Gap rejected.
+        assert!(ws.check_nonce(&agent, 5).is_err());
+        // Replay rejected.
+        assert!(ws.check_nonce(&agent, 3).is_err());
+        // Zero rejected.
+        assert!(ws.check_nonce(&agent, 0).is_err());
+    }
+
+    #[test]
+    fn test_check_nonce_overflow_at_u128_max() {
+        let mut ws = ManagedWorldState::new();
+        let agent = [2u8; 32];
+
+        // Manually set nonce to u128::MAX.
+        ws.agent_nonces.insert(agent, u128::MAX);
+
+        // Next nonce would overflow — should return error, not panic.
+        // Use nonce=1 (non-zero) so we reach the overflow path, not the "must be >= 1" guard.
+        let result = ws.check_nonce(&agent, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("overflow"));
+    }
 }

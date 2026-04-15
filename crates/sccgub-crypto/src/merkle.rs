@@ -285,4 +285,73 @@ mod tests {
         assert!(generate_proof(&leaves, 10).is_none());
         assert!(generate_proof(&[], 0).is_none());
     }
+
+    #[test]
+    fn test_merkle_proof_single_leaf() {
+        let leaf = blake3_hash(b"only");
+        let root = compute_merkle_root(&[leaf]);
+        let proof = generate_proof(&[leaf], 0).unwrap();
+        // Single-leaf tree should have empty proof (just the leaf).
+        assert!(proof.siblings.is_empty());
+        assert!(verify_proof(&root, &leaf, &proof));
+    }
+
+    #[test]
+    fn test_merkle_proof_three_leaves() {
+        let leaves: Vec<[u8; 32]> = (0..3).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+        for i in 0..3 {
+            let proof = generate_proof(&leaves, i).unwrap();
+            assert!(
+                verify_proof(&root, &leaves[i], &proof),
+                "Proof failed for leaf {} in 3-leaf tree",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_merkle_proof_seven_leaves() {
+        let leaves: Vec<[u8; 32]> = (0..7).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+        for i in 0..7 {
+            let proof = generate_proof(&leaves, i).unwrap();
+            assert!(
+                verify_proof(&root, &leaves[i], &proof),
+                "Proof failed for leaf {} in 7-leaf tree",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_merkle_root_order_sensitive() {
+        let a = blake3_hash(b"a");
+        let b = blake3_hash(b"b");
+        let root_ab = compute_merkle_root(&[a, b]);
+        let root_ba = compute_merkle_root(&[b, a]);
+        assert_ne!(root_ab, root_ba, "Leaf order must affect root");
+    }
+
+    #[test]
+    fn test_multi_proof_generation_and_verification() {
+        let leaves: Vec<[u8; 32]> = (0..8).map(|i| blake3_hash(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+        let indices = vec![0, 3, 7];
+
+        let multi_proof = generate_multi_proof(&leaves, &indices).unwrap();
+        assert_eq!(multi_proof.tree_size, 8);
+        assert_eq!(multi_proof.indices, indices);
+
+        // Verify each leaf individually against the tree.
+        let leaf_pairs: Vec<([u8; 32], usize)> = indices.iter().map(|&i| (leaves[i], i)).collect();
+        assert!(verify_multi_proof(&root, &leaf_pairs, &leaves));
+    }
+
+    #[test]
+    fn test_multi_proof_empty_rejected() {
+        let leaves: Vec<[u8; 32]> = (0..4).map(|i| blake3_hash(&[i])).collect();
+        assert!(generate_multi_proof(&leaves, &[]).is_none());
+        assert!(generate_multi_proof(&[], &[0]).is_none());
+    }
 }
