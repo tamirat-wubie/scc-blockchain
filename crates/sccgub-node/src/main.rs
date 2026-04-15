@@ -176,8 +176,11 @@ async fn main() {
     // Initialize structured logging.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("sccgub=info".parse().unwrap()),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(
+                "sccgub=info"
+                    .parse()
+                    .expect("static tracing directive is valid"),
+            ),
         )
         .init();
 
@@ -513,9 +516,13 @@ fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphras
         }
     }
     let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
-    let genesis = chain
-        .latest_block()
-        .expect("Chain::init must produce genesis");
+    let genesis = match chain.latest_block() {
+        Some(b) => b,
+        None => {
+            eprintln!("Fatal: Chain::init did not produce a genesis block");
+            std::process::exit(1);
+        }
+    };
 
     if let Err(e) = store.save_block(genesis) {
         eprintln!("Failed to save genesis block: {}", e);

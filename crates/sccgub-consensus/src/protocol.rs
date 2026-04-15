@@ -332,12 +332,12 @@ mod tests {
     use sccgub_crypto::keys::generate_keypair;
 
     /// Create N validator keypairs and return (validator_set, keys).
-    fn make_validators(
-        n: u8,
-    ) -> (
+    type ValidatorSet = (
         HashMap<Hash, [u8; 32]>,
         Vec<(Hash, ed25519_dalek::SigningKey)>,
-    ) {
+    );
+
+    fn make_validators(n: u8) -> ValidatorSet {
         let mut set = HashMap::new();
         let mut keys = Vec::new();
         for i in 1..=n {
@@ -526,15 +526,10 @@ mod tests {
         let mut round = test_round(block, 1, 0, vs);
 
         // 3 honest for block, 1 Byzantine for bad_block.
-        for i in 0..3 {
+        for (id, key) in keys.iter().take(3) {
             round
                 .add_prevote(signed_vote(
-                    keys[i].0,
-                    &keys[i].1,
-                    block,
-                    1,
-                    0,
-                    VoteType::Prevote,
+                    *id, key, block, 1, 0, VoteType::Prevote,
                 ))
                 .unwrap();
         }
@@ -550,15 +545,10 @@ mod tests {
             .unwrap();
         assert!(round.has_prevote_quorum());
 
-        for i in 0..3 {
+        for (id, key) in keys.iter().take(3) {
             round
                 .add_precommit(signed_vote(
-                    keys[i].0,
-                    &keys[i].1,
-                    block,
-                    1,
-                    0,
-                    VoteType::Precommit,
+                    *id, key, block, 1, 0, VoteType::Precommit,
                 ))
                 .unwrap();
         }
