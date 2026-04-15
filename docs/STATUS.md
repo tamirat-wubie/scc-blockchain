@@ -20,11 +20,11 @@ traversal and produce a causal receipt that proves what changed and why.
 - Hardening posture: 697 tests, CI green on Ubuntu + Windows + security audit.
 - Minimal p2p networking: peer registry, hello/heartbeat, block sync, tx gossip, vote propagation, and per-peer
   limits (no hardened peer discovery or deeper DoS protection).
-- Persistence: block log and periodic snapshots; state is replay-authoritative on restart (optional sled-backed trie mirror).
+- Persistence: block log and periodic snapshots; state is replay-authoritative on restart (optional redb-backed trie mirror).
 
 ## What it cannot do yet
 - Multi-validator consensus is wired in the p2p alpha path but not production-hardened; default mode is single proposer.
-- No durable state database: state is reconstructed from persisted blocks + snapshots (optional sled-backed trie mirror).
+- No durable state database: state is reconstructed from persisted blocks + snapshots (optional redb-backed trie mirror).
 - Contract VM is not implemented (contract types exist, structural validation only).
 - No ZK/privacy implementation (placeholders only).
 
