@@ -290,8 +290,14 @@ impl NetworkRuntime {
                 })
                 .collect();
             drop(rounds);
+            let pending = self.pending_blocks.lock().await;
+            let pending_blocks = pending.clone();
+            drop(pending);
             if let Err(e) = store.save_consensus_state(&serializable) {
                 tracing::warn!("Failed to persist consensus state: {}", e);
+            }
+            if let Err(e) = store.save_pending_blocks(&pending_blocks) {
+                tracing::warn!("Failed to persist pending proposal blocks: {}", e);
             }
         }
     }
@@ -361,7 +367,22 @@ impl NetworkRuntime {
             }
         };
         if persisted.is_empty() {
+            self.pending_blocks.lock().await.clear();
+            if let Some(store) = &self.store {
+                let _ = store.clear_pending_blocks();
+            }
             return;
+        }
+
+        match store.load_pending_blocks() {
+            Ok(blocks) => {
+                let mut pending = self.pending_blocks.lock().await;
+                *pending = blocks;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load pending proposal blocks: {}", e);
+                self.pending_blocks.lock().await.clear();
+            }
         }
 
         let expected_height = { self.chain.read().await.height().saturating_add(1) };
@@ -1558,6 +1579,7 @@ impl NetworkRuntime {
             // Clear persisted consensus state after successful finalization.
             if let Some(store) = &self.store {
                 let _ = store.clear_consensus_state();
+                let _ = store.clear_pending_blocks();
             }
         }
         if aborted {
@@ -1789,6 +1811,7 @@ impl NetworkRuntime {
                 self.pending_blocks.lock().await.clear();
                 if let Some(store) = &self.store {
                     let _ = store.clear_consensus_state();
+                    let _ = store.clear_pending_blocks();
                 }
                 self.persist_consensus_state().await;
             }
@@ -2852,12 +2875,17 @@ mod tests {
             .await
             .unwrap()
             .with_persistence(store.clone(), 1);
-        restarted
-            .pending_blocks
-            .lock()
-            .await
-            .insert(block.header.block_id, block.clone());
         restarted.load_persisted_consensus_state().await;
+        {
+            let pending = restarted.pending_blocks.lock().await;
+            assert_eq!(
+                pending
+                    .get(&block.header.block_id)
+                    .map(|candidate| candidate.header.block_id),
+                Some(block.header.block_id),
+                "restart must restore pending proposal blocks from disk"
+            );
+        }
 
         restarted
             .maybe_advance_consensus(block.header.height)

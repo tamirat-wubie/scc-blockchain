@@ -5,6 +5,7 @@ use crate::config::StorageConfig;
 use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_state::store::RedbStateStore;
 use sccgub_types::block::Block;
+use sccgub_types::Hash;
 
 const STORAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VALIDATOR_KEY_FILE: &str = "validator.key";
@@ -286,6 +287,40 @@ impl ChainStore {
         Ok(certs)
     }
 
+    /// Save pending consensus proposal blocks for crash recovery.
+    pub fn save_pending_blocks(
+        &self,
+        pending: &std::collections::HashMap<Hash, Block>,
+    ) -> std::io::Result<()> {
+        let path = self.base_dir.join("pending_blocks.json");
+        let tmp_path = self.base_dir.join("pending_blocks.json.tmp");
+        let blocks: Vec<Block> = pending.values().cloned().collect();
+        let json = serde_json::to_string(&blocks).map_err(std::io::Error::other)?;
+        fs::write(&tmp_path, json)?;
+        fs::rename(&tmp_path, &path)
+    }
+
+    /// Load pending consensus proposal blocks on restart.
+    pub fn load_pending_blocks(&self) -> std::io::Result<std::collections::HashMap<Hash, Block>> {
+        let path = self.base_dir.join("pending_blocks.json");
+        if !path.exists() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let data = fs::read_to_string(&path)?;
+        let blocks: Vec<Block> = serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        let mut pending = std::collections::HashMap::new();
+        for block in blocks {
+            if !block.is_structurally_valid() {
+                return Err(std::io::Error::other(format!(
+                    "Pending block #{} failed structural validation",
+                    block.header.height
+                )));
+            }
+            pending.insert(block.header.block_id, block);
+        }
+        Ok(pending)
+    }
+
     /// Clear persisted consensus state (after successful finalization).
     pub fn clear_consensus_state(&self) -> std::io::Result<()> {
         let path = self.base_dir.join("consensus_rounds.json");
@@ -297,6 +332,14 @@ impl ChainStore {
 
     pub fn clear_safety_certificates(&self) -> std::io::Result<()> {
         let path = self.base_dir.join("safety_certs.json");
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_pending_blocks(&self) -> std::io::Result<()> {
+        let path = self.base_dir.join("pending_blocks.json");
         if path.exists() {
             fs::remove_file(&path)?;
         }
