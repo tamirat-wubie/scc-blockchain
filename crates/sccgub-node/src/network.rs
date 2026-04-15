@@ -374,20 +374,24 @@ impl NetworkRuntime {
             return;
         }
 
-        match store.load_pending_blocks() {
+        let loaded_pending_blocks = match store.load_pending_blocks() {
             Ok(blocks) => {
                 let mut pending = self.pending_blocks.lock().await;
-                *pending = blocks;
+                *pending = blocks.clone();
+                blocks
             }
             Err(e) => {
                 tracing::warn!("Failed to load pending proposal blocks: {}", e);
                 self.pending_blocks.lock().await.clear();
+                std::collections::HashMap::new()
             }
-        }
+        };
 
         let expected_height = { self.chain.read().await.height().saturating_add(1) };
         let mut rounds = self.consensus_rounds.lock().await;
         let mut cleaned = false;
+        let mut restored_hashes = HashSet::new();
+        let mut restored_rounds = 0usize;
         for (height, value) in persisted {
             if height != expected_height {
                 tracing::warn!(
@@ -395,15 +399,15 @@ impl NetworkRuntime {
                     height,
                     expected_height
                 );
+                cleaned = true;
                 continue;
             }
             match serde_json::from_value::<PersistedRoundState>(value) {
                 Ok(state) => {
                     let mut round_state = persisted_to_round_state(state);
                     if round_state.round.block_hash != EMPTY_HASH {
-                        let pending = self.pending_blocks.lock().await;
-                        let has_block = pending.contains_key(&round_state.round.block_hash);
-                        drop(pending);
+                        let has_block =
+                            loaded_pending_blocks.contains_key(&round_state.round.block_hash);
                         if !has_block {
                             tracing::warn!(
                                 "Clearing persisted round at height {}: missing pending block",
@@ -415,9 +419,12 @@ impl NetworkRuntime {
                             round_state.round.phase =
                                 sccgub_consensus::protocol::ConsensusPhase::Propose;
                             cleaned = true;
+                        } else {
+                            restored_hashes.insert(round_state.round.block_hash);
                         }
                     }
                     rounds.insert(height, round_state);
+                    restored_rounds += 1;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -425,10 +432,24 @@ impl NetworkRuntime {
                         height,
                         e
                     );
+                    cleaned = true;
                 }
             }
         }
         drop(rounds);
+        {
+            let mut pending = self.pending_blocks.lock().await;
+            let original_len = pending.len();
+            pending.retain(|hash, _| restored_hashes.contains(hash));
+            if restored_rounds == 0 {
+                if !pending.is_empty() {
+                    cleaned = true;
+                }
+                pending.clear();
+            } else if pending.len() != original_len {
+                cleaned = true;
+            }
+        }
         if cleaned {
             self.persist_consensus_state().await;
         }
@@ -2724,6 +2745,84 @@ mod tests {
         assert_eq!(round.round.block_hash, EMPTY_HASH);
         assert!(round.round.prevotes.is_empty());
         assert!(round.round.precommits.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_stale_persisted_round_prunes_pending_blocks() {
+        let dir = std::env::temp_dir().join(format!(
+            "sccgub_consensus_stale_pending_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Arc::new(ChainStore::new(&dir).unwrap());
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(local_pk)];
+
+        let runtime = NetworkRuntime::new(chain.clone(), config)
+            .await
+            .unwrap()
+            .with_persistence(store.clone(), 1);
+
+        let block = {
+            chain
+                .read()
+                .await
+                .build_candidate_block_unchecked()
+                .unwrap()
+        };
+        let validator_set = runtime.validator_set.read().await.clone();
+        let round = ConsensusRound::new(
+            runtime.chain_id,
+            0,
+            block.header.block_id,
+            block.header.height + 1,
+            0,
+            validator_set,
+            runtime.config.max_rounds,
+        );
+        let state = RoundState {
+            round,
+            last_round_ms: now_ms(),
+        };
+
+        let mut payload = std::collections::HashMap::new();
+        payload.insert(
+            block.header.height + 1,
+            serde_json::to_value(round_state_to_persisted(&state)).unwrap(),
+        );
+        store.save_consensus_state(&payload).unwrap();
+
+        let mut pending = std::collections::HashMap::new();
+        pending.insert(block.header.block_id, block.clone());
+        store.save_pending_blocks(&pending).unwrap();
+
+        runtime.load_persisted_consensus_state().await;
+
+        assert!(
+            runtime.consensus_rounds.lock().await.is_empty(),
+            "stale round height must not be restored"
+        );
+        assert!(
+            runtime.pending_blocks.lock().await.is_empty(),
+            "pending blocks without a restored round must be pruned"
+        );
+
+        let persisted_rounds = store.load_consensus_state().unwrap();
+        assert!(
+            persisted_rounds.is_empty(),
+            "stale persisted rounds should be rewritten away"
+        );
+        let persisted_pending = store.load_pending_blocks().unwrap();
+        assert!(
+            persisted_pending.is_empty(),
+            "stale pending blocks should be rewritten away"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
