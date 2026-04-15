@@ -147,7 +147,13 @@ impl PeerRegistry {
         }
 
         for (subnet, count) in &subnet_counts {
-            let pct = (*count as u32) * 100 / connected as u32;
+            // connected > 0 here (subnet_counts is non-empty only when peers are Connected)
+            // but guard defensively against division by zero.
+            let pct = if connected > 0 {
+                (*count as u32) * 100 / connected as u32
+            } else {
+                0
+            };
             if pct > max_same_subnet_pct {
                 return Err(format!(
                     "Subnet {} has {}% of peers (max {}%)",
