@@ -661,7 +661,7 @@ mod tests {
         };
 
         store
-            .save_safety_certificates(&[cert.clone()])
+            .save_safety_certificates(std::slice::from_ref(&cert))
             .expect("safety certs should save");
         let loaded = store
             .load_safety_certificates()
@@ -827,7 +827,7 @@ mod tests {
         if block.body.transitions.len() != 1 {
             let reason = chain
                 .latest_rejected_receipts
-                .get(0)
+                .first()
                 .map(|r| r.verdict.to_string())
                 .unwrap_or_else(|| "no rejection receipt".into());
             panic!("proposal tx rejected: {}", reason);
@@ -895,7 +895,7 @@ mod tests {
         if vote_block.body.transitions.len() != 1 {
             let reason = chain
                 .latest_rejected_receipts
-                .get(0)
+                .first()
                 .map(|r| r.verdict.to_string())
                 .unwrap_or_else(|| "no rejection receipt".into());
             panic!("vote tx rejected: {}", reason);
@@ -1005,7 +1005,7 @@ mod tests {
         if proposal_block.body.transitions.len() != 1 {
             let reason = chain
                 .latest_rejected_receipts
-                .get(0)
+                .first()
                 .map(|r| r.verdict.to_string())
                 .unwrap_or_else(|| "no rejection receipt".into());
             panic!("param proposal tx rejected: {}", reason);
@@ -1072,7 +1072,7 @@ mod tests {
         if vote_block.body.transitions.len() != 1 {
             let reason = chain
                 .latest_rejected_receipts
-                .get(0)
+                .first()
                 .map(|r| r.verdict.to_string())
                 .unwrap_or_else(|| "no rejection receipt".into());
             panic!("param vote tx rejected: {}", reason);

@@ -1394,7 +1394,7 @@ impl Chain {
             validator_set: self.validator_set.clone(),
             governance_limits: self.governance_limits.clone(),
             finality_config: self.finality_config.clone(),
-            finality_mode: self.state.state.governance_state.finality_mode.clone(),
+            finality_mode: self.state.state.governance_state.finality_mode,
             proposals: self.proposals.proposals.clone(),
         }
     }
@@ -1404,7 +1404,7 @@ impl Chain {
         // Clear and rebuild trie.
         self.state = ManagedWorldState::new();
         self.state.state.governance_state = GovernanceState {
-            finality_mode: snapshot.finality_mode.clone(),
+            finality_mode: snapshot.finality_mode,
             ..GovernanceState::default()
         };
         for (key, value) in &snapshot.trie_entries {

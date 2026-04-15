@@ -17,12 +17,10 @@ use sccgub_types::tension::TensionValue;
 
 // === Helpers ===
 
-fn make_validators(
-    n: u8,
-) -> (
-    HashMap<[u8; 32], [u8; 32]>,
-    Vec<([u8; 32], ed25519_dalek::SigningKey)>,
-) {
+type ValidatorKeyMap = HashMap<[u8; 32], [u8; 32]>;
+type ValidatorKeyPairs = Vec<([u8; 32], ed25519_dalek::SigningKey)>;
+
+fn make_validators(n: u8) -> (ValidatorKeyMap, ValidatorKeyPairs) {
     let mut set = HashMap::new();
     let mut keys = Vec::new();
     for i in 1..=n {
@@ -83,28 +81,14 @@ fn test_byzantine_minority_cannot_finalize() {
     let (vs, keys) = make_validators(7);
     let mut round = test_round(block, 1, 0, vs);
 
-    for i in 0..5 {
+    for (id, key) in keys.iter().take(5) {
         round
-            .add_prevote(signed_vote(
-                keys[i].0,
-                &keys[i].1,
-                block,
-                1,
-                0,
-                VoteType::Prevote,
-            ))
+            .add_prevote(signed_vote(*id, key, block, 1, 0, VoteType::Prevote))
             .unwrap();
     }
-    for i in 5..7 {
+    for (id, key) in keys.iter().take(7).skip(5) {
         round
-            .add_prevote(signed_vote(
-                keys[i].0,
-                &keys[i].1,
-                bad_block,
-                1,
-                0,
-                VoteType::Prevote,
-            ))
+            .add_prevote(signed_vote(*id, key, bad_block, 1, 0, VoteType::Prevote))
             .unwrap();
     }
 
@@ -119,28 +103,14 @@ fn test_one_third_byzantine_blocks_quorum() {
     let (vs, keys) = make_validators(6);
     let mut round = test_round(block, 1, 0, vs);
 
-    for i in 0..4 {
+    for (id, key) in keys.iter().take(4) {
         round
-            .add_prevote(signed_vote(
-                keys[i].0,
-                &keys[i].1,
-                block,
-                1,
-                0,
-                VoteType::Prevote,
-            ))
+            .add_prevote(signed_vote(*id, key, block, 1, 0, VoteType::Prevote))
             .unwrap();
     }
-    for i in 4..6 {
+    for (id, key) in keys.iter().take(6).skip(4) {
         round
-            .add_prevote(signed_vote(
-                keys[i].0,
-                &keys[i].1,
-                bad_block,
-                1,
-                0,
-                VoteType::Prevote,
-            ))
+            .add_prevote(signed_vote(*id, key, bad_block, 1, 0, VoteType::Prevote))
             .unwrap();
     }
 
@@ -339,7 +309,7 @@ fn test_conflicting_certs_detect_equivocators() {
     let block_b = [0xBBu8; 32];
 
     let mut sigs_a = Vec::new();
-    for i in 0..5 {
+    for (id, key) in keys.iter().take(5) {
         let data = sccgub_consensus::protocol::vote_sign_data(
             &TEST_CHAIN_ID,
             TEST_EPOCH,
@@ -348,12 +318,12 @@ fn test_conflicting_certs_detect_equivocators() {
             0,
             VoteType::Precommit,
         );
-        let sig = sccgub_crypto::signature::sign(&keys[i].1, &data);
-        sigs_a.push((keys[i].0, sig));
+        let sig = sccgub_crypto::signature::sign(key, &data);
+        sigs_a.push((*id, sig));
     }
 
     let mut sigs_b = Vec::new();
-    for i in 3..7 {
+    for (id, key) in keys.iter().take(7).skip(3) {
         let data = sccgub_consensus::protocol::vote_sign_data(
             &TEST_CHAIN_ID,
             TEST_EPOCH,
@@ -362,8 +332,8 @@ fn test_conflicting_certs_detect_equivocators() {
             0,
             VoteType::Precommit,
         );
-        let sig = sccgub_crypto::signature::sign(&keys[i].1, &data);
-        sigs_b.push((keys[i].0, sig));
+        let sig = sccgub_crypto::signature::sign(key, &data);
+        sigs_b.push((*id, sig));
     }
 
     let cert_a = SafetyCertificate {
@@ -1438,11 +1408,8 @@ fn test_minority_cannot_reach_quorum() {
         !round.has_prevote_quorum(),
         "2/4 prevotes must NOT reach quorum"
     );
-    match round.evaluate() {
-        ConsensusResult::Finalized { .. } => {
-            panic!("Minority must NEVER finalize a block")
-        }
-        _ => {} // NextRound or Aborted — both correct.
+    if let ConsensusResult::Finalized { .. } = round.evaluate() {
+        panic!("Minority must NEVER finalize a block")
     }
 }
 
