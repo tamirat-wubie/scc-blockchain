@@ -116,6 +116,9 @@ pub struct StorageConfig {
     /// Whether to enable the durable state store (redb-backed).
     #[serde(default)]
     pub state_store_enabled: bool,
+    /// Whether the durable state store + latest snapshot are authoritative on boot.
+    #[serde(default)]
+    pub state_store_authoritative: bool,
     /// Directory for the durable state store (relative to data dir if not absolute).
     #[serde(default)]
     pub state_store_dir: PathBuf,
@@ -181,6 +184,7 @@ impl Default for NodeConfig {
                 data_dir: PathBuf::from(".sccgub"),
                 snapshot_restore_enabled: true,
                 state_store_enabled: false,
+                state_store_authoritative: false,
                 state_store_dir: PathBuf::from("state_db"),
             },
             validator: ValidatorConfig {
@@ -237,6 +241,7 @@ mod tests {
         assert!(config.chain.initial_finality_mode.is_none());
         assert!(config.storage.snapshot_restore_enabled);
         assert!(!config.storage.state_store_enabled);
+        assert!(!config.storage.state_store_authoritative);
         assert_eq!(config.storage.state_store_dir, PathBuf::from("state_db"));
         assert_eq!(config.network.port, 9000);
         assert_eq!(config.network.bind, "0.0.0.0");

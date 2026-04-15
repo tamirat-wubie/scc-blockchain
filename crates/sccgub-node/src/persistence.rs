@@ -9,6 +9,10 @@ use sccgub_types::block::Block;
 const STORAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VALIDATOR_KEY_FILE: &str = "validator.key";
 
+fn default_finality_mode() -> sccgub_types::governance::FinalityMode {
+    sccgub_types::governance::FinalityMode::Deterministic
+}
+
 /// Chain persistence - save and load blocks, metadata, validator keys, and snapshots.
 #[allow(dead_code)]
 pub struct ChainStore {
@@ -434,6 +438,9 @@ pub struct StateSnapshot {
     /// Finality config snapshot (for restart-safe parameters).
     #[serde(default)]
     pub finality_config: sccgub_consensus::finality::FinalityConfig,
+    /// Finality mode snapshot (for restart-safe governance mode).
+    #[serde(default = "default_finality_mode")]
+    pub finality_mode: sccgub_types::governance::FinalityMode,
     /// In-flight governance proposals (E-3: survives restart via snapshot).
     #[serde(default)]
     pub proposals: Vec<sccgub_governance::proposals::GovernanceProposal>,
@@ -1075,6 +1082,7 @@ mod tests {
                 validator_set: vec![],
                 governance_limits: Default::default(),
                 finality_config: Default::default(),
+                finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
                 proposals: vec![],
             };
             store.save_snapshot(&snapshot).unwrap();

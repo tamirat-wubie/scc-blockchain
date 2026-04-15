@@ -419,6 +419,88 @@ impl Chain {
         })
     }
 
+    /// Reconstruct chain from blocks using a validated snapshot boundary to
+    /// reduce replay work on boot.
+    pub fn from_blocks_with_snapshot(
+        blocks: Vec<Block>,
+        snapshot: &crate::persistence::StateSnapshot,
+        store: Option<std::sync::Arc<dyn sccgub_state::store::StateStore>>,
+    ) -> Result<Self, ImportError> {
+        if blocks.is_empty() {
+            return Err(ImportError::Empty);
+        }
+
+        let snapshot_index =
+            usize::try_from(snapshot.height).map_err(|_| ImportError::SnapshotMismatch {
+                height: snapshot.height,
+                detail: "snapshot height does not fit in usize".into(),
+            })?;
+        let Some(boundary_block) = blocks.get(snapshot_index) else {
+            return Err(ImportError::SnapshotMismatch {
+                height: snapshot.height,
+                detail: "snapshot height is beyond the block log".into(),
+            });
+        };
+
+        if boundary_block.header.height != snapshot.height {
+            return Err(ImportError::SnapshotMismatch {
+                height: snapshot.height,
+                detail: format!(
+                    "boundary block height mismatch: block log has {}",
+                    boundary_block.header.height
+                ),
+            });
+        }
+        if snapshot.state_root != boundary_block.header.state_root {
+            return Err(ImportError::SnapshotMismatch {
+                height: snapshot.height,
+                detail: format!(
+                    "state root mismatch: snapshot={} block={}",
+                    hex::encode(snapshot.state_root),
+                    hex::encode(boundary_block.header.state_root)
+                ),
+            });
+        }
+
+        let mut snapshot_balances = BalanceLedger::new();
+        for (agent_id, raw_balance) in &snapshot.balances {
+            snapshot_balances.import_balance(*agent_id, TensionValue(*raw_balance));
+        }
+        let snapshot_balance_root = snapshot_balances.balance_root();
+        if snapshot_balance_root != boundary_block.header.balance_root {
+            return Err(ImportError::SnapshotMismatch {
+                height: snapshot.height,
+                detail: format!(
+                    "balance root mismatch: snapshot={} block={}",
+                    hex::encode(snapshot_balance_root),
+                    hex::encode(boundary_block.header.balance_root)
+                ),
+            });
+        }
+
+        let mut chain = Self::from_blocks(blocks[..=snapshot_index].to_vec())?;
+        match store {
+            Some(durable_store) => chain
+                .restore_from_snapshot_with_store(snapshot, durable_store)
+                .map_err(|detail| ImportError::SnapshotMismatch {
+                    height: snapshot.height,
+                    detail,
+                })?,
+            None => chain.restore_from_snapshot(snapshot),
+        }
+
+        for block in blocks.iter().skip(snapshot_index + 1) {
+            chain.import_block(block.clone()).map_err(|detail| {
+                ImportError::PostSnapshotReplay {
+                    height: block.header.height,
+                    detail,
+                }
+            })?;
+        }
+
+        Ok(chain)
+    }
+
     /// Set the active validator set (used for proposer rotation).
     pub fn set_validator_set(&mut self, mut validators: Vec<ValidatorAuthority>) {
         validators.sort_by_key(|v| v.node_id);
@@ -1287,6 +1369,7 @@ impl Chain {
             validator_set: self.validator_set.clone(),
             governance_limits: self.governance_limits.clone(),
             finality_config: self.finality_config.clone(),
+            finality_mode: self.state.state.governance_state.finality_mode.clone(),
             proposals: self.proposals.proposals.clone(),
         }
     }
@@ -1296,7 +1379,7 @@ impl Chain {
         // Clear and rebuild trie.
         self.state = ManagedWorldState::new();
         self.state.state.governance_state = GovernanceState {
-            finality_mode: FinalityMode::Deterministic,
+            finality_mode: snapshot.finality_mode.clone(),
             ..GovernanceState::default()
         };
         for (key, value) in &snapshot.trie_entries {
@@ -1330,6 +1413,8 @@ impl Chain {
         });
 
         // Restore finality.
+        self.finality = FinalityTracker::default();
+        self.finality.on_new_block(snapshot.height);
         self.finality.finalized_height = snapshot.finalized_height;
 
         // Restore slashing state.
@@ -1759,6 +1844,14 @@ pub enum ImportError {
         height: u64,
         detail: String,
     },
+    SnapshotMismatch {
+        height: u64,
+        detail: String,
+    },
+    PostSnapshotReplay {
+        height: u64,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for ImportError {
@@ -1804,6 +1897,16 @@ impl std::fmt::Display for ImportError {
             }
             Self::NonceViolation { height, detail } => {
                 write!(f, "nonce violation at height {}: {}", height, detail)
+            }
+            Self::SnapshotMismatch { height, detail } => {
+                write!(f, "snapshot mismatch at height {}: {}", height, detail)
+            }
+            Self::PostSnapshotReplay { height, detail } => {
+                write!(
+                    f,
+                    "post-snapshot replay failed at height {}: {}",
+                    height, detail
+                )
             }
         }
     }
@@ -2439,6 +2542,66 @@ mod tests {
     }
 
     #[test]
+    fn test_chain_from_blocks_with_snapshot_matches_full_replay() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        for _ in 0..2 {
+            chain.produce_block().unwrap();
+        }
+
+        let snapshot = chain.create_snapshot();
+        for _ in 0..2 {
+            chain.produce_block().unwrap();
+        }
+        let replayed =
+            Chain::from_blocks(chain.blocks.clone()).expect("full replay should succeed");
+        let accelerated = Chain::from_blocks_with_snapshot(chain.blocks.clone(), &snapshot, None)
+            .expect("snapshot replay should succeed");
+
+        assert_eq!(accelerated.state.state_root(), replayed.state.state_root());
+        assert_eq!(
+            accelerated.balances.balance_root(),
+            replayed.balances.balance_root()
+        );
+        assert_eq!(
+            accelerated.finality.finalized_height,
+            replayed.finality.finalized_height
+        );
+    }
+
+    #[test]
+    fn test_chain_from_blocks_with_snapshot_rejects_root_mismatch() {
+        let mut chain = Chain::init();
+        chain.governance_limits.max_consecutive_proposals = 100;
+        chain.produce_block().unwrap();
+
+        let mut snapshot = chain.create_snapshot();
+        snapshot.state_root = [9u8; 32];
+
+        match Chain::from_blocks_with_snapshot(chain.blocks.clone(), &snapshot, None) {
+            Err(ImportError::SnapshotMismatch { height, .. }) => assert_eq!(height, 1),
+            Err(other) => panic!("expected snapshot mismatch, got {}", other),
+            Ok(_) => panic!("expected snapshot mismatch, got success"),
+        }
+    }
+
+    #[test]
+    fn test_chain_snapshot_restores_finality_mode() {
+        let chain = Chain::init_with_finality_mode(FinalityMode::BftCertified {
+            quorum_threshold: 2,
+        });
+        let snapshot = chain.create_snapshot();
+
+        let mut restored = Chain::init();
+        restored.restore_from_snapshot(&snapshot);
+
+        assert_eq!(
+            restored.state.state.governance_state.finality_mode,
+            chain.state.state.governance_state.finality_mode
+        );
+    }
+
+    #[test]
     fn test_chain_from_blocks_replay() {
         let mut chain = Chain::init();
         chain.governance_limits.max_consecutive_proposals = 100;
@@ -2581,6 +2744,7 @@ mod tests {
             data_dir: PathBuf::from(&dir),
             snapshot_restore_enabled: true,
             state_store_enabled: true,
+            state_store_authoritative: false,
             state_store_dir: PathBuf::from("state_db"),
         };
         let state_store = store.open_state_store(&storage).expect("open state store");
@@ -2683,6 +2847,7 @@ mod tests {
             data_dir: PathBuf::from(&dir),
             snapshot_restore_enabled: true,
             state_store_enabled: true,
+            state_store_authoritative: false,
             state_store_dir: PathBuf::from("state_db"),
         };
         let state_store = store.open_state_store(&storage).expect("open state store");

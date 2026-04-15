@@ -114,6 +114,11 @@ max_rounds = 3
 min_connected_peers = 2
 max_same_subnet_pct = 50
 
+[storage]
+state_store_enabled = true
+state_store_authoritative = true
+state_store_dir = "state_db"
+
 [validator]
 # SECURITY: Use SCCGUB_PASSPHRASE env var instead
 key_passphrase = ""

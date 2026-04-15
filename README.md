@@ -21,7 +21,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 
 **What it cannot do yet**  
 - Multi-validator consensus is wired in the p2p alpha path but not production-hardened; default mode is single proposer.
-- No durable state database: state is replay-authoritative from persisted blocks + snapshots (optional redb-backed trie mirror).
+- No fully durable state database by default: state still replays from persisted blocks + snapshots unless `storage.state_store_authoritative = true` is enabled for redb-backed startup.
 - Contract VM is not implemented (contract types exist, structural validation only).
 - No ZK/privacy implementation (placeholders only).
 
@@ -38,7 +38,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 ## Known Limits (MVP)
 
 - **Default single-proposer mode:** Proposer rotation is active when a validator set is configured, but the reference CLI defaults to a single validator; multi-validator BFT remains alpha.
-- **Replay-authoritative state:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional redb-backed state store can mirror the trie, but replay remains authoritative.
+- **Replay-authoritative state by default:** Blocks, metadata, encrypted validator keys, and periodic snapshots persist across restarts; an optional redb-backed state store can mirror the trie, or become startup-authoritative when `storage.state_store_authoritative = true`.
 - **P2P networking is minimal:** Hello/heartbeat/tx gossip, block sync, vote propagation, multi-round timeouts, equivocation evidence propagation, per-peer rate limits, peer scoring, and basic bandwidth caps are wired, but there is no hardened peer discovery or deeper DoS protection beyond simple per-peer limits.
 - **No ZK/privacy layer:** Placeholder types exist (ZkCommitment) but no implementation.
 - **ContractInvoke namespace:** Now scoped to `contract/` only. Per-contract sub-namespace (`contract/<id>/`) is a future item.
@@ -73,7 +73,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Governance transitions:** parameter proposals use `norms/governance/params/propose` with payload `key=value`, votes use `norms/governance/proposals/...`
 - **Economics:** Gas metering, treasury (fee/reward/burn lifecycle), escrow/DvP
 - **Custody:** 6 operator key roles (Genesis/Governance/Treasury/Validator/Operator/Auditor)
-- **Persistence:** Replay-authoritative world state backed by on-disk blocks, encrypted validator keystore, chain metadata, and periodic snapshots, with an optional redb-backed state store mirror (API reads live-sync to in-process state when event hooks are active; default sync throttle 250ms via `api_sync.min_interval_ms`)
+- **Persistence:** Replay-authoritative world state by default, backed by on-disk blocks, encrypted validator keystore, chain metadata, and periodic snapshots, with an optional redb-backed state store mirror or startup-authoritative mode via `storage.state_store_authoritative` (API reads live-sync to in-process state when event hooks are active; default sync throttle 250ms via `api_sync.min_interval_ms`)
 - **Consensus parameters:** Canonical `ConsensusParams` embedded in genesis, committed under `system/consensus_params`, restored during import + snapshot recovery, and used for proof depth, SCCE propagation bounds, contract default step limits, gas schedule + limits, and validation size caps
 - **Keystore:** Argon2id KDF + ChaCha20-Poly1305 AEAD (finance-grade)
 - **Arithmetic:** Fixed-point i128 (18 decimals) — no floating-point in consensus

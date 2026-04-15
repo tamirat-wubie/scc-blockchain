@@ -405,6 +405,67 @@ fn bind_state_store_for_snapshot(
     }
 }
 
+fn load_chain_with_config(store: &ChainStore, config: &config::NodeConfig) -> Chain {
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+
+    let durable_store = bind_state_store_for_snapshot(store, config);
+    if config.storage.state_store_authoritative {
+        if !config.storage.state_store_enabled {
+            eprintln!(
+                "Warning: state_store_authoritative=true but state_store_enabled=false; falling back to replay."
+            );
+        } else {
+            match store.load_latest_snapshot() {
+                Ok(Some(snapshot)) => {
+                    return Chain::from_blocks_with_snapshot(
+                        blocks,
+                        &snapshot,
+                        durable_store.clone(),
+                    )
+                    .unwrap_or_else(|e| {
+                        eprintln!("Chain import failed: {}", e);
+                        std::process::exit(1);
+                    });
+                }
+                Ok(None) => {
+                    eprintln!(
+                        "Warning: state_store_authoritative=true but no snapshot exists; falling back to replay."
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: snapshot load failed ({}); falling back to replay.",
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    let mut chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
+
+    let restored = restore_snapshot_if_available(
+        store,
+        &mut chain,
+        config.storage.snapshot_restore_enabled,
+        durable_store.clone(),
+    );
+    if !restored {
+        let _ = bind_state_store_if_enabled(store, &mut chain, config);
+    }
+
+    chain
+}
+
 fn cmd_init(data_dir: &std::path::Path, config_path: &std::path::Path, passphrase: &str) {
     let config = config::NodeConfig::load(config_path);
     let store = match ChainStore::new(data_dir) {
@@ -496,30 +557,12 @@ fn cmd_produce(
             std::process::exit(1);
         }
     };
-    // Load existing chain.
-    let blocks = match store.load_all_blocks() {
-        Ok(b) if !b.is_empty() => b,
-        _ => {
-            eprintln!("No chain found. Run `sccgub init` first.");
-            std::process::exit(1);
-        }
-    };
-
-    let mut chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
-        eprintln!("Chain import failed: {}", e);
-        std::process::exit(1);
-    });
+    let mut chain = load_chain_with_config(&store, &config);
     if !config.network.validators.is_empty() {
         match network::NetworkRuntime::validators_from_config(&config.network) {
             Ok(validators) => chain.set_validator_set(validators),
             Err(e) => eprintln!("Warning: validator set config ignored: {}", e),
         }
-    }
-
-    let durable_store = bind_state_store_for_snapshot(&store, &config);
-    let restored = restore_snapshot_if_available(&store, &mut chain, true, durable_store.clone());
-    if !restored {
-        let _ = bind_state_store_if_enabled(&store, &mut chain, &config);
     }
 
     // Load persisted validator key if available.
@@ -1582,32 +1625,8 @@ async fn cmd_serve(
     };
     let store = std::sync::Arc::new(store);
 
-    let blocks = match store.load_all_blocks() {
-        Ok(b) if !b.is_empty() => b,
-        _ => {
-            eprintln!("No chain found. Run `sccgub init` first.");
-            std::process::exit(1);
-        }
-    };
-
-    let mut chain = match Chain::from_blocks(blocks) {
-        Ok(chain) => chain,
-        Err(e) => {
-            eprintln!("Failed to rebuild chain: {}", e);
-            std::process::exit(1);
-        }
-    };
-    let durable_store = bind_state_store_for_snapshot(store.as_ref(), &config);
-    let restored = restore_snapshot_if_available(
-        store.as_ref(),
-        &mut chain,
-        config.storage.snapshot_restore_enabled,
-        durable_store.clone(),
-    );
+    let mut chain = load_chain_with_config(store.as_ref(), &config);
     restore_safety_certificates_if_available(store.as_ref(), &mut chain);
-    if !restored {
-        let _ = bind_state_store_if_enabled(store.as_ref(), &mut chain, &config);
-    }
     if store.has_validator_key() {
         if let Ok(key) = store.load_validator_key(passphrase) {
             chain.set_validator_key(key);
