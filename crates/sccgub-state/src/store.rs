@@ -1,15 +1,17 @@
-//! Purpose: Durable state storage interface and sled-backed implementation.
+//! Purpose: Durable state storage interface and redb-backed implementation.
 //! Governance scope: Persistence substrate for consensus-critical state entries.
-//! Dependencies: sled, standard filesystem paths.
+//! Dependencies: redb, standard filesystem paths.
 //! Invariants: fail-closed on IO errors, explicit errors for all operations.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use sled::Db;
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 pub type StateEntry = (Vec<u8>, Vec<u8>);
 pub type StateEntries = Vec<StateEntry>;
+
+const STATE_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("state");
 
 pub trait StateStore: Send + Sync {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String>;
@@ -22,71 +24,140 @@ pub trait StateStore: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct SledStateStore {
-    db: Arc<Db>,
+pub struct RedbStateStore {
+    db: Arc<Database>,
 }
 
-impl SledStateStore {
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let db = sled::open(path).map_err(|e| format!("sled open failed: {}", e))?;
+impl RedbStateStore {
+    pub fn open(dir: &Path) -> Result<Self, String> {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("state dir create failed: {}", e))?;
+        let db_path = dir.join("state.redb");
+        let db =
+            Database::create(&db_path).map_err(|e| format!("redb open failed: {}", e))?;
         Ok(Self { db: Arc::new(db) })
     }
 }
 
-impl StateStore for SledStateStore {
+impl StateStore for RedbStateStore {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
-        self.db
-            .get(key)
-            .map(|opt| opt.map(|v| v.to_vec()))
-            .map_err(|e| format!("sled get failed: {}", e))
+        let rtxn = self
+            .db
+            .begin_read()
+            .map_err(|e| format!("redb read failed: {}", e))?;
+        let table = match rtxn.open_table(STATE_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(format!("redb table open failed: {}", e)),
+        };
+        match table.get(key) {
+            Ok(Some(guard)) => Ok(Some(guard.value().to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(format!("redb get failed: {}", e)),
+        }
     }
 
     fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
-        self.db
-            .insert(key, value)
-            .map_err(|e| format!("sled insert failed: {}", e))?;
+        let wtxn = self
+            .db
+            .begin_write()
+            .map_err(|e| format!("redb write failed: {}", e))?;
+        {
+            let mut table = wtxn
+                .open_table(STATE_TABLE)
+                .map_err(|e| format!("redb table open failed: {}", e))?;
+            table
+                .insert(key, value)
+                .map_err(|e| format!("redb insert failed: {}", e))?;
+        }
+        wtxn.commit()
+            .map_err(|e| format!("redb commit failed: {}", e))?;
         Ok(())
     }
 
     fn delete(&self, key: &[u8]) -> Result<(), String> {
-        self.db
-            .remove(key)
-            .map_err(|e| format!("sled remove failed: {}", e))?;
+        let wtxn = self
+            .db
+            .begin_write()
+            .map_err(|e| format!("redb write failed: {}", e))?;
+        {
+            let mut table = wtxn
+                .open_table(STATE_TABLE)
+                .map_err(|e| format!("redb table open failed: {}", e))?;
+            table
+                .remove(key)
+                .map_err(|e| format!("redb remove failed: {}", e))?;
+        }
+        wtxn.commit()
+            .map_err(|e| format!("redb commit failed: {}", e))?;
         Ok(())
     }
 
     fn iter_prefix(&self, prefix: &[u8]) -> Result<StateEntries, String> {
+        let rtxn = self
+            .db
+            .begin_read()
+            .map_err(|e| format!("redb read failed: {}", e))?;
+        let table = match rtxn.open_table(STATE_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(format!("redb table open failed: {}", e)),
+        };
         let mut entries = Vec::new();
-        for item in self.db.scan_prefix(prefix) {
-            let (key, value) = item.map_err(|e| format!("sled scan failed: {}", e))?;
-            entries.push((key.to_vec(), value.to_vec()));
+        let iter = table
+            .range(prefix..)
+            .map_err(|e| format!("redb range failed: {}", e))?;
+        for item in iter {
+            let (k, v) = item.map_err(|e| format!("redb iter failed: {}", e))?;
+            let key_bytes = k.value();
+            if !key_bytes.starts_with(prefix) {
+                break;
+            }
+            entries.push((key_bytes.to_vec(), v.value().to_vec()));
         }
         Ok(entries)
     }
 
     fn iter_all(&self) -> Result<StateEntries, String> {
+        let rtxn = self
+            .db
+            .begin_read()
+            .map_err(|e| format!("redb read failed: {}", e))?;
+        let table = match rtxn.open_table(STATE_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(format!("redb table open failed: {}", e)),
+        };
         let mut entries = Vec::new();
-        for item in self.db.iter() {
-            let (key, value) = item.map_err(|e| format!("sled iter failed: {}", e))?;
-            entries.push((key.to_vec(), value.to_vec()));
+        let iter = table
+            .iter()
+            .map_err(|e| format!("redb iter failed: {}", e))?;
+        for item in iter {
+            let (k, v) = item.map_err(|e| format!("redb iter failed: {}", e))?;
+            entries.push((k.value().to_vec(), v.value().to_vec()));
         }
         Ok(entries)
     }
 
     fn is_empty(&self) -> Result<bool, String> {
-        let mut iter = self.db.iter();
-        match iter.next() {
-            None => Ok(true),
-            Some(Ok(_)) => Ok(false),
-            Some(Err(e)) => Err(format!("sled iter failed: {}", e)),
-        }
+        let rtxn = self
+            .db
+            .begin_read()
+            .map_err(|e| format!("redb read failed: {}", e))?;
+        let table = match rtxn.open_table(STATE_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(true),
+            Err(e) => return Err(format!("redb table open failed: {}", e)),
+        };
+        table
+            .len()
+            .map(|n| n == 0)
+            .map_err(|e| format!("redb len failed: {}", e))
     }
 
     fn flush(&self) -> Result<(), String> {
-        self.db
-            .flush()
-            .map(|_| ())
-            .map_err(|e| format!("sled flush failed: {}", e))
+        // redb write transactions are durable on commit; no separate flush needed.
+        Ok(())
     }
 }
 
@@ -95,9 +166,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sled_state_store_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("sccgub_state_store_{}", std::process::id()));
-        let store = SledStateStore::open(&dir).expect("store open");
+    fn test_redb_state_store_roundtrip() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_state_store_{}", std::process::id()));
+        let store = RedbStateStore::open(&dir).expect("store open");
         let key = b"alpha";
         let value = b"beta";
         store.put(key, value).expect("put");
@@ -110,9 +182,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sled_state_store_prefix_iter() {
-        let dir = std::env::temp_dir().join(format!("sccgub_state_prefix_{}", std::process::id()));
-        let store = SledStateStore::open(&dir).expect("store open");
+    fn test_redb_state_store_prefix_iter() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_state_prefix_{}", std::process::id()));
+        let store = RedbStateStore::open(&dir).expect("store open");
         store.put(b"abc/1", b"v1").expect("put");
         store.put(b"abc/2", b"v2").expect("put");
         store.put(b"zzz/1", b"v3").expect("put");

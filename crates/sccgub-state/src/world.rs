@@ -171,7 +171,7 @@ pub fn consensus_params_from_trie(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::SledStateStore;
+    use crate::store::RedbStateStore;
     use sccgub_types::transition::{StateDelta, StateWrite};
     use std::sync::Arc;
 
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn test_bind_store_roundtrip() {
         let dir = std::env::temp_dir().join(format!("sccgub_state_bind_{}", std::process::id()));
-        let store = Arc::new(SledStateStore::open(&dir).expect("store open"));
+        let store = Arc::new(RedbStateStore::open(&dir).expect("store open"));
 
         let mut ws = ManagedWorldState::new();
         ws.apply_delta(&StateDelta {

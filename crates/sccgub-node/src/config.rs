@@ -113,7 +113,7 @@ pub struct StorageConfig {
     pub data_dir: PathBuf,
     /// Whether to restore chain state from snapshots on boot.
     pub snapshot_restore_enabled: bool,
-    /// Whether to enable the durable state store (sled-backed).
+    /// Whether to enable the durable state store (redb-backed).
     #[serde(default)]
     pub state_store_enabled: bool,
     /// Directory for the durable state store (relative to data dir if not absolute).
