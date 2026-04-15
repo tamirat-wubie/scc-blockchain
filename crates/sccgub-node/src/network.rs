@@ -2590,41 +2590,33 @@ mod tests {
             hex::encode(*other_key.verifying_key().as_bytes()),
             hex::encode(*third_key.verifying_key().as_bytes()),
         ];
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+        let proposer = sccgub_governance::validator::round_robin_proposer(&validators, 1)
+            .expect("validator set must pick proposer");
+        let (proposer_key, proposer_pk) = if proposer.node_id == local_pk {
+            (local_key.clone(), local_pk)
+        } else if proposer.node_id == *other_key.verifying_key().as_bytes() {
+            (other_key.clone(), *other_key.verifying_key().as_bytes())
+        } else {
+            (third_key.clone(), *third_key.verifying_key().as_bytes())
+        };
 
         {
             let mut guard = chain.write().await;
-            guard.validator_key = local_key.clone();
+            guard.validator_key = proposer_key.clone();
             guard.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
                 quorum_threshold: 2,
             };
-            guard.set_validator_set(vec![ValidatorAuthority {
-                node_id: local_pk,
-                governance_level: PrecedenceLevel::Safety,
-                norm_compliance: TensionValue::from_integer(1),
-                causal_reliability: TensionValue::from_integer(1),
-                active: true,
-            }]);
+            guard.set_validator_set(validators.clone());
         }
 
         let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
-        // Override chain validator set to just local so it's always proposer.
-        // Runtime validator set still has 3 for quorum calculation.
-        {
-            let mut guard = chain.write().await;
-            guard.set_validator_set(vec![ValidatorAuthority {
-                node_id: local_pk,
-                governance_level: PrecedenceLevel::Safety,
-                norm_compliance: TensionValue::from_integer(1),
-                causal_reliability: TensionValue::from_integer(1),
-                active: true,
-            }]);
-        }
         let block = { chain.read().await.build_candidate_block().unwrap() };
         runtime
             .handle_block_proposal(signed_block_proposal(
-                &local_key,
+                &proposer_key,
                 BlockProposalMessage {
-                    proposer_id: local_pk,
+                    proposer_id: proposer_pk,
                     block: block.clone(),
                     round: 0,
                     signature: Vec::new(),
