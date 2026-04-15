@@ -362,9 +362,9 @@ fn prop_gas_metering_deterministic() {
     let mut seed = 666u64;
 
     for _ in 0..100 {
-        let compute = (prng(&mut seed) % 1000) as u64;
-        let reads = (prng(&mut seed) % 10) as u64;
-        let writes = (prng(&mut seed) % 5) as u64;
+        let compute = prng(&mut seed) % 1000;
+        let reads = prng(&mut seed) % 10;
+        let writes = prng(&mut seed) % 5;
 
         let mut m1 = GasMeter::default_tx();
         let mut m2 = GasMeter::default_tx();
