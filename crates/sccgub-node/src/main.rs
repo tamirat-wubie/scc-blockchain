@@ -462,6 +462,7 @@ fn load_chain_with_config(store: &ChainStore, config: &config::NodeConfig) -> Ch
     if !restored {
         let _ = bind_state_store_if_enabled(store, &mut chain, config);
     }
+    restore_safety_certificates_if_available(store, &mut chain);
 
     chain
 }
@@ -1626,7 +1627,6 @@ async fn cmd_serve(
     let store = std::sync::Arc::new(store);
 
     let mut chain = load_chain_with_config(store.as_ref(), &config);
-    restore_safety_certificates_if_available(store.as_ref(), &mut chain);
     if store.has_validator_key() {
         if let Ok(key) = store.load_validator_key(passphrase) {
             chain.set_validator_key(key);
@@ -2479,4 +2479,67 @@ fn cmd_escrow(data_dir: &std::path::Path) {
     println!();
     println!("  (Escrow registry is initialized per-session;");
     println!("   persistent escrow state requires state trie integration.)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sccgub_consensus::safety::SafetyCertificate;
+    use sccgub_types::governance::FinalityMode;
+
+    #[test]
+    fn test_load_chain_with_config_restores_safety_certificates() {
+        let dir = std::env::temp_dir().join(format!(
+            "sccgub_main_load_chain_config_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = ChainStore::new(&dir).expect("store should initialize");
+
+        let mut chain = Chain::init_with_finality_mode(FinalityMode::BftCertified {
+            quorum_threshold: 1,
+        });
+        chain.governance_limits.max_consecutive_proposals = 100;
+        let block = chain
+            .produce_block()
+            .expect("block production should succeed")
+            .clone();
+
+        store
+            .save_block(chain.blocks.first().expect("genesis block must exist"))
+            .expect("genesis save should succeed");
+        store.save_block(&block).expect("block save should succeed");
+        store
+            .save_snapshot(&chain.create_snapshot())
+            .expect("snapshot save should succeed");
+
+        let cert = SafetyCertificate {
+            chain_id: chain.chain_id,
+            epoch: chain.treasury.epoch,
+            height: block.header.height,
+            block_hash: block.header.block_id,
+            round: 0,
+            precommit_signatures: vec![],
+            quorum: 1,
+            validator_count: 1,
+        };
+        store
+            .save_safety_certificates(std::slice::from_ref(&cert))
+            .expect("certificate save should succeed");
+
+        let config = config::NodeConfig::default();
+
+        let loaded = load_chain_with_config(&store, &config);
+        assert_eq!(
+            loaded.state.state.governance_state.finality_mode,
+            FinalityMode::BftCertified {
+                quorum_threshold: 1
+            }
+        );
+        assert_eq!(loaded.safety_certificates.len(), 1);
+        assert_eq!(loaded.safety_certificates[0].height, cert.height);
+        assert_eq!(loaded.finalized_height(), cert.height);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
