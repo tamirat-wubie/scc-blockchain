@@ -147,11 +147,15 @@ mod tests {
 
     #[test]
     fn test_responsibility_bound() {
-        let mut s1 = ResponsibilityState::default();
-        s1.net_responsibility = TensionValue::from_integer(50);
+        let s1 = ResponsibilityState {
+            net_responsibility: TensionValue::from_integer(50),
+            ..Default::default()
+        };
 
-        let mut s2 = ResponsibilityState::default();
-        s2.net_responsibility = TensionValue::from_integer(-30);
+        let s2 = ResponsibilityState {
+            net_responsibility: TensionValue::from_integer(-30),
+            ..Default::default()
+        };
 
         let max = TensionValue::from_integer(100);
         assert!(check_responsibility_bound(&[&s1, &s2], max));

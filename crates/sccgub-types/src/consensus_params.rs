@@ -324,30 +324,38 @@ mod tests {
 
     #[test]
     fn zero_proof_depth_rejected() {
-        let mut p = ConsensusParams::default();
-        p.max_proof_depth = 0;
+        let p = ConsensusParams {
+            max_proof_depth: 0,
+            ..Default::default()
+        };
         assert!(p.validate().is_err());
     }
 
     #[test]
     fn extreme_proof_depth_rejected() {
-        let mut p = ConsensusParams::default();
-        p.max_proof_depth = 999_999;
+        let p = ConsensusParams {
+            max_proof_depth: 999_999,
+            ..Default::default()
+        };
         assert!(p.validate().is_err());
     }
 
     #[test]
     fn block_gas_below_tx_gas_rejected() {
-        let mut p = ConsensusParams::default();
-        p.default_block_gas_limit = 100;
-        p.default_tx_gas_limit = 1_000;
+        let p = ConsensusParams {
+            default_block_gas_limit: 100,
+            default_tx_gas_limit: 1_000,
+            ..Default::default()
+        };
         assert!(p.validate().is_err());
     }
 
     #[test]
     fn zero_state_entry_size_rejected() {
-        let mut p = ConsensusParams::default();
-        p.max_state_entry_size = 0;
+        let p = ConsensusParams {
+            max_state_entry_size: 0,
+            ..Default::default()
+        };
         assert!(p.validate().is_err());
     }
 }

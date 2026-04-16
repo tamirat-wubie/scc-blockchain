@@ -160,8 +160,10 @@ mod tests {
     #[test]
     fn test_emergency_deactivation() {
         let tension = make_tension(200);
-        let mut gov = GovernanceState::default();
-        gov.emergency_mode = true;
+        let gov = GovernanceState {
+            emergency_mode: true,
+            ..Default::default()
+        };
         let policy = EmergencyPolicy::default();
 
         let decision = evaluate_emergency(&tension, &gov, &policy);
@@ -172,8 +174,10 @@ mod tests {
     #[test]
     fn test_emergency_maintained() {
         let tension = make_tension(600);
-        let mut gov = GovernanceState::default();
-        gov.emergency_mode = true;
+        let gov = GovernanceState {
+            emergency_mode: true,
+            ..Default::default()
+        };
         let policy = EmergencyPolicy::default();
 
         let decision = evaluate_emergency(&tension, &gov, &policy);

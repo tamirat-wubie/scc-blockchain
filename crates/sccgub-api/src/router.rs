@@ -893,7 +893,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/v1/tx/{}", tx_id))
+                    .uri(format!("/api/v1/tx/{}", tx_id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -994,7 +994,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/v1/receipt/{}", tx_id))
+                    .uri(format!("/api/v1/receipt/{}", tx_id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1445,7 +1445,7 @@ mod tests {
             app.clone()
                 .oneshot(
                     Request::builder()
-                        .uri(&format!("/api/v1/tx/{}", tx_id))
+                        .uri(format!("/api/v1/tx/{}", tx_id))
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -1459,7 +1459,7 @@ mod tests {
             app.clone()
                 .oneshot(
                     Request::builder()
-                        .uri(&format!("/api/v1/receipt/{}", tx_id))
+                        .uri(format!("/api/v1/receipt/{}", tx_id))
                         .body(Body::empty())
                         .unwrap(),
                 )
