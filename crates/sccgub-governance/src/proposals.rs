@@ -6,7 +6,12 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::{AgentId, Hash, NormId};
 
 /// Governance proposal lifecycle.
-/// Proposals follow: Submitted -> Voting -> Accepted/Rejected -> Timelocked -> Activated.
+/// Actual flow: Voting -> Timelocked/Rejected -> Activated.
+///
+/// Note: `Submitted`, `Accepted`, and `Expired` are reserved variants that
+/// exist for forward compatibility but are not set by any current code path.
+/// `submit()` creates proposals directly in `Voting` status.
+/// `finalize()` transitions winning proposals directly to `Timelocked`.
 ///
 /// Timelocks enforce a mandatory delay between acceptance and activation,
 /// giving the community time to review and potentially veto changes.
@@ -52,13 +57,16 @@ pub enum ProposalKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProposalStatus {
+    /// Reserved: initial submission state (not currently used; submit() sets Voting directly).
     Submitted,
     Voting,
+    /// Reserved: post-vote acceptance state (not currently used; finalize() sets Timelocked directly).
     Accepted,
     Rejected,
     /// Timelock active — waiting for mandatory delay before activation.
     Timelocked,
     Activated,
+    /// Reserved: TTL-based expiration (not currently implemented).
     Expired,
 }
 

@@ -355,4 +355,61 @@ mod tests {
         assert_eq!(updated.score, 8);
         assert_eq!(updated.violations, 1);
     }
+
+    #[test]
+    fn test_decay_scores_recovers_negative_score() {
+        let mut registry = PeerRegistry::default();
+        let mut peer = test_peer(1, 10);
+        peer.score = -5; // Negative from penalties.
+        registry.upsert(peer).unwrap();
+
+        // Decay +3 should bring score from -5 to -2.
+        registry.decay_scores(10_000, 5_000, 3, 100, 60_000);
+        let updated = registry.peers.get(&[1u8; 32]).unwrap();
+        assert_eq!(updated.score, -2);
+    }
+
+    #[test]
+    fn test_decay_scores_capped_at_max() {
+        let mut registry = PeerRegistry::default();
+        let mut peer = test_peer(1, 10);
+        peer.score = 98;
+        registry.upsert(peer).unwrap();
+
+        // Decay +5 from 98 should cap at max_score=100, not 103.
+        registry.decay_scores(10_000, 5_000, 5, 100, 60_000);
+        let updated = registry.peers.get(&[1u8; 32]).unwrap();
+        assert_eq!(updated.score, 100);
+    }
+
+    #[test]
+    fn test_decay_scores_skips_banned_peers() {
+        let mut registry = PeerRegistry::default();
+        let mut peer = test_peer(1, 10);
+        peer.score = -10;
+        peer.state = PeerState::Banned;
+        registry.upsert(peer).unwrap();
+
+        // Decay should NOT modify banned peer's score.
+        registry.decay_scores(10_000, 5_000, 5, 100, 60_000);
+        let updated = registry.peers.get(&[1u8; 32]).unwrap();
+        assert_eq!(updated.score, -10, "banned peer score should not change");
+    }
+
+    #[test]
+    fn test_decay_scores_skips_if_interval_not_elapsed() {
+        let mut registry = PeerRegistry::default();
+        let mut peer = test_peer(1, 10);
+        peer.score = 50;
+        peer.last_score_decay_ms = 9_000; // Last decay at 9s.
+        registry.upsert(peer).unwrap();
+
+        // Decay interval is 5s, current time is 10s. Elapsed = 1s < 5s → skip.
+        registry.decay_scores(10_000, 5_000, 5, 100, 60_000);
+        let updated = registry.peers.get(&[1u8; 32]).unwrap();
+        assert_eq!(
+            updated.score, 50,
+            "should not decay if interval not elapsed"
+        );
+    }
 }
