@@ -1525,8 +1525,8 @@ mod tests {
     #[tokio::test]
     async fn test_v1_submit_missing_required_field_returns_structured_error() {
         let app = build_router(test_state());
-        let request_body = serde_json::to_vec(&serde_json::json!({}))
-        .expect("submit request must serialize");
+        let request_body =
+            serde_json::to_vec(&serde_json::json!({})).expect("submit request must serialize");
 
         let response = app
             .oneshot(
