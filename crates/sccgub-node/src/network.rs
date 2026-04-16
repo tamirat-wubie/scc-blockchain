@@ -369,7 +369,9 @@ impl NetworkRuntime {
         if persisted.is_empty() {
             self.pending_blocks.lock().await.clear();
             if let Some(store) = &self.store {
-                let _ = store.clear_pending_blocks();
+                if let Err(e) = store.clear_pending_blocks() {
+                    tracing::warn!("Failed to clear pending blocks: {}", e);
+                }
             }
             return;
         }
@@ -1086,8 +1088,15 @@ impl NetworkRuntime {
                         existing_vote = Some(existing.clone());
                     }
                 } else {
-                    let _ = state.round.add_prevote(vote.clone());
-                    vote_added = true;
+                    if let Err(e) = state.round.add_prevote(vote.clone()) {
+                        tracing::warn!(
+                            "Failed to add prevote from {}: {}",
+                            hex::encode(&vote.validator_id[..4]),
+                            e
+                        );
+                    } else {
+                        vote_added = true;
+                    }
                 }
             }
             VoteType::Precommit => {
@@ -1096,8 +1105,15 @@ impl NetworkRuntime {
                         existing_vote = Some(existing.clone());
                     }
                 } else {
-                    let _ = state.round.add_precommit(vote.clone());
-                    vote_added = true;
+                    if let Err(e) = state.round.add_precommit(vote.clone()) {
+                        tracing::warn!(
+                            "Failed to add precommit from {}: {}",
+                            hex::encode(&vote.validator_id[..4]),
+                            e
+                        );
+                    } else {
+                        vote_added = true;
+                    }
                 }
             }
             VoteType::Nil => {}
@@ -1500,7 +1516,9 @@ impl NetworkRuntime {
                     state.round.round,
                     VoteType::Precommit,
                 );
-                let _ = state.round.add_precommit(vote.clone());
+                if let Err(e) = state.round.add_precommit(vote.clone()) {
+                    tracing::warn!("Failed to add own precommit at height {}: {}", height, e);
+                }
                 self.broadcast(NetworkMessage::ConsensusVote(vote)).await;
             }
 
@@ -1599,8 +1617,12 @@ impl NetworkRuntime {
             self.consensus_rounds.lock().await.remove(&height);
             // Clear persisted consensus state after successful finalization.
             if let Some(store) = &self.store {
-                let _ = store.clear_consensus_state();
-                let _ = store.clear_pending_blocks();
+                if let Err(e) = store.clear_consensus_state() {
+                    tracing::warn!("Failed to clear consensus state after finalization: {}", e);
+                }
+                if let Err(e) = store.clear_pending_blocks() {
+                    tracing::warn!("Failed to clear pending blocks after finalization: {}", e);
+                }
             }
         }
         if aborted {
@@ -1831,8 +1853,18 @@ impl NetworkRuntime {
                 self.consensus_rounds.lock().await.clear();
                 self.pending_blocks.lock().await.clear();
                 if let Some(store) = &self.store {
-                    let _ = store.clear_consensus_state();
-                    let _ = store.clear_pending_blocks();
+                    if let Err(e) = store.clear_consensus_state() {
+                        tracing::warn!(
+                            "Failed to clear consensus state on validator set update: {}",
+                            e
+                        );
+                    }
+                    if let Err(e) = store.clear_pending_blocks() {
+                        tracing::warn!(
+                            "Failed to clear pending blocks on validator set update: {}",
+                            e
+                        );
+                    }
                 }
                 self.persist_consensus_state().await;
             }
@@ -2094,7 +2126,9 @@ async fn write_frame(
     if len == 0 || len > 8 * 1024 * 1024 {
         return Err(format!("invalid frame length {}", len));
     }
-    let len_buf = (len as u32).to_be_bytes();
+    let len_u32 =
+        u32::try_from(len).map_err(|_| format!("frame length {} exceeds u32::MAX", len))?;
+    let len_buf = len_u32.to_be_bytes();
     writer
         .write_all(&len_buf)
         .await

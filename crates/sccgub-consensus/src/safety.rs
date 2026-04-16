@@ -349,7 +349,7 @@ pub fn check_byzantine_tolerance(
             desired_tolerance,
             validator_count,
             max_f,
-            3 * desired_tolerance + 1
+            desired_tolerance.saturating_mul(3).saturating_add(1)
         ))
     } else {
         Ok(())
@@ -686,5 +686,123 @@ mod tests {
         assert_eq!(cert.validator_count, 4);
         assert_eq!(cert.quorum, 3); // floor(2*4/3) + 1 = 3
         assert_eq!(cert.precommit_signatures.len(), 4);
+    }
+
+    // ── N-48 coverage: safety certificate edge cases ─────────────────
+
+    #[test]
+    fn test_safety_cert_quorum_mismatch_fails() {
+        let mut cert = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
+        // Manually set quorum to wrong value (should be 3 for n=4).
+        cert.quorum = 2;
+        let err = cert.verify_structure().unwrap_err();
+        assert!(err.contains("Quorum mismatch"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_safety_cert_short_signer_sig_fails() {
+        let block = [42u8; 32];
+        let height = 5u64;
+        let round = 0u32;
+
+        let mut validator_set = HashMap::new();
+        let mut signers = Vec::new();
+        for i in 1..=4u8 {
+            let key = generate_keypair();
+            let pk = *key.verifying_key().as_bytes();
+            let id = [i; 32];
+            validator_set.insert(id, pk);
+            signers.push((id, key));
+        }
+
+        // Two valid sigs, one short sig.
+        let mut precommit_signatures = Vec::new();
+        for (id, key) in &signers[..2] {
+            let data = protocol::vote_sign_data(
+                &TEST_CHAIN_ID,
+                TEST_EPOCH,
+                &block,
+                height,
+                round,
+                crate::protocol::VoteType::Precommit,
+            );
+            let sig = sccgub_crypto::signature::sign(key, &data);
+            precommit_signatures.push((*id, sig));
+        }
+        // Third sig: only 32 bytes (too short).
+        precommit_signatures.push((signers[2].0, vec![0u8; 32]));
+
+        let cert = SafetyCertificate {
+            chain_id: TEST_CHAIN_ID,
+            epoch: TEST_EPOCH,
+            height,
+            block_hash: block,
+            round,
+            precommit_signatures,
+            quorum: 3,
+            validator_count: 4,
+        };
+
+        let err = cert.verify_cryptographic(&validator_set).unwrap_err();
+        assert!(
+            err.contains("Signature too short"),
+            "Expected short sig error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_equivocation_evidence_same_block_rejected() {
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let id = [1u8; 32];
+        let height = 10u64;
+        let block = [0xAAu8; 32];
+
+        let data = sccgub_crypto::canonical::canonical_bytes(&(&block, height, 0u32, 2u8));
+
+        let evidence = EquivocationEvidence {
+            validator_id: id,
+            height,
+            round_a: 0,
+            round_b: 0,
+            block_hash_a: block,
+            block_hash_b: block, // Same block — not real equivocation
+            signature_a: sccgub_crypto::signature::sign(&key, &data),
+            signature_b: sccgub_crypto::signature::sign(&key, &data),
+        };
+
+        let err = evidence.verify(&pk).unwrap_err();
+        assert!(err.contains("same block hash"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_from_fork_different_heights_returns_empty() {
+        let cert_a = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
+        let cert_b = make_cert(11, [2u8; 32], &[3, 4, 5], 4);
+        let evidence = EquivocationStore::extract_from_fork(&cert_a, &cert_b);
+        assert!(
+            evidence.is_empty(),
+            "Different heights should yield no equivocation evidence"
+        );
+    }
+
+    #[test]
+    fn test_extract_from_fork_same_block_returns_empty() {
+        let cert_a = make_cert(10, [1u8; 32], &[1, 2, 3], 4);
+        let cert_b = make_cert(10, [1u8; 32], &[3, 4, 5], 4);
+        let evidence = EquivocationStore::extract_from_fork(&cert_a, &cert_b);
+        assert!(
+            evidence.is_empty(),
+            "Same block hash should yield no equivocation evidence"
+        );
+    }
+
+    #[test]
+    fn test_check_byzantine_tolerance_display_overflow_safe() {
+        // Ensure the error message uses saturating arithmetic (N-48 fix).
+        let err = check_byzantine_tolerance(3, u32::MAX).unwrap_err();
+        // Just verify it doesn't panic and produces a valid error message.
+        assert!(err.contains("Cannot tolerate"), "got: {}", err);
     }
 }

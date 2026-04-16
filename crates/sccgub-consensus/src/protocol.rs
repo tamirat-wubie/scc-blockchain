@@ -667,4 +667,151 @@ mod tests {
         assert!(hashes.contains(&block_a));
         assert!(hashes.contains(&block_b));
     }
+
+    // ── N-48 coverage: vote rejection paths ──────────────────────────
+
+    #[test]
+    fn test_vote_wrong_height_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 5, 0, vs);
+        // Vote at height 3 into a round at height 5.
+        let vote = signed_vote(keys[0].0, &keys[0].1, block, 3, 0, VoteType::Prevote);
+        let err = round.add_prevote(vote).unwrap_err();
+        assert!(
+            err.contains("height/round mismatch"),
+            "Expected height/round error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_vote_wrong_round_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 2, vs);
+        // Vote at round 0 into a round at round 2.
+        let vote = signed_vote(keys[0].0, &keys[0].1, block, 1, 0, VoteType::Prevote);
+        let err = round.add_prevote(vote).unwrap_err();
+        assert!(err.contains("height/round mismatch"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_vote_short_signature_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+        let mut vote = Vote {
+            validator_id: keys[0].0,
+            block_hash: block,
+            height: 1,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            signature: vec![0u8; 32], // Too short
+        };
+        let err = round.add_prevote(vote.clone()).unwrap_err();
+        assert!(err.contains("at least 64 bytes"), "got: {}", err);
+        // Also check precommit path.
+        vote.vote_type = VoteType::Precommit;
+        let err = round.add_precommit(vote).unwrap_err();
+        assert!(err.contains("at least 64 bytes"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_vote_invalid_signature_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+        // 64-byte garbage signature passes length check but fails crypto.
+        let vote = Vote {
+            validator_id: keys[0].0,
+            block_hash: block,
+            height: 1,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            signature: vec![0xAB; 64],
+        };
+        let err = round.add_prevote(vote).unwrap_err();
+        assert!(
+            err.contains("signature verification failed"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_prevote_with_precommit_type_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+        // Sign a Precommit vote but try to add it as Prevote.
+        let vote = signed_vote(keys[0].0, &keys[0].1, block, 1, 0, VoteType::Precommit);
+        let err = round.add_prevote(vote).unwrap_err();
+        assert!(err.contains("Expected"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_precommit_with_prevote_type_rejected() {
+        let block = [1u8; 32];
+        let (vs, keys) = make_validators(3);
+        let mut round = test_round(block, 1, 0, vs);
+        let vote = signed_vote(keys[0].0, &keys[0].1, block, 1, 0, VoteType::Prevote);
+        let err = round.add_precommit(vote).unwrap_err();
+        assert!(err.contains("Expected"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_empty_validator_set_cannot_finalize() {
+        let block = [1u8; 32];
+        let mut round =
+            ConsensusRound::new(TEST_CHAIN_ID, TEST_EPOCH, block, 1, 0, HashMap::new(), 10);
+        // With 0 validators quorum = 1, but no votes can be added (all fail membership).
+        assert_eq!(round.prevote_count(), 0);
+        assert_eq!(round.precommit_count(), 0);
+        // Should not finalize.
+        match round.evaluate() {
+            ConsensusResult::Finalized { .. } => {
+                panic!("Empty validator set should never finalize")
+            }
+            _ => {} // NextRound or Aborted is acceptable
+        }
+    }
+
+    #[test]
+    fn test_quorum_one_validator() {
+        // Single validator: quorum = (2*1)/3 + 1 = 1.
+        let (vs, keys) = make_validators(1);
+        let block = [1u8; 32];
+        let mut round = test_round(block, 1, 0, vs);
+        assert_eq!(round.quorum, 1);
+
+        round
+            .add_prevote(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Prevote,
+            ))
+            .unwrap();
+        assert!(round.has_prevote_quorum());
+
+        round
+            .add_precommit(signed_vote(
+                keys[0].0,
+                &keys[0].1,
+                block,
+                1,
+                0,
+                VoteType::Precommit,
+            ))
+            .unwrap();
+        assert!(round.has_precommit_quorum());
+
+        match round.evaluate() {
+            ConsensusResult::Finalized { .. } => {}
+            other => panic!("Single validator should finalize, got {:?}", other),
+        }
+    }
 }

@@ -247,7 +247,7 @@ impl Timer {
     }
 
     pub fn elapsed_ns(&self) -> u64 {
-        self.start.elapsed().as_nanos() as u64
+        u64::try_from(self.start.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 }
 

@@ -79,7 +79,7 @@ impl MfidelAtomicSeal {
         if height == 0 {
             return 0;
         }
-        (height - 1) / Self::TOTAL_FIDELS as u64
+        height.saturating_sub(1) / Self::TOTAL_FIDELS as u64
     }
 }
 

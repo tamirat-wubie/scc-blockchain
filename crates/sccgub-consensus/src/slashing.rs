@@ -292,4 +292,67 @@ mod tests {
         // 10% of 1000 = 100.
         assert_eq!(event.penalty, TensionValue::from_integer(100));
     }
+
+    // ── N-48 coverage: unknown validator + edge cases ────────────────
+
+    #[test]
+    fn test_slash_double_sign_unknown_validator_fails() {
+        let mut engine = SlashingEngine::new(SlashingConfig::default());
+        let unknown = [99u8; 32];
+        // No stake set for this validator.
+        let proof = EquivocationProof {
+            validator_id: unknown,
+            height: 10,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            block_hash_a: [2u8; 32],
+            block_hash_b: [3u8; 32],
+        };
+        let err = engine.slash_double_sign(proof, 1).unwrap_err();
+        assert!(err.contains("not found"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_slash_divergence_unknown_validator_fails() {
+        let mut engine = SlashingEngine::new(SlashingConfig::default());
+        let unknown = [99u8; 32];
+        let err = engine
+            .slash_divergence(unknown, [2u8; 32], [3u8; 32], 5)
+            .unwrap_err();
+        assert!(err.contains("not found"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_record_absence_unknown_validator_returns_none() {
+        let mut engine = SlashingEngine::new(SlashingConfig::default());
+        let unknown = [99u8; 32];
+        // No stake — record_absence should return None.
+        let result = engine.record_absence(unknown, 1);
+        assert!(result.is_none());
+        // But the counter still incremented.
+        assert_eq!(*engine.absence_counter.get(&unknown).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_double_sign_removes_validator_at_zero_stake() {
+        let mut engine = SlashingEngine::new(SlashingConfig {
+            double_sign_penalty_pct: 100, // 100% slash
+            ..Default::default()
+        });
+        let validator = [1u8; 32];
+        engine.set_stake(validator, TensionValue::from_integer(500));
+
+        let proof = EquivocationProof {
+            validator_id: validator,
+            height: 10,
+            round: 0,
+            vote_type: VoteType::Prevote,
+            block_hash_a: [2u8; 32],
+            block_hash_b: [3u8; 32],
+        };
+
+        let event = engine.slash_double_sign(proof, 1).unwrap();
+        assert_eq!(event.penalty, TensionValue::from_integer(500));
+        assert!(engine.is_removed(&validator));
+    }
 }

@@ -414,4 +414,33 @@ mod tests {
         meter.charge(3_000, "test2").unwrap();
         assert_eq!(meter.remaining(), 0);
     }
+
+    // ── N-48 coverage: boundary values ───────────────────────────────
+
+    #[test]
+    fn test_block_gas_utilization_zero_limit_returns_100() {
+        let meter = BlockGasMeter::new(0);
+        assert_eq!(meter.utilization_pct(), 100);
+    }
+
+    #[test]
+    fn test_block_gas_utilization_full() {
+        let mut meter = BlockGasMeter::new(1000);
+        meter.record_tx(1000);
+        assert_eq!(meter.utilization_pct(), 100);
+    }
+
+    #[test]
+    fn test_block_gas_utilization_half() {
+        let mut meter = BlockGasMeter::new(1000);
+        meter.record_tx(500);
+        assert_eq!(meter.utilization_pct(), 50);
+    }
+
+    #[test]
+    fn test_block_gas_remaining_saturates() {
+        let mut meter = BlockGasMeter::new(100);
+        meter.record_tx(200); // Over limit
+        assert_eq!(meter.remaining(), 0);
+    }
 }

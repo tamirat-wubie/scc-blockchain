@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 793 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 824 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -244,10 +244,18 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-45: `PeerRegistry::check_diversity` divided by `connected` without explicit zero guard. Structurally safe but added defensive guard for auditability.
 - N-46: `ConsensusRound::prevote_count()` and `precommit_count()` used `.count() as u32` without `.min(u32::MAX as usize)` truncation guard. Added guard to match all other `.len() as u32` sites.
 - N-47: `NormRegistry::evolve_epoch()` used panicking `self.norms[id]` HashMap index at 4 sites. Replaced with `.get()`/`.filter_map()` to prevent panic on stale keys during concurrent refactoring.
+- N-48 (batch): Second-pass audit findings — error swallowing, cast safety, consensus test coverage:
+  - **REAL BUG**: P2P runtime error (`runtime.run().await`) was silently discarded via `let _ =` in `main.rs`. Node could enter degraded state with no indication. Fixed: now logs error with `eprintln!`.
+  - **NEEDS GUARD**: Consensus vote additions (`add_prevote`/`add_precommit`) silently discarded errors via `let _ =` in network.rs vote-handling path (3 sites). Fixed: now logs `tracing::warn!` on failure.
+  - **NEEDS GUARD**: Persistence clear calls (`clear_consensus_state`, `clear_pending_blocks`) silently discarded errors via `let _ =` at 5 sites. Fixed: now logs `tracing::warn!` on failure.
+  - **CAST SAFETY**: `len as u32` in network frame writer replaced with `u32::try_from()` + error propagation. `height - 1` in `mfidel.rs` replaced with `saturating_sub(1)`. `.as_nanos() as u64` in observability replaced with saturating cast. `3 * desired_tolerance + 1` in safety.rs error display replaced with saturating arithmetic.
+  - **TEST COVERAGE**: +31 tests covering vote rejection paths (height/round mismatch, short sig, invalid sig, wrong type, empty validator set), safety certificate edge cases (quorum mismatch, short signer sig, same-block evidence, extract_from_fork early returns), slashing unknown validator, gas boundary values, ConsensusParams boundary values, finality gap edge cases.
 - Dep cleanup: removed unused `bincode` dependency from sccgub-execution, sccgub-governance, and sccgub-network Cargo.toml (those crates use sccgub-crypto::canonical, not bincode directly).
 
 ### Open items:
-- None currently tracked in this hardening pass.
+- Idempotency key field is parsed but never used in API handlers (documented contract unimplemented).
+- No request body size limit on POST API endpoints.
+- API `pending_txs` mirror does not drain back into `Chain::mempool` (API-submitted txs may not flow into block production without separate reconciliation).
 
 ### Bincode 1.x freeze decision
 - **Assessed**: Migration from bincode 1.x to 2.x is **not safe** for consensus.

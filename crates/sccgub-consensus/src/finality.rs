@@ -182,4 +182,30 @@ mod tests {
         assert!(certs.is_empty());
         assert_eq!(tracker.finalized_height, 0);
     }
+
+    // ── N-48 coverage: finality edge cases ───────────────────────────
+
+    #[test]
+    fn test_finality_halts_on_missing_block_hash() {
+        let config = FinalityConfig {
+            confirmation_depth: 1,
+            ..Default::default()
+        };
+        let mut tracker = FinalityTracker::default();
+        for h in 1..=5 {
+            tracker.on_new_block(h);
+        }
+
+        // Return None for height 3 — finality should stop at height 2.
+        let certs =
+            tracker.check_finality(&config, |h| if h == 3 { None } else { Some([h as u8; 32]) });
+        assert_eq!(certs.len(), 2); // blocks 1, 2 finalized
+        assert_eq!(tracker.finalized_height, 2);
+    }
+
+    #[test]
+    fn test_finality_gap_with_no_blocks() {
+        let tracker = FinalityTracker::default();
+        assert_eq!(tracker.finality_gap(), 0);
+    }
 }

@@ -420,4 +420,70 @@ mod tests {
         };
         assert!(p.validate().is_err());
     }
+
+    // ── N-48 coverage: boundary values ───────────────────────────────
+
+    #[test]
+    fn block_gas_equal_to_tx_gas_accepted() {
+        let p = ConsensusParams {
+            default_block_gas_limit: 1_000,
+            default_tx_gas_limit: 1_000,
+            ..Default::default()
+        };
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn zero_tension_swing_rejected() {
+        let p = ConsensusParams {
+            max_tension_swing: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn negative_tension_swing_rejected() {
+        let p = ConsensusParams {
+            max_tension_swing: -1,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn excessive_tension_swing_rejected() {
+        let p = ConsensusParams {
+            max_tension_swing: 1_000_000_001,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn zero_constraint_propagation_depth_rejected() {
+        let p = ConsensusParams {
+            max_constraint_propagation_depth: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn excessive_constraint_propagation_depth_rejected() {
+        let p = ConsensusParams {
+            max_constraint_propagation_depth: 1_001,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn zero_constraint_propagation_steps_rejected() {
+        let p = ConsensusParams {
+            max_constraint_propagation_steps: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
 }

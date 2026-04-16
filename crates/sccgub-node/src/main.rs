@@ -1700,7 +1700,9 @@ async fn cmd_serve(
                 }
             };
         let runtime = std::sync::Arc::new(runtime);
-        let _ = runtime.run().await;
+        if let Err(e) = runtime.run().await {
+            eprintln!("P2P runtime error: {}", e);
+        }
     }
 
     if !(config.network.enable || p2p) {
