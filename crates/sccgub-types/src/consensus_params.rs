@@ -135,8 +135,17 @@ impl ConsensusParams {
                 self.max_proof_depth
             ));
         }
-        if self.default_tx_gas_limit == 0 {
-            return Err("default_tx_gas_limit must be > 0".into());
+        if self.default_tx_gas_limit == 0 || self.default_tx_gas_limit > 1_000_000_000 {
+            return Err(format!(
+                "default_tx_gas_limit {} out of bounds (1..1000000000)",
+                self.default_tx_gas_limit
+            ));
+        }
+        if self.default_block_gas_limit == 0 || self.default_block_gas_limit > 10_000_000_000 {
+            return Err(format!(
+                "default_block_gas_limit {} out of bounds (1..10000000000)",
+                self.default_block_gas_limit
+            ));
         }
         if self.default_block_gas_limit < self.default_tx_gas_limit {
             return Err(format!(
@@ -144,14 +153,25 @@ impl ConsensusParams {
                 self.default_block_gas_limit, self.default_tx_gas_limit
             ));
         }
-        if self.max_state_entry_size == 0 {
-            return Err("max_state_entry_size must be > 0".into());
+        if self.max_state_entry_size == 0 || self.max_state_entry_size > 16 * 1024 * 1024 {
+            return Err(format!(
+                "max_state_entry_size {} out of bounds (1..16777216)",
+                self.max_state_entry_size
+            ));
         }
-        if self.max_symbol_address_len == 0 {
-            return Err("max_symbol_address_len must be > 0".into());
+        if self.max_symbol_address_len == 0
+            || self.max_symbol_address_len > self.max_state_entry_size
+        {
+            return Err(format!(
+                "max_symbol_address_len {} out of bounds (1..={})",
+                self.max_symbol_address_len, self.max_state_entry_size
+            ));
         }
-        if self.max_tension_swing <= 0 {
-            return Err("max_tension_swing must be > 0".into());
+        if self.max_tension_swing <= 0 || self.max_tension_swing > 1_000_000_000 {
+            return Err(format!(
+                "max_tension_swing {} out of bounds (1..1000000000)",
+                self.max_tension_swing
+            ));
         }
         // Propagation bounds — prevent OOM from unbounded walker expansion.
         if self.max_constraint_propagation_depth == 0
@@ -179,8 +199,25 @@ impl ConsensusParams {
         if self.max_constraints_per_symbol == 0 {
             return Err("max_constraints_per_symbol must be > 0".into());
         }
-        if self.default_max_steps == 0 {
-            return Err("default_max_steps must be > 0".into());
+        if self.default_max_steps == 0 || self.default_max_steps > 10_000_000 {
+            return Err(format!(
+                "default_max_steps {} out of bounds (1..10000000)",
+                self.default_max_steps
+            ));
+        }
+        for (label, value) in [
+            ("gas_tx_base", self.gas_tx_base),
+            ("gas_compute_step", self.gas_compute_step),
+            ("gas_state_read", self.gas_state_read),
+            ("gas_state_write", self.gas_state_write),
+            ("gas_sig_verify", self.gas_sig_verify),
+            ("gas_hash_op", self.gas_hash_op),
+            ("gas_proof_byte", self.gas_proof_byte),
+            ("gas_payload_byte", self.gas_payload_byte),
+        ] {
+            if value == 0 || value > 1_000_000 {
+                return Err(format!("{} {} out of bounds (1..1000000)", label, value));
+            }
         }
         Ok(())
     }
@@ -354,6 +391,34 @@ mod tests {
     fn zero_state_entry_size_rejected() {
         let p = ConsensusParams {
             max_state_entry_size: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn zero_gas_cost_rejected() {
+        let p = ConsensusParams {
+            gas_state_write: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn symbol_address_larger_than_entry_rejected() {
+        let p = ConsensusParams {
+            max_symbol_address_len: 2048,
+            max_state_entry_size: 1024,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn excessive_default_max_steps_rejected() {
+        let p = ConsensusParams {
+            default_max_steps: 10_000_001,
             ..Default::default()
         };
         assert!(p.validate().is_err());
