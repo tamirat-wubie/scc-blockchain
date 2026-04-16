@@ -4088,6 +4088,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_fork_choice_deterministic_equal_finality_prefers_higher_height() {
+        let mut chain_a = Chain::init();
+        chain_a.governance_limits.max_consecutive_proposals = 100;
+        let mut chain_b = chain_a.clone();
+
+        // Both are Deterministic mode (default). Same finalized height.
+        chain_a.finality.finalized_height = 3;
+        chain_b.finality.finalized_height = 3;
+
+        // chain_b has more total blocks.
+        for _ in 0..5 {
+            chain_b.produce_block().unwrap();
+        }
+        assert!(
+            chain_a.should_switch_to(&chain_b),
+            "Equal finality, higher total height: should switch"
+        );
+        assert!(
+            !chain_b.should_switch_to(&chain_a),
+            "Equal finality, lower total height: should not switch"
+        );
+    }
+
+    #[test]
+    fn test_fork_choice_deterministic_equal_finality_equal_height_no_switch() {
+        let mut chain_a = Chain::init();
+        chain_a.governance_limits.max_consecutive_proposals = 100;
+        let chain_b = chain_a.clone();
+
+        // Same finality, same height → incumbency advantage.
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "Equal everything: incumbency advantage, no switch"
+        );
+    }
+
+    #[test]
+    fn test_fork_choice_mixed_finality_mode_refuses_switch() {
+        let mut chain_a = Chain::init();
+        let mut chain_b = chain_a.clone();
+
+        // chain_a is BFT, chain_b is Deterministic.
+        chain_a.state.state.governance_state.finality_mode = FinalityMode::BftCertified {
+            quorum_threshold: 2,
+        };
+        // chain_b stays Deterministic (default).
+        chain_a.finality.finalized_height = 5;
+        chain_b.finality.finalized_height = 5;
+
+        // Mixed mode with tied finality: should NOT switch (at least one is BFT).
+        assert!(
+            !chain_a.should_switch_to(&chain_b),
+            "Mixed finality mode with tied finality: no switch"
+        );
+    }
+
     /// CONSERVATION INVARIANT: total token supply must not change across
     /// block production. Tokens can move between accounts (transfers, fees,
     /// rewards) but the treasury accounting identity must hold:
