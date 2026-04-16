@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 859 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 865 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -252,10 +252,23 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
   - **TEST COVERAGE**: +31 tests covering vote rejection paths (height/round mismatch, short sig, invalid sig, wrong type, empty validator set), safety certificate edge cases (quorum mismatch, short signer sig, same-block evidence, extract_from_fork early returns), slashing unknown validator, gas boundary values, ConsensusParams boundary values, finality gap edge cases.
 - Dep cleanup: removed unused `bincode` dependency from sccgub-execution, sccgub-governance, and sccgub-network Cargo.toml (those crates use sccgub-crypto::canonical, not bincode directly).
 
+- N-49 (batch): Third-pass audit — treasury guards, keystore atomic write, network roundtrip tests, metrics overflow:
+  - **TREASURY**: `collect_fee`, `distribute_reward`, `burn` accepted negative `TensionValue` that could create/destroy tokens. Fixed with `.max(0)` clamping and explicit negative rejection.
+  - **KEYSTORE**: `save_keystore` used non-atomic `std::fs::write`, risking key loss on crash. Fixed with write-to-temp-then-rename pattern.
+  - **METRICS**: `avg_validation_ns` multiply overflowed u64 on long-running nodes. Fixed with saturating arithmetic.
+  - **TEST COVERAGE**: +16 tests: treasury edge cases (6), keystore I/O (3), network message roundtrips (7).
+- N-50 (batch): Fourth-pass audit — finality dedup, error logging, mempool hardening:
+  - **REAL BUG (B-8)**: `BlockFinalized` event emitted every block once finality had ever advanced (`finalized_height > 0`), not only when finality actually moved. Fixed: now checks `finalized_height > prev_finalized_height`.
+  - **ERROR LOGGING**: Governance vote replay failure silently swallowed (`let _ = proposals.vote(...)` in chain.rs). Fixed: now `tracing::warn!` on failure.
+  - **ERROR LOGGING**: API bridge sync failures silently swallowed at 6 sites across main.rs and network.rs. All now log with `eprintln!`/`tracing::warn!`.
+  - **ERROR LOGGING**: Snapshot rotation failures silently swallowed at 3 sites in network.rs. All now log with `eprintln!`.
+  - **MEMORY (M-3)**: `confirmed_ids` HashSet grew without bound in mempool. Added `confirmed_order` VecDeque + LRU eviction capped at 100K entries.
+  - **TEST COVERAGE**: +8 tests: drain_validated empty/valid/nonce-zero/sequential/gap/all-invalid/ordering, confirmed_ids pruning.
+
 ### Open items:
-- Idempotency key field is parsed but never used in API handlers (documented contract unimplemented).
-- No request body size limit on POST API endpoints.
 - API `pending_txs` mirror does not drain back into `Chain::mempool` (API-submitted txs may not flow into block production without separate reconciliation).
+- ProposalStatus enum has 3 dead variants (`Submitted`, `Accepted`, `Expired`) never set by production code (G-1/G-3/G-4).
+- 12 of 18 `ChainEvent` variants never emitted by production code (O-1).
 
 ### Bincode 1.x freeze decision
 - **Assessed**: Migration from bincode 1.x to 2.x is **not safe** for consensus.

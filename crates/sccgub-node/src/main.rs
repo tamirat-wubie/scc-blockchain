@@ -1682,7 +1682,9 @@ async fn cmd_serve(
         .with_min_interval_ms(config.api_sync.min_interval_ms);
     {
         let chain = chain_ref.read().await;
-        let _ = bridge.sync_from_chain(&chain).await;
+        if let Err(e) = bridge.sync_from_chain(&chain).await {
+            eprintln!("Warning: initial API bridge sync failed: {}", e);
+        }
     }
     {
         let mut chain = chain_ref.write().await;
@@ -1707,7 +1709,9 @@ async fn cmd_serve(
     }
 
     if !(config.network.enable || p2p) {
-        let _ = bridge.sync_from_chain_arc(&chain_ref).await;
+        if let Err(e) = bridge.sync_from_chain_arc(&chain_ref).await {
+            eprintln!("Warning: offline API bridge sync failed: {}", e);
+        }
     }
 
     if let Some((interval_secs, json_output)) = observe_interval {

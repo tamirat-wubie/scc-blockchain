@@ -1220,6 +1220,7 @@ impl Chain {
                 }
 
                 // Update finality tracker.
+                let prev_finalized_height = self.finality.finalized_height;
                 self.finality.on_new_block(height);
                 if matches!(
                     self.state.state.governance_state.finality_mode,
@@ -1295,8 +1296,8 @@ impl Chain {
                     });
                 }
 
-                // Emit finality event if new blocks were finalized.
-                if self.finality.finalized_height > 0 {
+                // B-8: Only emit finality event when finalized height actually advances.
+                if self.finality.finalized_height > prev_finalized_height {
                     events.emit(sccgub_types::events::ChainEvent::BlockFinalized {
                         block_height: self.finality.finalized_height,
                         block_hash: self
@@ -1758,13 +1759,19 @@ fn replay_governance_from_transitions<F>(
                     || key.starts_with(b"norms/governance/proposals/")
                 {
                     if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
-                        let _ = proposals.vote(
+                        if let Err(e) = proposals.vote(
                             &proposal_id,
                             tx.actor.agent_id,
                             tx.actor.governance_level,
                             true,
                             height,
-                        );
+                        ) {
+                            tracing::warn!(
+                                "Replay governance vote failed for proposal {}: {}",
+                                hex::encode(&proposal_id[..4]),
+                                e
+                            );
+                        }
                     }
                 }
             }

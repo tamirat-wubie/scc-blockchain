@@ -7,12 +7,18 @@ use sccgub_types::tension::TensionValue;
 use sccgub_types::transition::SymbolicTransition;
 use sccgub_types::Hash;
 
+/// Maximum number of confirmed transaction IDs to retain for replay
+/// protection. Once exceeded, oldest entries are pruned. 100k entries ≈ 7 MB.
+const MAX_CONFIRMED_IDS: usize = 100_000;
+
 /// Transaction mempool with admission, dedup, validation, and containment.
 #[derive(Clone)]
 pub struct Mempool {
     pending: VecDeque<SymbolicTransition>,
     seen_ids: HashSet<Hash>,
     confirmed_ids: HashSet<Hash>,
+    /// Insertion-ordered queue for LRU eviction of confirmed_ids.
+    confirmed_order: VecDeque<Hash>,
     max_size: usize,
     pub containment: ContainmentState,
 }
@@ -23,6 +29,7 @@ impl Mempool {
             pending: VecDeque::new(),
             seen_ids: HashSet::new(),
             confirmed_ids: HashSet::new(),
+            confirmed_order: VecDeque::new(),
             max_size,
             containment: ContainmentState::default(),
         }
@@ -30,7 +37,17 @@ impl Mempool {
 
     pub fn mark_confirmed(&mut self, ids: &[Hash]) {
         for id in ids {
-            self.confirmed_ids.insert(*id);
+            if self.confirmed_ids.insert(*id) {
+                self.confirmed_order.push_back(*id);
+            }
+        }
+        // M-3: Prune oldest confirmed IDs to prevent unbounded growth.
+        while self.confirmed_ids.len() > MAX_CONFIRMED_IDS {
+            if let Some(oldest) = self.confirmed_order.pop_front() {
+                self.confirmed_ids.remove(&oldest);
+            } else {
+                break;
+            }
         }
     }
 
@@ -247,5 +264,151 @@ mod tests {
 
         let tx = test_tx(agent, 1);
         assert!(mempool.add(tx).is_err()); // Quarantined.
+    }
+
+    // ── drain_validated tests (M-1) ──────────────────────────────
+
+    fn test_state_with_nonce(agent: Hash, committed_nonce: u128) -> ManagedWorldState {
+        let mut state = ManagedWorldState::new();
+        if committed_nonce > 0 {
+            state.agent_nonces.insert(agent, committed_nonce);
+        }
+        state
+    }
+
+    #[test]
+    fn test_drain_validated_empty_mempool() {
+        let mut mempool = Mempool::new(100);
+        let state = ManagedWorldState::new();
+        let result = mempool.drain_validated(&state);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_drain_validated_single_valid_tx() {
+        let mut mempool = Mempool::new(100);
+        let agent = [1u8; 32];
+        let tx = test_tx(agent, 1);
+        mempool.add(tx.clone()).unwrap();
+
+        let state = test_state_with_nonce(agent, 0);
+        let result = mempool.drain_validated(&state);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].tx_id, tx.tx_id);
+        assert_eq!(mempool.len(), 0, "pending should be drained");
+    }
+
+    #[test]
+    fn test_drain_validated_nonce_zero_rejected() {
+        let mut mempool = Mempool::new(100);
+        let agent = [1u8; 32];
+        let tx = test_tx(agent, 0); // Nonce zero is always rejected.
+        mempool.add(tx).unwrap();
+
+        let state = ManagedWorldState::new();
+        let result = mempool.drain_validated(&state);
+        assert!(result.is_empty(), "nonce=0 should be rejected");
+        assert_eq!(mempool.len(), 0, "rejected tx still drained from pending");
+    }
+
+    #[test]
+    fn test_drain_validated_sequential_nonces_same_agent() {
+        let mut mempool = Mempool::new(100);
+        let agent = [1u8; 32];
+        // Three sequential nonces from the same agent (committed=0).
+        let tx1 = test_tx(agent, 1);
+        let tx2 = test_tx(agent, 2);
+        let tx3 = test_tx(agent, 3);
+        mempool.add(tx1).unwrap();
+        mempool.add(tx2).unwrap();
+        mempool.add(tx3).unwrap();
+
+        let state = test_state_with_nonce(agent, 0);
+        let result = mempool.drain_validated(&state);
+        assert_eq!(result.len(), 3, "all sequential nonces should pass");
+    }
+
+    #[test]
+    fn test_drain_validated_nonce_gap_rejects_later() {
+        let mut mempool = Mempool::new(100);
+        let agent = [1u8; 32];
+        // Nonces 1 and 3 but not 2 — gap means 3 is rejected.
+        let tx1 = test_tx(agent, 1);
+        let tx3 = test_tx(agent, 3);
+        mempool.add(tx1).unwrap();
+        mempool.add(tx3).unwrap();
+
+        let state = test_state_with_nonce(agent, 0);
+        let result = mempool.drain_validated(&state);
+        assert_eq!(result.len(), 1, "only nonce=1 should pass, 3 has a gap");
+        assert_eq!(result[0].nonce, 1);
+    }
+
+    #[test]
+    fn test_drain_validated_all_invalid() {
+        let mut mempool = Mempool::new(100);
+        let agent = [1u8; 32];
+        // Nonce=5 when committed=0 → expected=1 → mismatch.
+        let tx = test_tx(agent, 5);
+        mempool.add(tx).unwrap();
+
+        let state = test_state_with_nonce(agent, 0);
+        let result = mempool.drain_validated(&state);
+        assert!(result.is_empty());
+        assert_eq!(mempool.len(), 0, "invalid tx still removed from pending");
+    }
+
+    #[test]
+    fn test_drain_validated_deterministic_ordering() {
+        let mut mempool = Mempool::new(100);
+        let agent_a = [1u8; 32];
+        let agent_b = [2u8; 32];
+        // Agent B submitted first, then Agent A.
+        let tx_b = test_tx(agent_b, 1);
+        let tx_a = test_tx(agent_a, 1);
+        mempool.add(tx_b.clone()).unwrap();
+        mempool.add(tx_a.clone()).unwrap();
+
+        let state = ManagedWorldState::new();
+        let result = mempool.drain_validated(&state);
+        assert_eq!(result.len(), 2);
+        // Both have nonce=1, so tiebreak by tx_id.
+        assert!(
+            result[0].tx_id < result[1].tx_id,
+            "should be sorted by (nonce, tx_id)"
+        );
+    }
+
+    // ── confirmed_ids pruning test (M-3) ─────────────────────────
+
+    #[test]
+    fn test_confirmed_ids_pruned_at_max() {
+        let mut mempool = Mempool::new(100);
+        // Fill confirmed_ids to MAX_CONFIRMED_IDS + 10.
+        let overflow = 10;
+        let total = MAX_CONFIRMED_IDS + overflow;
+        let ids: Vec<Hash> = (0..total)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                h
+            })
+            .collect();
+        mempool.mark_confirmed(&ids);
+        assert_eq!(
+            mempool.confirmed_ids.len(),
+            MAX_CONFIRMED_IDS,
+            "should be pruned to MAX_CONFIRMED_IDS"
+        );
+        // The first `overflow` IDs should have been evicted.
+        for i in 0..overflow {
+            assert!(
+                !mempool.confirmed_ids.contains(&ids[i]),
+                "oldest ID {} should be evicted",
+                i
+            );
+        }
+        // The newest IDs should still be present.
+        assert!(mempool.confirmed_ids.contains(&ids[total - 1]));
     }
 }
