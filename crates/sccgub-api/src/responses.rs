@@ -6,7 +6,6 @@ use serde::Serialize;
 /// - `success`: boolean flag for quick checks.
 /// - `data`: the response payload (only on success).
 /// - `error`: structured error with machine-readable code (only on failure).
-/// - `request_id`: optional idempotency/correlation key echoed back to caller.
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T: Serialize> {
     pub success: bool,
@@ -14,8 +13,6 @@ pub struct ApiResponse<T: Serialize> {
     pub data: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ApiError>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
 }
 
 /// Structured error with machine-readable code for client integration.
@@ -98,16 +95,6 @@ impl<T: Serialize> ApiResponse<T> {
             success: true,
             data: Some(data),
             error: None,
-            request_id: None,
-        }
-    }
-
-    pub fn ok_with_request_id(data: T, request_id: String) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-            request_id: Some(request_id),
         }
     }
 
@@ -119,23 +106,6 @@ impl<T: Serialize> ApiResponse<T> {
                 code,
                 message: msg.into(),
             }),
-            request_id: None,
-        }
-    }
-
-    pub fn err_with_request_id(
-        code: ErrorCode,
-        msg: impl Into<String>,
-        request_id: String,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code,
-                message: msg.into(),
-            }),
-            request_id: Some(request_id),
         }
     }
 }
@@ -308,9 +278,6 @@ pub struct BlockReceiptsResponse {
 pub struct SubmitTransactionRequest {
     /// Hex-encoded bincode-serialized SymbolicTransition.
     pub tx_hex: String,
-    /// Optional idempotency key — if the same key is submitted twice,
-    /// the second submission returns the first result without re-processing.
-    pub idempotency_key: Option<String>,
 }
 
 /// Governance parameter proposal submission request.
@@ -318,9 +285,6 @@ pub struct SubmitTransactionRequest {
 pub struct SubmitGovernanceParamRequest {
     /// Hex-encoded bincode-serialized SymbolicTransition.
     pub tx_hex: String,
-    /// Optional idempotency key — if the same key is submitted twice,
-    /// the second submission returns the first result without re-processing.
-    pub idempotency_key: Option<String>,
 }
 
 /// Governance proposal vote submission request.
@@ -328,9 +292,6 @@ pub struct SubmitGovernanceParamRequest {
 pub struct SubmitGovernanceVoteRequest {
     /// Hex-encoded bincode-serialized SymbolicTransition.
     pub tx_hex: String,
-    /// Optional idempotency key — if the same key is submitted twice,
-    /// the second submission returns the first result without re-processing.
-    pub idempotency_key: Option<String>,
 }
 
 /// Transaction submission response.
@@ -566,10 +527,7 @@ mod tests {
         let rust_fields = rust_submit_request_fields();
         assert_eq!(
             rust_fields,
-            vec![
-                ("tx_hex".to_string(), false),
-                ("idempotency_key".to_string(), true),
-            ],
+            vec![("tx_hex".to_string(), false)],
             "SubmitTransactionRequest fields must remain stable"
         );
 
@@ -581,8 +539,8 @@ mod tests {
             "OpenAPI request schema must include tx_hex"
         );
         assert!(
-            schema_block.contains("idempotency_key:"),
-            "OpenAPI request schema must include idempotency_key"
+            !schema_block.contains("idempotency_key:"),
+            "idempotency_key was removed (future feature)"
         );
         assert_eq!(
             required,
@@ -592,11 +550,6 @@ mod tests {
         assert!(
             schema_block.contains("tx_hex:\n          type: string"),
             "tx_hex must remain a string in OpenAPI"
-        );
-        assert!(
-            schema_block
-                .contains("idempotency_key:\n          type: string\n          nullable: true"),
-            "idempotency_key must remain an optional nullable string in OpenAPI"
         );
     }
 }

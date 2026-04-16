@@ -1498,7 +1498,6 @@ mod tests {
         let tx = make_signed_write_tx();
         let request_body = serde_json::to_vec(&serde_json::json!({
             "tx_hex": hex::encode(canonical_bytes(&tx)),
-            "idempotency_key": "contract-test-key",
         }))
         .expect("submit request must serialize");
 
@@ -1524,38 +1523,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_v1_submit_without_idempotency_key_matches_openapi_optionality() {
-        let app = build_router(test_state());
-        let tx = make_signed_write_tx();
-        let request_body = serde_json::to_vec(&serde_json::json!({
-            "tx_hex": hex::encode(canonical_bytes(&tx)),
-        }))
-        .expect("submit request must serialize");
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/tx/submit")
-                    .header("content-type", "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-        let response_json = response_json(response).await;
-        assert_success_response_shape(&response_json, "TxSubmitApiResponse", "TxSubmitResponse");
-    }
-
-    #[tokio::test]
     async fn test_v1_submit_missing_required_field_returns_structured_error() {
         let app = build_router(test_state());
-        let request_body = serde_json::to_vec(&serde_json::json!({
-            "idempotency_key": "missing-tx-hex",
-        }))
-        .expect("submit request must serialize");
+        let request_body =
+            serde_json::to_vec(&serde_json::json!({})).expect("submit request must serialize");
 
         let response = app
             .oneshot(
