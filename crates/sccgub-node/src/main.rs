@@ -1674,6 +1674,7 @@ async fn cmd_serve(
             peer_stats: std::collections::HashMap::new(),
             pending_txs: Vec::new(),
             seen_tx_ids: std::collections::HashSet::new(),
+            seen_tx_order: std::collections::VecDeque::new(),
         }),
     ));
 
