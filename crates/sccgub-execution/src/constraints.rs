@@ -286,4 +286,108 @@ mod tests {
         // Actor with Optimization level (4) fails governance check.
         assert!(!evaluate(&precondition, &state, 4).satisfied);
     }
+
+    // ── N-48 coverage: NotExists and BalanceAtLeast predicates ────────
+
+    #[test]
+    fn test_not_exists_key_absent_satisfied() {
+        let state = ManagedWorldState::new();
+        let p = Predicate::NotExists {
+            key: b"missing".to_vec(),
+        };
+        let result = evaluate(&p, &state, 0);
+        assert!(result.satisfied);
+        assert!(result.details.contains("confirmed absent"));
+    }
+
+    #[test]
+    fn test_not_exists_key_present_not_satisfied() {
+        let mut state = ManagedWorldState::new();
+        state.apply_delta(&StateDelta {
+            writes: vec![StateWrite {
+                address: b"exists".to_vec(),
+                value: b"val".to_vec(),
+            }],
+            deletes: vec![],
+        });
+        let p = Predicate::NotExists {
+            key: b"exists".to_vec(),
+        };
+        let result = evaluate(&p, &state, 0);
+        assert!(!result.satisfied);
+        assert!(result.details.contains("unexpectedly exists"));
+    }
+
+    #[test]
+    fn test_balance_at_least_sufficient() {
+        let mut state = ManagedWorldState::new();
+        let agent = [1u8; 32];
+        let balance_key = sccgub_types::namespace::balance_key(&agent);
+        let balance: i128 = 1000;
+        state.apply_delta(&StateDelta {
+            writes: vec![StateWrite {
+                address: balance_key,
+                value: balance.to_le_bytes().to_vec(),
+            }],
+            deletes: vec![],
+        });
+        let p = Predicate::BalanceAtLeast {
+            agent,
+            min_balance: 500,
+        };
+        assert!(evaluate(&p, &state, 0).satisfied);
+    }
+
+    #[test]
+    fn test_balance_at_least_insufficient() {
+        let mut state = ManagedWorldState::new();
+        let agent = [1u8; 32];
+        let balance_key = sccgub_types::namespace::balance_key(&agent);
+        let balance: i128 = 100;
+        state.apply_delta(&StateDelta {
+            writes: vec![StateWrite {
+                address: balance_key,
+                value: balance.to_le_bytes().to_vec(),
+            }],
+            deletes: vec![],
+        });
+        let p = Predicate::BalanceAtLeast {
+            agent,
+            min_balance: 500,
+        };
+        assert!(!evaluate(&p, &state, 0).satisfied);
+    }
+
+    #[test]
+    fn test_balance_at_least_no_balance_entry() {
+        let state = ManagedWorldState::new();
+        let agent = [1u8; 32];
+        let p = Predicate::BalanceAtLeast {
+            agent,
+            min_balance: 1,
+        };
+        // No balance entry → defaults to 0.
+        assert!(!evaluate(&p, &state, 0).satisfied);
+    }
+
+    #[test]
+    fn test_balance_at_least_malformed_value_defaults_to_zero() {
+        let mut state = ManagedWorldState::new();
+        let agent = [1u8; 32];
+        let balance_key = sccgub_types::namespace::balance_key(&agent);
+        // Write a non-16-byte value.
+        state.apply_delta(&StateDelta {
+            writes: vec![StateWrite {
+                address: balance_key,
+                value: b"not_a_balance".to_vec(),
+            }],
+            deletes: vec![],
+        });
+        let p = Predicate::BalanceAtLeast {
+            agent,
+            min_balance: 1,
+        };
+        // Malformed → defaults to 0.
+        assert!(!evaluate(&p, &state, 0).satisfied);
+    }
 }

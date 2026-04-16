@@ -859,4 +859,176 @@ mod tests {
         assert!(!result.passed);
         assert!(result.details.contains("Exceeded max propagation steps"));
     }
+
+    // ── N-48 coverage: per-tx phase rejection paths ──────────────────
+
+    /// Helper: build a valid test transaction, then allow caller to mutate it.
+    fn make_valid_tx() -> SymbolicTransition {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::transition::*;
+        use std::collections::BTreeSet;
+
+        SymbolicTransition {
+            tx_id: [1u8; 32],
+            actor: AgentIdentity {
+                agent_id: [1u8; 32],
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"data/test".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: [1u8; 32],
+                when: CausalTimestamp::genesis(),
+                r#where: b"data/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce: 1,
+            signature: vec![0u8; 64],
+        }
+    }
+
+    #[test]
+    fn test_form_phase_short_signature_rejected() {
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.signature = vec![0u8; 32]; // Too short
+        let result = phi_check_single_tx(PhiPhase::Form, &tx, &state);
+        assert!(!result.passed);
+        assert!(
+            result.details.contains("Signature too short"),
+            "got: {}",
+            result.details
+        );
+    }
+
+    #[test]
+    fn test_form_phase_oversized_address_rejected() {
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        let max_len = state.consensus_params.max_symbol_address_len as usize;
+        tx.intent.target = vec![b'x'; max_len + 1];
+        let result = phi_check_single_tx(PhiPhase::Form, &tx, &state);
+        assert!(!result.passed);
+        assert!(
+            result.details.contains("exceeds max length"),
+            "got: {}",
+            result.details
+        );
+    }
+
+    #[test]
+    fn test_execution_phase_zero_nonce_rejected() {
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.nonce = 0;
+        let result = phi_check_single_tx(PhiPhase::Execution, &tx, &state);
+        assert!(!result.passed);
+        assert!(
+            result.details.contains("Zero nonce"),
+            "got: {}",
+            result.details
+        );
+    }
+
+    #[test]
+    fn test_execution_phase_empty_target_rejected() {
+        use sccgub_types::transition::OperationPayload;
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.intent.target = vec![];
+        // Make payload consistent with empty target to avoid payload-check firing first.
+        tx.payload = OperationPayload::Write {
+            key: vec![],
+            value: b"hello".to_vec(),
+        };
+        let result = phi_check_single_tx(PhiPhase::Execution, &tx, &state);
+        assert!(!result.passed);
+        assert!(
+            result.details.contains("Missing target"),
+            "got: {}",
+            result.details
+        );
+    }
+
+    #[test]
+    fn test_organization_low_authority_constraint_addition_rejected() {
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::transition::TransitionKind;
+
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.intent.kind = TransitionKind::ConstraintAddition;
+        tx.actor.governance_level = PrecedenceLevel::Optimization; // Too low
+        let result = phi_check_single_tx(PhiPhase::Organization, &tx, &state);
+        assert!(!result.passed);
+        assert!(
+            result.details.contains("Meaning precedence"),
+            "got: {}",
+            result.details
+        );
+    }
+
+    #[test]
+    fn test_organization_governance_update_low_authority_rejected() {
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::transition::TransitionKind;
+
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.intent.kind = TransitionKind::GovernanceUpdate;
+        tx.actor.governance_level = PrecedenceLevel::Emotion; // Too low
+        let result = phi_check_single_tx(PhiPhase::Organization, &tx, &state);
+        assert!(!result.passed);
+    }
+
+    #[test]
+    fn test_organization_norm_proposal_low_authority_rejected() {
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::transition::TransitionKind;
+
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.intent.kind = TransitionKind::NormProposal;
+        tx.actor.governance_level = PrecedenceLevel::Optimization;
+        let result = phi_check_single_tx(PhiPhase::Organization, &tx, &state);
+        assert!(!result.passed);
+    }
+
+    #[test]
+    fn test_organization_meaning_level_passes() {
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::transition::TransitionKind;
+
+        let state = ManagedWorldState::new();
+        let mut tx = make_valid_tx();
+        tx.intent.kind = TransitionKind::GovernanceUpdate;
+        tx.actor.governance_level = PrecedenceLevel::Meaning;
+        let result = phi_check_single_tx(PhiPhase::Organization, &tx, &state);
+        assert!(result.passed);
+    }
 }
