@@ -528,9 +528,7 @@ mod tests {
         // 3 honest for block, 1 Byzantine for bad_block.
         for (id, key) in keys.iter().take(3) {
             round
-                .add_prevote(signed_vote(
-                    *id, key, block, 1, 0, VoteType::Prevote,
-                ))
+                .add_prevote(signed_vote(*id, key, block, 1, 0, VoteType::Prevote))
                 .unwrap();
         }
         round
@@ -547,9 +545,7 @@ mod tests {
 
         for (id, key) in keys.iter().take(3) {
             round
-                .add_precommit(signed_vote(
-                    *id, key, block, 1, 0, VoteType::Precommit,
-                ))
+                .add_precommit(signed_vote(*id, key, block, 1, 0, VoteType::Precommit))
                 .unwrap();
         }
         round
