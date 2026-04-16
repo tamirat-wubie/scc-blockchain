@@ -52,19 +52,23 @@ impl Treasury {
     }
 
     /// Collect a transaction fee into the treasury.
+    /// Negative amounts are clamped to zero to prevent conservation violations.
     pub fn collect_fee(&mut self, amount: TensionValue) {
-        self.pending_fees = self.pending_fees + amount;
-        self.total_fees_collected = self.total_fees_collected + amount;
-        self.epoch_fees = self.epoch_fees + amount;
+        let safe = TensionValue(amount.raw().max(0));
+        self.pending_fees = self.pending_fees + safe;
+        self.total_fees_collected = self.total_fees_collected + safe;
+        self.epoch_fees = self.epoch_fees + safe;
     }
 
     /// Distribute a reward to a validator. Drawn from pending fees.
     /// Returns the actual amount distributed (capped at available pending fees).
+    /// Negative amounts are clamped to zero to prevent conservation violations.
     pub fn distribute_reward(&mut self, amount: TensionValue) -> TensionValue {
-        let actual = if amount.raw() > self.pending_fees.raw() {
+        let safe_amount = TensionValue(amount.raw().max(0));
+        let actual = if safe_amount.raw() > self.pending_fees.raw() {
             self.pending_fees
         } else {
-            amount
+            safe_amount
         };
         self.pending_fees = self.pending_fees - actual;
         self.total_rewards_distributed = self.total_rewards_distributed + actual;
@@ -73,7 +77,11 @@ impl Treasury {
     }
 
     /// Burn tokens (permanently remove from supply).
+    /// Negative amounts are rejected to prevent conservation violations.
     pub fn burn(&mut self, amount: TensionValue) -> Result<(), String> {
+        if amount.raw() < 0 {
+            return Err("Cannot burn negative amount".into());
+        }
         if amount.raw() > self.pending_fees.raw() {
             return Err("Cannot burn more than pending fees".into());
         }
@@ -338,5 +346,60 @@ mod tests {
 
         let result = treasury_from_trie(&state);
         assert!(result.is_err(), "unknown treasury key must fail closed");
+    }
+
+    // ── N-49 coverage: negative amounts + edge cases ─────────────────
+
+    #[test]
+    fn test_collect_fee_negative_clamped_to_zero() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(100));
+        // Attempt to collect a negative fee — should be clamped to zero.
+        treasury.collect_fee(TensionValue((-50) * TensionValue::SCALE));
+        // Balance should not decrease.
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(100));
+    }
+
+    #[test]
+    fn test_distribute_reward_negative_clamped_to_zero() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(100));
+        let distributed = treasury.distribute_reward(TensionValue((-30) * TensionValue::SCALE));
+        assert_eq!(distributed, TensionValue::ZERO);
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(100));
+    }
+
+    #[test]
+    fn test_burn_negative_rejected() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(100));
+        let result = treasury.burn(TensionValue((-10) * TensionValue::SCALE));
+        assert!(result.is_err());
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(100));
+    }
+
+    #[test]
+    fn test_collect_fee_zero_amount_is_noop() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(50));
+        treasury.collect_fee(TensionValue::ZERO);
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(50));
+    }
+
+    #[test]
+    fn test_burn_zero_amount_succeeds() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(50));
+        assert!(treasury.burn(TensionValue::ZERO).is_ok());
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(50));
+    }
+
+    #[test]
+    fn test_distribute_zero_reward() {
+        let mut treasury = Treasury::new();
+        treasury.collect_fee(TensionValue::from_integer(50));
+        let distributed = treasury.distribute_reward(TensionValue::ZERO);
+        assert_eq!(distributed, TensionValue::ZERO);
+        assert_eq!(treasury.pending_fees, TensionValue::from_integer(50));
     }
 }

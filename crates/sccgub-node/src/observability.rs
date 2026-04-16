@@ -90,15 +90,17 @@ pub struct ChainMetrics {
 impl ChainMetrics {
     /// Record a successful block production.
     pub fn record_block(&mut self, tx_count: u32, validation_ns: u64) {
-        self.blocks_produced += 1;
-        self.transactions_processed += tx_count as u64;
+        self.blocks_produced = self.blocks_produced.saturating_add(1);
+        self.transactions_processed = self.transactions_processed.saturating_add(tx_count as u64);
         if validation_ns > self.peak_validation_ns {
             self.peak_validation_ns = validation_ns;
         }
-        // Running average.
+        // Running average using saturating arithmetic to prevent overflow.
         if self.blocks_produced > 0 {
-            self.avg_validation_ns = (self.avg_validation_ns * (self.blocks_produced - 1)
-                + validation_ns)
+            self.avg_validation_ns = self
+                .avg_validation_ns
+                .saturating_mul(self.blocks_produced - 1)
+                .saturating_add(validation_ns)
                 / self.blocks_produced;
         }
     }
