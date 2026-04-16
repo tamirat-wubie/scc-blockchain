@@ -383,6 +383,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorApiResponse"
+        "413":
+          description: Request body too large (max 1 MiB)
         "503":
           description: Pending pool full
           content:
@@ -418,6 +420,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorApiResponse"
+        "413":
+          description: Request body too large (max 1 MiB)
         "503":
           description: Pending pool full
           content:
@@ -453,6 +457,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorApiResponse"
+        "413":
+          description: Request body too large (max 1 MiB)
         "503":
           description: Pending pool full
           content:

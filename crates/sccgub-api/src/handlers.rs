@@ -554,8 +554,13 @@ pub async fn submit_tx(
     let req = match req {
         Ok(axum::extract::Json(req)) => req,
         Err(rejection) => {
+            let status = if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                axum::http::StatusCode::BAD_REQUEST
+            };
             return (
-                axum::http::StatusCode::BAD_REQUEST,
+                status,
                 axum::Json(ApiResponse::err(
                     ErrorCode::InvalidRequest,
                     format!("Invalid request body: {}", rejection),
@@ -598,8 +603,13 @@ pub async fn submit_governance_param(
     let req = match req {
         Ok(axum::extract::Json(req)) => req,
         Err(rejection) => {
+            let status = if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                axum::http::StatusCode::BAD_REQUEST
+            };
             return (
-                axum::http::StatusCode::BAD_REQUEST,
+                status,
                 axum::Json(ApiResponse::err(
                     ErrorCode::InvalidRequest,
                     format!("Invalid request body: {}", rejection),
@@ -708,8 +718,13 @@ pub async fn submit_governance_vote(
     let req = match req {
         Ok(axum::extract::Json(req)) => req,
         Err(rejection) => {
+            let status = if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                axum::http::StatusCode::BAD_REQUEST
+            };
             return (
-                axum::http::StatusCode::BAD_REQUEST,
+                status,
                 axum::Json(ApiResponse::err(
                     ErrorCode::InvalidRequest,
                     format!("Invalid request body: {}", rejection),

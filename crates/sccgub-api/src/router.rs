@@ -1,4 +1,5 @@
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -147,6 +148,7 @@ pub fn build_router(state: SharedState) -> Router {
             "/api/governance/proposals/vote",
             post(handlers::submit_governance_vote),
         )
+        .layer(DefaultBodyLimit::max(1_048_576))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -1084,14 +1086,17 @@ mod tests {
         assert_openapi_path_has_status("/api/v1/tx/submit", 202);
         assert_openapi_path_has_status("/api/v1/tx/submit", 400);
         assert_openapi_path_has_status("/api/v1/tx/submit", 409);
+        assert_openapi_path_has_status("/api/v1/tx/submit", 413);
         assert_openapi_path_has_status("/api/v1/tx/submit", 503);
         assert_openapi_path_has_status("/api/v1/governance/params/propose", 202);
         assert_openapi_path_has_status("/api/v1/governance/params/propose", 400);
         assert_openapi_path_has_status("/api/v1/governance/params/propose", 409);
+        assert_openapi_path_has_status("/api/v1/governance/params/propose", 413);
         assert_openapi_path_has_status("/api/v1/governance/params/propose", 503);
         assert_openapi_path_has_status("/api/v1/governance/proposals/vote", 202);
         assert_openapi_path_has_status("/api/v1/governance/proposals/vote", 400);
         assert_openapi_path_has_status("/api/v1/governance/proposals/vote", 409);
+        assert_openapi_path_has_status("/api/v1/governance/proposals/vote", 413);
         assert_openapi_path_has_status("/api/v1/governance/proposals/vote", 503);
 
         assert_openapi_path_has_status("/api/v1/tx/{tx_id}", 200);
@@ -1738,6 +1743,27 @@ mod tests {
             json["error"]["code"],
             Value::String("InvalidTransaction".into())
         );
+    }
+
+    // ===== Request body size limit =====
+
+    #[tokio::test]
+    async fn test_v1_submit_oversized_body_returns_payload_too_large() {
+        let app = build_router(test_state());
+        // 1 MiB + 1 byte exceeds the DefaultBodyLimit.
+        let oversized = vec![b'A'; 1_048_576 + 1];
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tx/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(oversized))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     // ===== Governance param propose endpoint =====
