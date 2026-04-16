@@ -159,12 +159,10 @@ impl ConsensusParams {
                 self.max_state_entry_size
             ));
         }
-        if self.max_symbol_address_len == 0
-            || self.max_symbol_address_len > self.max_state_entry_size
-        {
+        if self.max_symbol_address_len == 0 || self.max_symbol_address_len > 1_048_576 {
             return Err(format!(
-                "max_symbol_address_len {} out of bounds (1..={})",
-                self.max_symbol_address_len, self.max_state_entry_size
+                "max_symbol_address_len {} out of bounds (1..1048576)",
+                self.max_symbol_address_len
             ));
         }
         if self.max_tension_swing <= 0 || self.max_tension_swing > 1_000_000_000 {
@@ -406,10 +404,9 @@ mod tests {
     }
 
     #[test]
-    fn symbol_address_larger_than_entry_rejected() {
+    fn excessive_symbol_address_len_rejected() {
         let p = ConsensusParams {
-            max_symbol_address_len: 2048,
-            max_state_entry_size: 1024,
+            max_symbol_address_len: 1_048_577,
             ..Default::default()
         };
         assert!(p.validate().is_err());
