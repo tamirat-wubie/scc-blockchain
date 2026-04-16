@@ -36,8 +36,10 @@ pub struct AppState {
     pub peer_stats: HashMap<String, PeerStatsSnapshot>,
     /// Pending transactions submitted via API (bounded by MAX_PENDING_TXS).
     pub pending_txs: Vec<sccgub_types::transition::SymbolicTransition>,
-    /// Transaction IDs already seen (bounded by MAX_SEEN_TX_IDS).
+    /// Transaction IDs already seen, with insertion order for LRU eviction.
     pub seen_tx_ids: std::collections::HashSet<[u8; 32]>,
+    /// Insertion-ordered queue for LRU eviction of seen_tx_ids.
+    pub seen_tx_order: std::collections::VecDeque<[u8; 32]>,
 }
 
 /// Peer-level network stats snapshot for API exposure.
@@ -860,6 +862,26 @@ fn submit_tx_internal(
         );
     }
 
+    // N-50: Reject duplicate (agent_id, nonce) pairs already in the pending pool.
+    // Prevents same-nonce flooding that would exhaust pool capacity before a block
+    // is produced and committed nonces advance.
+    let dominated = app
+        .pending_txs
+        .iter()
+        .any(|pending| pending.actor.agent_id == tx.actor.agent_id && pending.nonce == tx.nonce);
+    if dominated {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(ApiResponse::err(
+                ErrorCode::NonceReplay,
+                format!(
+                    "A transaction with nonce {} for this agent is already pending",
+                    tx.nonce
+                ),
+            )),
+        );
+    }
+
     if app.pending_txs.len() >= MAX_PENDING_TXS {
         return (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -870,11 +892,17 @@ fn submit_tx_internal(
         );
     }
 
-    if app.seen_tx_ids.len() >= MAX_SEEN_TX_IDS {
-        app.seen_tx_ids.clear();
+    // LRU eviction: remove oldest entries when at capacity.
+    while app.seen_tx_ids.len() >= MAX_SEEN_TX_IDS {
+        if let Some(oldest) = app.seen_tx_order.pop_front() {
+            app.seen_tx_ids.remove(&oldest);
+        } else {
+            break;
+        }
     }
 
     app.seen_tx_ids.insert(tx.tx_id);
+    app.seen_tx_order.push_back(tx.tx_id);
     app.pending_txs.push(tx);
 
     (

@@ -219,6 +219,7 @@ mod tests {
             peer_stats: std::collections::HashMap::new(),
             pending_txs: Vec::new(),
             seen_tx_ids: HashSet::new(),
+            seen_tx_order: std::collections::VecDeque::new(),
         }))
     }
 
@@ -391,6 +392,7 @@ mod tests {
                 peer_stats: std::collections::HashMap::new(),
                 pending_txs: Vec::new(),
                 seen_tx_ids: HashSet::new(),
+                seen_tx_order: std::collections::VecDeque::new(),
             })),
             tx_id_hex,
         )
@@ -447,6 +449,7 @@ mod tests {
             peer_stats: std::collections::HashMap::new(),
             pending_txs: Vec::new(),
             seen_tx_ids: HashSet::new(),
+            seen_tx_order: std::collections::VecDeque::new(),
         }))
     }
 

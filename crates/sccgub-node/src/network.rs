@@ -484,7 +484,12 @@ impl NetworkRuntime {
         Ok(validators)
     }
 
+    /// Maximum concurrent inbound connections before rejecting new peers.
+    /// Prevents memory exhaustion from unauthenticated connection storms (N-50).
+    const MAX_INBOUND_CONNECTIONS: usize = 128;
+
     async fn accept_loop(self: Arc<Self>, listener: TcpListener) {
+        let active = Arc::new(tokio::sync::Semaphore::new(Self::MAX_INBOUND_CONNECTIONS));
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
@@ -493,9 +498,22 @@ impl NetworkRuntime {
                         tracing::warn!("P2P inbound peer {} rejected by allowlist", addr_str);
                         continue;
                     }
+                    let permit = match active.clone().try_acquire_owned() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            tracing::warn!(
+                                "P2P inbound connection limit ({}) reached, rejecting {}",
+                                Self::MAX_INBOUND_CONNECTIONS,
+                                addr_str
+                            );
+                            drop(stream);
+                            continue;
+                        }
+                    };
                     let runtime = self.clone();
                     tokio::spawn(async move {
                         runtime.handle_connection(stream, addr_str, true).await;
+                        drop(permit); // Release slot when connection closes.
                     });
                 }
                 Err(e) => {

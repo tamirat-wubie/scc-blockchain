@@ -680,7 +680,13 @@ impl Chain {
             app.equivocation_records = equivocation_records;
             app.safety_certificates = safety_certificates;
             app.pending_txs = pending_txs.clone();
-            app.seen_tx_ids = pending_txs.iter().map(|tx| tx.tx_id).collect();
+            // N-50: Merge pending tx IDs into seen set (don't replace — that
+            // would discard rejection history and re-open replay windows).
+            for tx in &pending_txs {
+                if app.seen_tx_ids.insert(tx.tx_id) {
+                    app.seen_tx_order.push_back(tx.tx_id);
+                }
+            }
         });
     }
 
@@ -988,7 +994,8 @@ impl Chain {
                     .get(&tx.actor.agent_id)
                     .copied()
                     .unwrap_or(0);
-                if tx.nonce == 0 || tx.nonce != last + 1 {
+                let expected = last.checked_add(1);
+                if tx.nonce == 0 || (expected != Some(tx.nonce)) {
                     // N-17: produce reject receipt instead of silent continue.
                     rejected_receipts.push(make_prefilter_reject_receipt(
                         &tx,
