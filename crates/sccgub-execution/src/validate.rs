@@ -982,4 +982,54 @@ mod tests {
             "admit_check should not verify Ed25519 — that's the gas loop's job"
         );
     }
+
+    // ── N-48 coverage: nonce overflow + invoking rule ────────────────
+
+    #[test]
+    fn test_validate_transition_nonce_overflow_fails() {
+        let tx = make_signed_tx();
+        let mut state = ManagedWorldState::new();
+        // Set the agent's last nonce to u128::MAX so checked_add(1) returns None.
+        state.agent_nonces.insert(tx.actor.agent_id, u128::MAX);
+        let result = validate_transition(&tx, &state);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("Nonce overflow")),
+            "Expected nonce overflow error, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_validate_transition_unknown_invoking_rule_rejected() {
+        // Populate active_norms so the check fires.
+        let tx = make_signed_tx();
+        let mut state = ManagedWorldState::new();
+        // Insert one norm so the registry is non-empty.
+        let norm_id = [42u8; 32];
+        state.state.governance_state.active_norms.insert(
+            norm_id,
+            sccgub_types::governance::Norm {
+                id: norm_id,
+                name: "test norm".into(),
+                description: "test".into(),
+                precedence: sccgub_types::governance::PrecedenceLevel::Meaning,
+                population_share: sccgub_types::tension::TensionValue::ZERO,
+                fitness: sccgub_types::tension::TensionValue::ZERO,
+                enforcement_cost: sccgub_types::tension::TensionValue::ZERO,
+                active: true,
+                created_at_height: 0,
+            },
+        );
+        // tx.wh_binding_intent.why.invoking_rule is [2u8;32] which is NOT norm_id [42u8;32].
+        let result = validate_transition(&tx, &state);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("not an active norm")),
+            "Expected invoking_rule error, got: {:?}",
+            errors
+        );
+    }
 }
