@@ -4,6 +4,26 @@ use std::collections::{BTreeSet, HashMap};
 use crate::tension::TensionValue;
 use crate::{AgentId, ConstraintId, Hash, NormId, RuleId};
 
+/// Canonical list of parameter keys that may be modified through on-chain
+/// governance proposals.  Both the REST API and the CLI gate proposals against
+/// this list, so it must live in a shared crate.
+///
+/// **Validator-set mutations** (`validators.add`, `validators.remove`) are
+/// handled by prefix match in the application layer and are intentionally NOT
+/// included here — they follow a separate code path.
+pub const GOVERNED_PARAMETER_KEYS: [&str; 10] = [
+    "governance.max_consecutive_proposals",
+    "governance.max_actions_per_agent_pct",
+    "governance.safety_change_min_signers",
+    "governance.genesis_change_min_signers",
+    "governance.max_authority_term_epochs",
+    "governance.authority_cooldown_epochs",
+    "finality.confirmation_depth",
+    "finality.max_finality_ms",
+    "finality.target_block_time_ms",
+    "finality.mode",
+];
+
 /// Governance precedence levels — lower number = absolute priority.
 /// GENESIS > SAFETY > MEANING > EMOTION > OPTIMIZATION
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -168,5 +188,37 @@ mod tests {
         assert!(PrecedenceLevel::Genesis.overrides(PrecedenceLevel::Safety));
         assert!(PrecedenceLevel::Safety.overrides(PrecedenceLevel::Meaning));
         assert!(!PrecedenceLevel::Optimization.overrides(PrecedenceLevel::Genesis));
+    }
+
+    #[test]
+    fn governed_parameter_keys_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for key in &GOVERNED_PARAMETER_KEYS {
+            assert!(
+                seen.insert(*key),
+                "duplicate governed parameter key: {}",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn governed_parameter_keys_have_valid_prefixes() {
+        let allowed_prefixes = ["governance.", "finality."];
+        for key in &GOVERNED_PARAMETER_KEYS {
+            assert!(
+                allowed_prefixes.iter().any(|p| key.starts_with(p)),
+                "governed parameter key '{}' has unexpected prefix",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn governed_parameter_keys_include_finality_mode() {
+        assert!(
+            GOVERNED_PARAMETER_KEYS.contains(&"finality.mode"),
+            "finality.mode must be in the governed parameter allowlist"
+        );
     }
 }
