@@ -1384,7 +1384,12 @@ impl NetworkRuntime {
         };
         let mut registry = self.registry.lock().await;
         if let Some(peer) = registry.peers.get_mut(&validator_id) {
-            peer.score = peer.score.saturating_sub(self.config.peer_score_penalty);
+            // N-2: Clamp at ban threshold to prevent deep-negative accumulation
+            // that would make decay_scores recovery impractically slow.
+            peer.score = peer
+                .score
+                .saturating_sub(self.config.peer_score_penalty)
+                .max(self.config.peer_score_ban_threshold.saturating_sub(1));
             peer.violations = peer.violations.saturating_add(1);
             if peer.score <= self.config.peer_score_ban_threshold
                 || peer.violations >= self.config.peer_max_violations
