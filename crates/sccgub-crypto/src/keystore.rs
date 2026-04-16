@@ -137,9 +137,14 @@ pub fn decrypt_key(bundle: &EncryptedKeyBundle, passphrase: &str) -> Result<Sign
 }
 
 /// Save an encrypted key bundle to a file as JSON.
+/// Uses atomic write-then-rename to prevent key loss on crash.
 pub fn save_keystore(bundle: &EncryptedKeyBundle, path: &std::path::Path) -> std::io::Result<()> {
     let json = serde_json::to_string_pretty(bundle).map_err(std::io::Error::other)?;
-    std::fs::write(path, json)
+    // Write to a temporary file first, then rename atomically.
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 /// Load an encrypted key bundle from a file.
@@ -220,5 +225,51 @@ mod tests {
             b1.nonce, b2.nonce,
             "Each encryption must use a unique nonce"
         );
+    }
+
+    // ── N-49 coverage: keystore file I/O ─────────────────────────────
+
+    #[test]
+    fn test_save_and_load_keystore_roundtrip() {
+        let key = generate_keypair();
+        let bundle = encrypt_key(&key, "test-pass").unwrap();
+
+        let dir = std::env::temp_dir().join(format!("sccgub_keytest_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.keystore");
+
+        save_keystore(&bundle, &path).unwrap();
+        let loaded = load_keystore(&path).unwrap();
+
+        assert_eq!(loaded.public_key, bundle.public_key);
+        assert_eq!(loaded.ciphertext, bundle.ciphertext);
+        assert_eq!(loaded.salt, bundle.salt);
+        assert_eq!(loaded.nonce, bundle.nonce);
+
+        // Decrypt the loaded bundle to verify full roundtrip.
+        let recovered = decrypt_key(&loaded, "test-pass").unwrap();
+        assert_eq!(key.as_bytes(), recovered.as_bytes());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_keystore_missing_file_fails() {
+        let result = load_keystore(std::path::Path::new("/nonexistent/path/keystore.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_keystore_corrupt_json_fails() {
+        let dir = std::env::temp_dir().join(format!("sccgub_corrupt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("corrupt.keystore");
+        std::fs::write(&path, "not valid json {{{").unwrap();
+
+        let result = load_keystore(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Parse error"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

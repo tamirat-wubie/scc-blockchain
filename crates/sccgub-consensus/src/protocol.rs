@@ -769,11 +769,8 @@ mod tests {
         assert_eq!(round.prevote_count(), 0);
         assert_eq!(round.precommit_count(), 0);
         // Should not finalize.
-        match round.evaluate() {
-            ConsensusResult::Finalized { .. } => {
-                panic!("Empty validator set should never finalize")
-            }
-            _ => {} // NextRound or Aborted is acceptable
+        if let ConsensusResult::Finalized { .. } = round.evaluate() {
+            panic!("Empty validator set should never finalize")
         }
     }
 

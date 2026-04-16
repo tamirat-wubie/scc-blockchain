@@ -432,7 +432,7 @@ mod tests {
 
         // Check the mock store received the write.
         let snap = mock.snapshot();
-        assert_eq!(snap.get(&b"abc".to_vec()), Some(&b"123".to_vec()));
+        assert_eq!(snap.get(b"abc".as_slice()), Some(&b"123".to_vec()));
     }
 
     #[test]

@@ -209,4 +209,134 @@ mod tests {
         let restored = NetworkMessage::from_bytes(&bytes).unwrap();
         assert_eq!(restored.message_type(), "EquivocationEvidence");
     }
+
+    // ── N-49 coverage: remaining message variant roundtrips ──────────
+
+    #[test]
+    fn test_consensus_vote_roundtrip() {
+        let msg = NetworkMessage::ConsensusVote(Vote {
+            validator_id: [6u8; 32],
+            block_hash: [7u8; 32],
+            height: 42,
+            round: 1,
+            vote_type: sccgub_consensus::protocol::VoteType::Prevote,
+            signature: vec![0u8; 64],
+        });
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "ConsensusVote");
+    }
+
+    #[test]
+    fn test_transaction_gossip_roundtrip() {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::transition::*;
+        use std::collections::BTreeSet;
+
+        let tx = SymbolicTransition {
+            tx_id: [1u8; 32],
+            actor: AgentIdentity {
+                agent_id: [1u8; 32],
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"data/test".to_vec(),
+                value: b"hello".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: [1u8; 32],
+                when: sccgub_types::timestamp::CausalTimestamp::genesis(),
+                r#where: b"data/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [2u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce: 1,
+            signature: vec![0u8; 64],
+        };
+        let msg = NetworkMessage::TransactionGossip(TransactionGossipMessage {
+            sender_id: [8u8; 32],
+            transaction: tx,
+        });
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "TransactionGossip");
+    }
+
+    #[test]
+    fn test_block_response_none_roundtrip() {
+        let msg = NetworkMessage::BlockResponse(BlockResponseMessage {
+            responder_id: [10u8; 32],
+            block: None,
+            height: 99,
+        });
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "BlockResponse");
+    }
+
+    #[test]
+    fn test_law_sync_roundtrip() {
+        let msg = NetworkMessage::LawSync(LawSyncMessage {
+            validator_id: [11u8; 32],
+            height: 77,
+            law_set_hash: [12u8; 32],
+            protocol_version: 1,
+            signature: vec![0u8; 64],
+        });
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "LawSync");
+    }
+
+    #[test]
+    fn test_finality_certificate_roundtrip() {
+        let cert = SafetyCertificate {
+            chain_id: [0xCC; 32],
+            epoch: 1,
+            height: 10,
+            block_hash: [0xAA; 32],
+            round: 0,
+            precommit_signatures: vec![([1u8; 32], vec![0u8; 64])],
+            quorum: 1,
+            validator_count: 1,
+        };
+        let msg = NetworkMessage::FinalityCertificate(cert);
+        let bytes = msg.to_bytes();
+        let restored = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.message_type(), "FinalityCertificate");
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_garbage() {
+        let result = NetworkMessage::from_bytes(&[0xFF, 0xFF, 0xFF]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_empty() {
+        let result = NetworkMessage::from_bytes(&[]);
+        assert!(result.is_err());
+    }
 }
