@@ -7,6 +7,7 @@ use sccgub_consensus::safety::SafetyCertificate;
 use sccgub_consensus::slashing::{SlashingEvent, SlashingEvidence};
 use sccgub_state::world::ManagedWorldState;
 use sccgub_types::block::Block;
+use sccgub_types::governance::GOVERNED_PARAMETER_KEYS;
 use sccgub_types::Hash;
 
 use crate::responses::*;
@@ -15,17 +16,6 @@ use crate::responses::*;
 pub const MAX_PENDING_TXS: usize = 10_000;
 /// Maximum tracked seen IDs (LRU-style: oldest evicted when full).
 pub const MAX_SEEN_TX_IDS: usize = 100_000;
-const GOVERNED_PARAMETER_KEYS: [&str; 9] = [
-    "governance.max_consecutive_proposals",
-    "governance.max_actions_per_agent_pct",
-    "governance.safety_change_min_signers",
-    "governance.genesis_change_min_signers",
-    "governance.max_authority_term_epochs",
-    "governance.authority_cooldown_epochs",
-    "finality.confirmation_depth",
-    "finality.max_finality_ms",
-    "finality.target_block_time_ms",
-];
 
 /// Shared application state for the API server.
 pub struct AppState {

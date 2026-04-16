@@ -17,7 +17,7 @@ use sccgub_crypto::keys::generate_keypair;
 use sccgub_crypto::signature::sign;
 use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
 use sccgub_types::block::CURRENT_BLOCK_VERSION;
-use sccgub_types::governance::PrecedenceLevel;
+use sccgub_types::governance::{PrecedenceLevel, GOVERNED_PARAMETER_KEYS};
 use sccgub_types::mfidel::MfidelAtomicSeal;
 use sccgub_types::timestamp::CausalTimestamp;
 use sccgub_types::transition::*;
@@ -26,18 +26,6 @@ use sccgub_node::chain::Chain;
 use sccgub_node::persistence::ChainStore;
 
 const DEFAULT_DATA_DIR: &str = ".sccgub";
-const GOVERNED_PARAMETER_KEYS: [&str; 10] = [
-    "governance.max_consecutive_proposals",
-    "governance.max_actions_per_agent_pct",
-    "governance.safety_change_min_signers",
-    "governance.genesis_change_min_signers",
-    "governance.max_authority_term_epochs",
-    "governance.authority_cooldown_epochs",
-    "finality.confirmation_depth",
-    "finality.max_finality_ms",
-    "finality.target_block_time_ms",
-    "finality.mode",
-];
 
 #[derive(Parser)]
 #[command(name = "sccgub")]
