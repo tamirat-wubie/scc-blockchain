@@ -365,4 +365,73 @@ mod tests {
         let result = validate_cpog(&block, &state, &ZERO_HASH);
         assert!(!result.is_valid());
     }
+
+    // ── N-48 coverage: height>0 and tension paths ────────────────────
+
+    #[test]
+    fn test_height1_parent_id_mismatch_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.height = 1;
+        block.header.parent_id = [0xAAu8; 32]; // Wrong parent
+        block.header.mfidel_seal = MfidelAtomicSeal::from_height(1);
+        block.proof.block_height = 1;
+        let expected_parent = [0xBBu8; 32]; // Different from block's claim
+        let result = validate_cpog(&block, &state, &expected_parent);
+        assert!(!result.is_valid());
+        match result {
+            CpogResult::Invalid { ref errors } => {
+                assert!(
+                    errors.iter().any(|e| e.contains("Parent ID mismatch")),
+                    "Expected parent mismatch error, got: {:?}",
+                    errors
+                );
+            }
+            _ => panic!("Expected Invalid"),
+        }
+    }
+
+    #[test]
+    fn test_height1_tension_before_mismatch_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        block.header.height = 1;
+        block.header.parent_id = [0xAAu8; 32];
+        block.header.mfidel_seal = MfidelAtomicSeal::from_height(1);
+        block.proof.block_height = 1;
+        // State has total tension = ZERO, but block claims tension_before = 999.
+        block.header.tension_before = TensionValue::from_integer(999);
+        let result = validate_cpog(&block, &state, &[0xAAu8; 32]);
+        assert!(!result.is_valid());
+        match result {
+            CpogResult::Invalid { ref errors } => {
+                assert!(
+                    errors.iter().any(|e| e.contains("tension_before mismatch")),
+                    "Expected tension_before error, got: {:?}",
+                    errors
+                );
+            }
+            _ => panic!("Expected Invalid"),
+        }
+    }
+
+    #[test]
+    fn test_tension_exceeds_budget_fails() {
+        let state = ManagedWorldState::new();
+        let mut block = genesis_block([1u8; 32]);
+        // tension_after > tension_before + budget
+        block.header.tension_after = TensionValue::from_integer(999_999_999);
+        let result = validate_cpog(&block, &state, &ZERO_HASH);
+        assert!(!result.is_valid());
+        match result {
+            CpogResult::Invalid { ref errors } => {
+                assert!(
+                    errors.iter().any(|e| e.contains("Tension exceeds budget")),
+                    "Expected tension budget error, got: {:?}",
+                    errors
+                );
+            }
+            _ => panic!("Expected Invalid"),
+        }
+    }
 }
