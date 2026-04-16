@@ -370,4 +370,48 @@ mod tests {
         assert_eq!(meter.used, 0);
         assert_eq!(meter.tx_count, 0);
     }
+
+    #[test]
+    fn test_charge_proof_bytes() {
+        let pricing = GasPricing {
+            proof_byte: 17,
+            ..GasPricing::default()
+        };
+        let mut meter = GasMeter::with_pricing(10_000, pricing);
+        meter.charge_proof_bytes(100).unwrap();
+        assert_eq!(meter.used, 1700); // 100 * 17
+        assert_eq!(meter.breakdown.proof, 1700);
+    }
+
+    #[test]
+    fn test_charge_proof_bytes_overflow_saturates() {
+        let pricing = GasPricing {
+            proof_byte: u64::MAX,
+            ..GasPricing::default()
+        };
+        let mut meter = GasMeter::with_pricing(10_000, pricing);
+        // bytes * proof_byte would overflow u64, saturating_mul caps it.
+        let result = meter.charge_proof_bytes(2);
+        assert!(result.is_err()); // Exceeds limit.
+    }
+
+    #[test]
+    fn test_charge_payload_with_pricing() {
+        let pricing = GasPricing {
+            payload_byte: 5,
+            ..GasPricing::default()
+        };
+        let mut meter = GasMeter::with_pricing(10_000, pricing);
+        meter.charge_payload(200).unwrap();
+        assert_eq!(meter.used, 1000); // 200 * 5
+    }
+
+    #[test]
+    fn test_remaining_after_charges() {
+        let mut meter = GasMeter::new(5_000);
+        meter.charge(2_000, "test1").unwrap();
+        assert_eq!(meter.remaining(), 3_000);
+        meter.charge(3_000, "test2").unwrap();
+        assert_eq!(meter.remaining(), 0);
+    }
 }
