@@ -336,4 +336,150 @@ mod tests {
         let readonly_root = trie.root_readonly();
         assert_eq!(mutable_root, readonly_root);
     }
+
+    // --- Durable store tests using in-memory mock ---
+
+    use std::collections::BTreeMap as StdBTreeMap;
+    use std::sync::Mutex;
+
+    /// In-memory StateStore mock for testing durable trie operations.
+    struct MockStore {
+        data: Mutex<StdBTreeMap<Vec<u8>, Vec<u8>>>,
+        flush_error: Mutex<Option<String>>,
+    }
+
+    impl MockStore {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(StdBTreeMap::new()),
+                flush_error: Mutex::new(None),
+            }
+        }
+
+        fn with_flush_error(err: &str) -> Self {
+            Self {
+                data: Mutex::new(StdBTreeMap::new()),
+                flush_error: Mutex::new(Some(err.to_string())),
+            }
+        }
+
+        fn snapshot(&self) -> StdBTreeMap<Vec<u8>, Vec<u8>> {
+            self.data.lock().unwrap().clone()
+        }
+    }
+
+    impl crate::store::StateStore for MockStore {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.data.lock().unwrap().get(key).cloned())
+        }
+        fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.to_vec(), value.to_vec());
+            Ok(())
+        }
+        fn delete(&self, key: &[u8]) -> Result<(), String> {
+            self.data.lock().unwrap().remove(key);
+            Ok(())
+        }
+        fn iter_prefix(&self, prefix: &[u8]) -> Result<crate::store::StateEntries, String> {
+            let map = self.data.lock().unwrap();
+            Ok(map
+                .range(prefix.to_vec()..)
+                .take_while(|(k, _)| k.starts_with(prefix))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+        fn iter_all(&self) -> Result<crate::store::StateEntries, String> {
+            Ok(self
+                .data
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+        fn is_empty(&self) -> Result<bool, String> {
+            Ok(self.data.lock().unwrap().is_empty())
+        }
+        fn flush(&self) -> Result<(), String> {
+            let guard = self.flush_error.lock().unwrap();
+            if let Some(err) = &*guard {
+                return Err(err.clone());
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_with_store_loads_existing_data() {
+        let mock = Arc::new(MockStore::new());
+        mock.put(b"key1", b"val1").unwrap();
+        mock.put(b"key2", b"val2").unwrap();
+
+        let trie = StateTrie::with_store(mock).unwrap();
+        assert_eq!(trie.get(&b"key1".to_vec()), Some(&b"val1".to_vec()));
+        assert_eq!(trie.get(&b"key2".to_vec()), Some(&b"val2".to_vec()));
+        assert_eq!(trie.len(), 2);
+    }
+
+    #[test]
+    fn test_insert_propagates_to_durable_store() {
+        let mock = Arc::new(MockStore::new());
+        let mut trie = StateTrie::with_store(mock.clone()).unwrap();
+        trie.insert(b"abc".to_vec(), b"123".to_vec());
+
+        // Check the mock store received the write.
+        let snap = mock.snapshot();
+        assert_eq!(snap.get(&b"abc".to_vec()), Some(&b"123".to_vec()));
+    }
+
+    #[test]
+    fn test_remove_propagates_to_durable_store() {
+        let mock = Arc::new(MockStore::new());
+        mock.put(b"key", b"val").unwrap();
+        let mut trie = StateTrie::with_store(mock.clone()).unwrap();
+        assert_eq!(trie.len(), 1);
+
+        trie.remove(&b"key".to_vec());
+        assert!(trie.is_empty());
+        // Durable store should also have the key removed.
+        assert!(mock.snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_flush_durable_success() {
+        let mock = Arc::new(MockStore::new());
+        let mut trie = StateTrie::with_store(mock).unwrap();
+        assert!(trie.flush_durable().is_ok());
+        assert!(trie.durable_error().is_none());
+    }
+
+    #[test]
+    fn test_flush_durable_error_captured() {
+        let mock = Arc::new(MockStore::with_flush_error("disk full"));
+        let mut trie = StateTrie::with_store(mock).unwrap();
+        let err = trie.flush_durable().unwrap_err();
+        assert!(err.contains("disk full"));
+        assert_eq!(trie.durable_error(), Some("disk full"));
+    }
+
+    #[test]
+    fn test_take_durable_error_clears() {
+        let mock = Arc::new(MockStore::with_flush_error("io error"));
+        let mut trie = StateTrie::with_store(mock).unwrap();
+        let _ = trie.flush_durable(); // Triggers error.
+        assert!(trie.durable_error().is_some());
+
+        let taken = trie.take_durable_error();
+        assert_eq!(taken, Some("io error".to_string()));
+        assert!(trie.durable_error().is_none()); // Cleared.
+    }
+
+    #[test]
+    fn test_flush_durable_without_store_is_noop() {
+        let mut trie = StateTrie::new(); // No durable store.
+        assert!(trie.flush_durable().is_ok());
+    }
 }

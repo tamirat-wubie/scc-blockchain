@@ -145,6 +145,11 @@ impl ProposalRegistry {
             current_height,
         )));
 
+        // INVARIANT: proposals is append-only (items change status but are never
+        // removed). The index HashMap stores the Vec position at insertion time.
+        // All subsequent `self.proposals[idx]` accesses are safe because the Vec
+        // never shrinks. If this invariant is ever broken, replace `[idx]` with
+        // `.get(idx).ok_or(...)` throughout.
         self.proposals.push(GovernanceProposal {
             id,
             proposer,

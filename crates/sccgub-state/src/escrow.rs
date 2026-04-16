@@ -96,6 +96,11 @@ impl EscrowRegistry {
             current_height,
         )));
 
+        // INVARIANT: escrows is append-only (items change status but are never
+        // removed). The index HashMap stores the Vec position at insertion time.
+        // All subsequent `self.escrows[idx]` accesses are safe because the Vec
+        // never shrinks. If this invariant is ever broken, replace `[idx]` with
+        // `.get(idx).ok_or(...)` throughout.
         self.escrows.push(Escrow {
             id,
             sender,

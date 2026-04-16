@@ -2,6 +2,21 @@ use crate::hash::blake3_hash;
 
 // Deterministic binary serialization for consensus-critical hashing.
 // Replaces JSON with bincode: deterministic, compact, ~10x faster.
+//
+// FROZEN FORMAT — DO NOT MIGRATE TO BINCODE 2.x
+//
+// Every hash, tx ID, block header, Merkle root, contract ID, agent ID,
+// and state root in the chain is computed from bincode 1.x serialized
+// bytes. Bincode 2.x changed varint encoding and struct encoding defaults;
+// even with its serde compat mode, byte-identical output is not guaranteed.
+// Migrating would break consensus on every existing chain.
+//
+// Only two crates use bincode directly:
+//   1. sccgub-crypto::canonical (this module — the central bottleneck)
+//   2. sccgub-types::consensus_params (can't route through here due to
+//      dependency direction: types is below crypto in the graph)
+//
+// All other crates use the wrappers below. This is intentional.
 
 /// Compute a canonical hash of any serializable value using bincode.
 pub fn canonical_hash<T: serde::Serialize>(value: &T) -> [u8; 32] {

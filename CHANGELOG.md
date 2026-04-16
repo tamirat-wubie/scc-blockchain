@@ -6,7 +6,7 @@ All notable changes to SCCGUB are documented here.
 
 ### Production Hardening Release
 
-**786 tests, 9 crates, persistent block log + snapshots, all CI green.**
+**793 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
 #### Security
 - Replace unmaintained `sled` with `redb 4.0` to resolve RUSTSEC-2025-0057 (fxhash) and RUSTSEC-2024-0384 (instant)
@@ -91,7 +91,7 @@ All notable changes to SCCGUB are documented here.
 - Autonomy budgets for off-chain decision authority
 
 #### Testing
-- 786 tests across 9 crates
+- 793 tests across 9 crates
 - Property-based tests (3000+ random scenarios)
 - Adversarial consensus tests (Byzantine, partition, equivocation)
 - Full-pipeline integration tests (treasury, escrow, artifacts, delegation, events)

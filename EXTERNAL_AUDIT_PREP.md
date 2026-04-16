@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 786 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 793 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -248,6 +248,13 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 
 ### Open items:
 - None currently tracked in this hardening pass.
+
+### Bincode 1.x freeze decision
+- **Assessed**: Migration from bincode 1.x to 2.x is **not safe** for consensus.
+- **Reason**: Every hash, tx ID, block header, Merkle root, contract ID, and agent ID on the chain is computed from bincode 1.x serialized bytes. Bincode 2.x changed varint encoding and struct encoding defaults; even the serde compat mode does not guarantee byte-identical output. Migration would break consensus on every existing chain.
+- **Scope**: Only 2 crates use bincode directly: `sccgub-crypto::canonical` (central bottleneck) and `sccgub-types::consensus_params` (dependency direction prevents routing through canonical). All other crates route through the canonical wrappers.
+- **Advisory**: RUSTSEC-2025-0141 (bincode unmaintained) is acknowledged. The crate remains functional and receives no new features, but the wire format is frozen and correct for our use. No CVE or memory safety issue exists.
+- **Action**: Documented the freeze in `sccgub-crypto/src/canonical.rs`. Removed 3 unnecessary bincode dependencies.
 
 ### Closed hardening items:
 - **N-9 closed** — `what_actual` is now populated from the per-transaction `StateDelta`
