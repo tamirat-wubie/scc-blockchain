@@ -238,4 +238,21 @@ mod tests {
         b.body.genesis_consensus_params = Some(vec![1, 2, 3]);
         assert!(!b.is_structurally_valid());
     }
+
+    #[test]
+    fn test_is_supported_block_version_v1() {
+        assert!(is_supported_block_version(LEGACY_BLOCK_VERSION));
+    }
+
+    #[test]
+    fn test_is_supported_block_version_v2() {
+        assert!(is_supported_block_version(CANONICAL_AGENT_BLOCK_VERSION));
+    }
+
+    #[test]
+    fn test_is_supported_block_version_unknown() {
+        assert!(!is_supported_block_version(0));
+        assert!(!is_supported_block_version(3));
+        assert!(!is_supported_block_version(u32::MAX));
+    }
 }

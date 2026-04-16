@@ -254,4 +254,41 @@ mod tests {
         a.schema_name = "x".repeat(MAX_STRING_LEN + 1);
         assert!(a.validate().is_err());
     }
+
+    #[test]
+    fn test_canonical_id_preimage_deterministic() {
+        let content = [1u8; 32];
+        let manifest = [2u8; 32];
+        let p1 = ArtifactRef::canonical_id_preimage(&content, &manifest, "schema", "1.0");
+        let p2 = ArtifactRef::canonical_id_preimage(&content, &manifest, "schema", "1.0");
+        assert_eq!(p1, p2, "Same inputs must produce identical preimage");
+    }
+
+    #[test]
+    fn test_canonical_id_preimage_length() {
+        let content = [1u8; 32];
+        let manifest = [2u8; 32];
+        let preimage = ArtifactRef::canonical_id_preimage(&content, &manifest, "abc", "1.0");
+        // 32 + 32 + 3 + 3 = 70
+        assert_eq!(preimage.len(), 70);
+    }
+
+    #[test]
+    fn test_canonical_id_preimage_different_inputs_differ() {
+        let content = [1u8; 32];
+        let manifest = [2u8; 32];
+        let p1 = ArtifactRef::canonical_id_preimage(&content, &manifest, "schema-a", "1.0");
+        let p2 = ArtifactRef::canonical_id_preimage(&content, &manifest, "schema-b", "1.0");
+        assert_ne!(p1, p2);
+    }
+
+    #[test]
+    fn test_canonical_id_preimage_contains_all_inputs() {
+        let content = [0xAA; 32];
+        let manifest = [0xBB; 32];
+        let preimage = ArtifactRef::canonical_id_preimage(&content, &manifest, "name", "v2");
+        assert!(preimage.starts_with(&[0xAA; 32]));
+        assert!(preimage[32..64] == [0xBB; 32]);
+        assert!(preimage[64..].starts_with(b"name"));
+    }
 }

@@ -248,4 +248,50 @@ mod tests {
         let result = registry.install(pack, PrecedenceLevel::Meaning, 10);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_all_domain_laws_empty_registry() {
+        let registry = DomainPackRegistry::default();
+        assert!(registry.all_domain_laws().is_empty());
+    }
+
+    #[test]
+    fn test_all_domain_laws_from_active_packs() {
+        let mut registry = DomainPackRegistry::default();
+        let mut pack = test_pack("finance");
+        pack.laws = vec![
+            crate::transition::Constraint {
+                id: [10u8; 32],
+                expression: "governance:2".into(),
+            },
+            crate::transition::Constraint {
+                id: [11u8; 32],
+                expression: "exists:balance".into(),
+            },
+        ];
+        registry
+            .install(pack, PrecedenceLevel::Meaning, 10)
+            .unwrap();
+
+        let laws = registry.all_domain_laws();
+        assert_eq!(laws.len(), 2);
+    }
+
+    #[test]
+    fn test_all_domain_laws_excludes_deactivated() {
+        let mut registry = DomainPackRegistry::default();
+        let mut pack = test_pack("finance");
+        pack.laws = vec![crate::transition::Constraint {
+            id: [10u8; 32],
+            expression: "true".into(),
+        }];
+        let id = pack.id;
+        registry
+            .install(pack, PrecedenceLevel::Meaning, 10)
+            .unwrap();
+        assert_eq!(registry.all_domain_laws().len(), 1);
+
+        registry.deactivate(&id).unwrap();
+        assert!(registry.all_domain_laws().is_empty());
+    }
 }
