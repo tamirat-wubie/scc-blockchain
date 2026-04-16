@@ -60,21 +60,22 @@ impl NormRegistry {
 
         // Compute fitness for each norm: F(ν) = max(0, fitness - enforcement_cost).
         // Clamp to zero to prevent negative fitness corrupting dynamics.
+        // N-47: Use .get() instead of panicking index to defend against stale keys.
         let fitnesses: HashMap<NormId, TensionValue> = active_norms
             .iter()
-            .map(|id| {
-                let norm = &self.norms[id];
+            .filter_map(|id| {
+                let norm = self.norms.get(id)?;
                 let f = (norm.fitness - norm.enforcement_cost).max(TensionValue::ZERO);
-                (*id, f)
+                Some((*id, f))
             })
             .collect();
 
         // Compute mean fitness: F̄ = Σ p_ν · F(ν).
         let mean_fitness: TensionValue = active_norms
             .iter()
-            .map(|id| {
-                let norm = &self.norms[id];
-                norm.population_share.mul_fp(fitnesses[id])
+            .filter_map(|id| {
+                let norm = self.norms.get(id)?;
+                Some(norm.population_share.mul_fp(*fitnesses.get(id)?))
             })
             .fold(TensionValue::ZERO, |acc, v| acc + v);
 
@@ -89,7 +90,11 @@ impl NormRegistry {
             let Some(norm) = self.norms.get_mut(id) else {
                 continue;
             };
-            let numerator = norm.population_share.mul_fp(fitnesses[id]);
+            let fitness = match fitnesses.get(id) {
+                Some(&f) => f,
+                None => continue,
+            };
+            let numerator = norm.population_share.mul_fp(fitness);
             // Safe fixed-point division: (num / mean) with SCALE preservation.
             // Restructure as (num / mean) * SCALE to avoid intermediate overflow.
             let raw = if mean_fitness.raw() != 0 {
@@ -106,9 +111,10 @@ impl NormRegistry {
         }
 
         // Renormalize: ensure shares sum to exactly SCALE (1.0).
+        // N-47: Use .get() instead of panicking index.
         let total: i128 = active_norms
             .iter()
-            .map(|id| self.norms[id].population_share.raw())
+            .filter_map(|id| Some(self.norms.get(id)?.population_share.raw()))
             .sum();
         if total > 0 {
             for id in &active_norms {

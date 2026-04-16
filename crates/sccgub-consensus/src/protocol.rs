@@ -186,7 +186,8 @@ impl ConsensusRound {
         self.prevotes
             .values()
             .filter(|v| v.block_hash == self.block_hash && v.vote_type == VoteType::Prevote)
-            .count() as u32
+            .count()
+            .min(u32::MAX as usize) as u32
     }
 
     /// Count precommits for the proposed block.
@@ -194,7 +195,8 @@ impl ConsensusRound {
         self.precommits
             .values()
             .filter(|v| v.block_hash == self.block_hash && v.vote_type == VoteType::Precommit)
-            .count() as u32
+            .count()
+            .min(u32::MAX as usize) as u32
     }
 
     /// Check if prevote quorum is reached.

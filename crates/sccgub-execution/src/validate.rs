@@ -816,6 +816,160 @@ mod tests {
         assert!(err.contains("what_declared"));
     }
 
+    // --- seal_receipt_post_state tests ---
+
+    #[test]
+    fn test_seal_receipt_post_state_accepted() {
+        let mut receipt = CausalReceipt {
+            tx_id: [0u8; 32],
+            verdict: Verdict::Accept,
+            pre_state_root: [1u8; 32],
+            post_state_root: UNSEALED_ROOT,
+            read_set: vec![],
+            write_set: vec![],
+            causes: vec![],
+            resource_used: ResourceUsage {
+                compute_steps: 0,
+                state_reads: 0,
+                state_writes: 0,
+                proof_size_bytes: 0,
+            },
+            emitted_events: vec![],
+            wh_binding: WHBindingResolved {
+                intent: WHBindingIntent {
+                    who: [1u8; 32],
+                    when: CausalTimestamp::genesis(),
+                    r#where: b"test".to_vec(),
+                    why: CausalJustification {
+                        invoking_rule: [0u8; 32],
+                        precedence_level: PrecedenceLevel::Meaning,
+                        causal_ancestors: vec![],
+                        constraint_proof: vec![],
+                    },
+                    how: TransitionMechanism::DirectStateWrite,
+                    which: BTreeSet::new(),
+                    what_declared: "test".into(),
+                },
+                what_actual: StateDelta::default(),
+                whether: ValidationResult::Valid,
+            },
+            phi_phase_reached: 13,
+            tension_delta: TensionValue::ZERO,
+        };
+        let new_root = [42u8; 32];
+        assert!(seal_receipt_post_state(&mut receipt, new_root).is_ok());
+        assert_eq!(receipt.post_state_root, new_root);
+    }
+
+    #[test]
+    fn test_seal_receipt_reject_fails() {
+        let mut receipt = CausalReceipt {
+            tx_id: [0u8; 32],
+            verdict: Verdict::Reject {
+                reason: "bad".into(),
+            },
+            pre_state_root: [1u8; 32],
+            post_state_root: UNSEALED_ROOT,
+            read_set: vec![],
+            write_set: vec![],
+            causes: vec![],
+            resource_used: ResourceUsage::default(),
+            emitted_events: vec![],
+            wh_binding: WHBindingResolved {
+                intent: WHBindingIntent {
+                    who: [1u8; 32],
+                    when: CausalTimestamp::genesis(),
+                    r#where: b"test".to_vec(),
+                    why: CausalJustification {
+                        invoking_rule: [0u8; 32],
+                        precedence_level: PrecedenceLevel::Meaning,
+                        causal_ancestors: vec![],
+                        constraint_proof: vec![],
+                    },
+                    how: TransitionMechanism::DirectStateWrite,
+                    which: BTreeSet::new(),
+                    what_declared: "test".into(),
+                },
+                what_actual: StateDelta::default(),
+                whether: ValidationResult::Valid,
+            },
+            phi_phase_reached: 0,
+            tension_delta: TensionValue::ZERO,
+        };
+        let err = seal_receipt_post_state(&mut receipt, [42u8; 32]).unwrap_err();
+        assert!(err.contains("rejected"));
+    }
+
+    #[test]
+    fn test_seal_receipt_already_sealed_fails() {
+        let mut receipt = CausalReceipt {
+            tx_id: [0u8; 32],
+            verdict: Verdict::Accept,
+            pre_state_root: [1u8; 32],
+            post_state_root: [99u8; 32], // Already sealed.
+            read_set: vec![],
+            write_set: vec![],
+            causes: vec![],
+            resource_used: ResourceUsage::default(),
+            emitted_events: vec![],
+            wh_binding: WHBindingResolved {
+                intent: WHBindingIntent {
+                    who: [1u8; 32],
+                    when: CausalTimestamp::genesis(),
+                    r#where: b"test".to_vec(),
+                    why: CausalJustification {
+                        invoking_rule: [0u8; 32],
+                        precedence_level: PrecedenceLevel::Meaning,
+                        causal_ancestors: vec![],
+                        constraint_proof: vec![],
+                    },
+                    how: TransitionMechanism::DirectStateWrite,
+                    which: BTreeSet::new(),
+                    what_declared: "test".into(),
+                },
+                what_actual: StateDelta::default(),
+                whether: ValidationResult::Valid,
+            },
+            phi_phase_reached: 13,
+            tension_delta: TensionValue::ZERO,
+        };
+        let err = seal_receipt_post_state(&mut receipt, [42u8; 32]).unwrap_err();
+        assert!(err.contains("already sealed"));
+    }
+
+    // --- admit_check_structural tests (nonce-free path) ---
+
+    #[test]
+    fn test_admit_check_structural_short_sig_rejected() {
+        let mut tx = make_signed_tx();
+        tx.signature = vec![0u8; 10]; // Too short.
+        let state = ManagedWorldState::new();
+        let err = admit_check_structural(&tx, &state).unwrap_err();
+        assert!(err.contains("Signature too short"));
+    }
+
+    #[test]
+    fn test_admit_check_structural_oversized_target_rejected() {
+        let mut tx = make_signed_tx();
+        tx.intent.target = vec![0u8; 2048]; // Over default max_symbol_address_len.
+        let state = ManagedWorldState::with_consensus_params(
+            sccgub_types::consensus_params::ConsensusParams {
+                max_symbol_address_len: 512,
+                ..sccgub_types::consensus_params::ConsensusParams::default()
+            },
+        );
+        let err = admit_check_structural(&tx, &state).unwrap_err();
+        assert!(err.contains("Target address"));
+    }
+
+    #[test]
+    fn test_admit_check_structural_valid_passes() {
+        let tx = make_signed_tx();
+        let state = ManagedWorldState::new();
+        // admit_check_structural skips nonce, so it should pass.
+        assert!(admit_check_structural(&tx, &state).is_ok());
+    }
+
     #[test]
     fn test_admit_check_does_not_run_ed25519() {
         // A tampered signature should PASS admit_check (it only checks length).

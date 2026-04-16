@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0
 **Date:** 2026-04-11
-**Repo:** 9 crates, 722 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 754 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -242,6 +242,9 @@ sccgub-governance) contains any `unwrap()` or `expect()` in production code.
 - N-43: `LawSyncRound::new()` computed quorum as `(2 * validator_count) / 3 + 1` in u32 space — would overflow for validator_count > 2^31. Widened to u64 intermediate, matching protocol.rs and safety.rs.
 - N-44: `BoundedVectorClock` in timestamp.rs used `.len() as u32` without truncation guard at 3 sites. Added `.min(u32::MAX as usize)` before each cast.
 - N-45: `PeerRegistry::check_diversity` divided by `connected` without explicit zero guard. Structurally safe but added defensive guard for auditability.
+- N-46: `ConsensusRound::prevote_count()` and `precommit_count()` used `.count() as u32` without `.min(u32::MAX as usize)` truncation guard. Added guard to match all other `.len() as u32` sites.
+- N-47: `NormRegistry::evolve_epoch()` used panicking `self.norms[id]` HashMap index at 4 sites. Replaced with `.get()`/`.filter_map()` to prevent panic on stale keys during concurrent refactoring.
+- Dep cleanup: removed unused `bincode` dependency from sccgub-execution, sccgub-governance, and sccgub-network Cargo.toml (those crates use sccgub-crypto::canonical, not bincode directly).
 
 ### Open items:
 - None currently tracked in this hardening pass.

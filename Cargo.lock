@@ -1056,7 +1056,6 @@ dependencies = [
 name = "sccgub-execution"
 version = "0.3.0"
 dependencies = [
- "bincode",
  "hex",
  "sccgub-crypto",
  "sccgub-state",
@@ -1070,7 +1069,6 @@ dependencies = [
 name = "sccgub-governance"
 version = "0.3.0"
 dependencies = [
- "bincode",
  "hex",
  "sccgub-crypto",
  "sccgub-types",
@@ -1083,7 +1081,6 @@ dependencies = [
 name = "sccgub-network"
 version = "0.3.0"
 dependencies = [
- "bincode",
  "hex",
  "sccgub-consensus",
  "sccgub-crypto",

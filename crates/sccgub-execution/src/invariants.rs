@@ -239,6 +239,175 @@ mod tests {
         );
     }
 
+    // --- check_nonce_monotonicity tests ---
+
+    fn make_test_tx(
+        agent_id: [u8; 32],
+        nonce: u128,
+    ) -> sccgub_types::transition::SymbolicTransition {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::*;
+        use std::collections::BTreeSet;
+
+        SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(1),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"data/test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Noop,
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: b"data/test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [0u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce,
+            signature: vec![0u8; 64],
+        }
+    }
+
+    fn make_empty_block(transitions: Vec<sccgub_types::transition::SymbolicTransition>) -> Block {
+        Block {
+            header: sccgub_types::block::BlockHeader {
+                chain_id: [0u8; 32],
+                block_id: [0u8; 32],
+                parent_id: [0u8; 32],
+                height: 1,
+                timestamp: sccgub_types::timestamp::CausalTimestamp::genesis(),
+                state_root: [0u8; 32],
+                transition_root: [0u8; 32],
+                receipt_root: [0u8; 32],
+                causal_root: [0u8; 32],
+                proof_root: [0u8; 32],
+                governance_hash: [0u8; 32],
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                mfidel_seal: sccgub_types::mfidel::MfidelAtomicSeal::from_height(1),
+                balance_root: [0u8; 32],
+                validator_id: [1u8; 32],
+                version: 1,
+            },
+            body: sccgub_types::block::BlockBody {
+                transitions,
+                transition_count: 0,
+                total_tension_delta: TensionValue::ZERO,
+                constraint_satisfaction: vec![],
+                genesis_consensus_params: None,
+            },
+            receipts: vec![],
+            causal_delta: sccgub_types::causal::CausalGraphDelta::default(),
+            proof: sccgub_types::proof::CausalProof {
+                block_height: 1,
+                transitions_proven: vec![],
+                phi_traversal_log: sccgub_types::proof::PhiTraversalLog::default(),
+                governance_snapshot_hash: [0u8; 32],
+                tension_before: TensionValue::ZERO,
+                tension_after: TensionValue::ZERO,
+                constraint_results: vec![],
+                recursion_depth: 0,
+                validator_signature: vec![],
+                causal_hash: [0u8; 32],
+            },
+            governance: sccgub_types::governance::GovernanceSnapshot {
+                state_hash: [0u8; 32],
+                active_norm_count: 0,
+                emergency_mode: false,
+                finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+                governance_limits: sccgub_types::governance::GovernanceLimitsSnapshot::default(),
+                finality_config: sccgub_types::governance::FinalityConfigSnapshot::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_nonce_monotonicity_valid_block() {
+        let agent = [1u8; 32];
+        let txs = vec![
+            make_test_tx(agent, 1),
+            make_test_tx(agent, 2),
+            make_test_tx(agent, 3),
+        ];
+        let block = make_empty_block(txs);
+        let violations = check_nonce_monotonicity(&block);
+        assert!(violations.is_empty(), "Monotonic nonces should not violate");
+    }
+
+    #[test]
+    fn test_nonce_monotonicity_duplicate_detected() {
+        let agent = [1u8; 32];
+        let txs = vec![
+            make_test_tx(agent, 1),
+            make_test_tx(agent, 1), // Duplicate!
+        ];
+        let block = make_empty_block(txs);
+        let violations = check_nonce_monotonicity(&block);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].id, "INV-2");
+        assert_eq!(violations[0].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn test_nonce_monotonicity_decreasing_detected() {
+        let agent = [1u8; 32];
+        let txs = vec![
+            make_test_tx(agent, 5),
+            make_test_tx(agent, 3), // Decreasing!
+        ];
+        let block = make_empty_block(txs);
+        let violations = check_nonce_monotonicity(&block);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].details.contains("3"));
+        assert!(violations[0].details.contains("5"));
+    }
+
+    #[test]
+    fn test_nonce_monotonicity_different_agents_independent() {
+        let agent_a = [1u8; 32];
+        let agent_b = [2u8; 32];
+        // Each agent has its own nonce space — no cross-agent violations.
+        let txs = vec![
+            make_test_tx(agent_a, 5),
+            make_test_tx(agent_b, 1),
+            make_test_tx(agent_a, 6),
+            make_test_tx(agent_b, 2),
+        ];
+        let block = make_empty_block(txs);
+        let violations = check_nonce_monotonicity(&block);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn test_nonce_monotonicity_empty_block() {
+        let block = make_empty_block(vec![]);
+        let violations = check_nonce_monotonicity(&block);
+        assert!(violations.is_empty());
+    }
+
     #[test]
     fn test_supply_conservation_violation() {
         let state = ManagedWorldState::new();

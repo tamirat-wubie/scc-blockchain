@@ -11,4 +11,3 @@ thiserror = { workspace = true }
 sccgub-types = { path = "../sccgub-types" }
 sccgub-crypto = { path = "../sccgub-crypto" }
 sccgub-consensus = { path = "../sccgub-consensus" }
-bincode = { workspace = true }

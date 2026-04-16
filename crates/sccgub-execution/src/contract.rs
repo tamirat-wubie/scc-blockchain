@@ -408,4 +408,108 @@ mod tests {
         ));
         assert_eq!(result.steps_used, 2);
     }
+
+    // --- verify_contract_id tests ---
+
+    #[test]
+    fn test_verify_contract_id_valid() {
+        let mut contract = test_contract();
+        // Compute the correct contract_id from content.
+        let content = sccgub_crypto::canonical::canonical_bytes(&(
+            &contract.name,
+            &contract.laws,
+            &contract.deployer,
+        ));
+        contract.contract_id = sccgub_crypto::hash::blake3_hash(&content);
+        assert!(verify_contract_id(&contract));
+    }
+
+    #[test]
+    fn test_verify_contract_id_tampered_name() {
+        let mut contract = test_contract();
+        let content = sccgub_crypto::canonical::canonical_bytes(&(
+            &contract.name,
+            &contract.laws,
+            &contract.deployer,
+        ));
+        contract.contract_id = sccgub_crypto::hash::blake3_hash(&content);
+        // Tamper with name after ID computation.
+        contract.name = "TamperedContract".into();
+        assert!(!verify_contract_id(&contract));
+    }
+
+    #[test]
+    fn test_verify_contract_id_wrong_id() {
+        let contract = test_contract(); // contract_id = [42u8; 32], wrong.
+        assert!(!verify_contract_id(&contract));
+    }
+
+    // --- parse_constraint_expression_pub tests ---
+
+    #[test]
+    fn test_parse_constraint_true() {
+        let pred = parse_constraint_expression_pub("true");
+        assert!(matches!(pred, crate::constraints::Predicate::True));
+    }
+
+    #[test]
+    fn test_parse_constraint_false() {
+        let pred = parse_constraint_expression_pub("false");
+        assert!(matches!(pred, crate::constraints::Predicate::False));
+    }
+
+    #[test]
+    fn test_parse_constraint_empty_is_true() {
+        let pred = parse_constraint_expression_pub("");
+        assert!(matches!(pred, crate::constraints::Predicate::True));
+    }
+
+    #[test]
+    fn test_parse_constraint_exists() {
+        let pred = parse_constraint_expression_pub("exists:my_key");
+        match pred {
+            crate::constraints::Predicate::Exists { key } => {
+                assert_eq!(key, b"my_key");
+            }
+            other => panic!("Expected Exists, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_constraint_equals() {
+        let pred = parse_constraint_expression_pub("equals:color=red");
+        match pred {
+            crate::constraints::Predicate::Equals { key, value } => {
+                assert_eq!(key, b"color");
+                assert_eq!(value, b"red");
+            }
+            other => panic!("Expected Equals, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_constraint_governance() {
+        let pred = parse_constraint_expression_pub("governance:3");
+        match pred {
+            crate::constraints::Predicate::MinGovernanceLevel { level } => {
+                assert_eq!(level, 3);
+            }
+            other => panic!("Expected MinGovernanceLevel, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_constraint_invalid() {
+        let pred = parse_constraint_expression_pub("nonsense_expr");
+        assert!(matches!(
+            pred,
+            crate::constraints::Predicate::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_constraint_whitespace_trimmed() {
+        let pred = parse_constraint_expression_pub("  true  ");
+        assert!(matches!(pred, crate::constraints::Predicate::True));
+    }
 }
