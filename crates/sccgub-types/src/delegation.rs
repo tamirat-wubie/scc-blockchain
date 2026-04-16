@@ -486,4 +486,168 @@ mod tests {
 
         assert!(!lease.allows_write(b"anything"));
     }
+
+    #[test]
+    fn test_has_budget_exact_limit() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![],
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::from_integer(100),
+            spent: TensionValue::from_integer(50),
+            max_actions: 0,
+            actions_taken: 0,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        assert!(lease.has_budget(TensionValue::from_integer(50))); // Exact limit.
+        assert!(!lease.has_budget(TensionValue::from_integer(51))); // Over by 1.
+        assert!(lease.has_budget(TensionValue::ZERO)); // Zero always fits.
+    }
+
+    #[test]
+    fn test_has_budget_overflow_saturates() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![],
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::from_integer(100),
+            spent: TensionValue(i128::MAX), // Massive spent value.
+            max_actions: 0,
+            actions_taken: 0,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        // spent + amount would overflow, saturating_add prevents panic.
+        assert!(!lease.has_budget(TensionValue::from_integer(1)));
+    }
+
+    #[test]
+    fn test_allows_operation_wildcard() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![], // Empty = wildcard (all ops allowed).
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::ZERO,
+            spent: TensionValue::ZERO,
+            max_actions: 0,
+            actions_taken: 0,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        assert!(lease.allows_operation(OperationType::StateWrite));
+        assert!(lease.allows_operation(OperationType::AssetTransfer));
+        assert!(lease.allows_operation(OperationType::EscrowCreate));
+    }
+
+    #[test]
+    fn test_allows_operation_restricted() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![OperationType::StateWrite, OperationType::ContractInvoke],
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::ZERO,
+            spent: TensionValue::ZERO,
+            max_actions: 0,
+            actions_taken: 0,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        assert!(lease.allows_operation(OperationType::StateWrite));
+        assert!(lease.allows_operation(OperationType::ContractInvoke));
+        assert!(!lease.allows_operation(OperationType::AssetTransfer));
+        assert!(!lease.allows_operation(OperationType::EscrowCreate));
+    }
+
+    #[test]
+    fn test_has_actions_unlimited() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![],
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::ZERO,
+            spent: TensionValue::ZERO,
+            max_actions: 0, // 0 = unlimited.
+            actions_taken: 999,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        assert!(lease.has_actions());
+    }
+
+    #[test]
+    fn test_has_actions_limited() {
+        let lease = CapabilityLease {
+            lease_id: [1u8; 32],
+            delegator: [2u8; 32],
+            delegate: [3u8; 32],
+            scope: CapabilityScope {
+                write_prefixes: vec![],
+                read_prefixes: vec![],
+                allowed_operations: vec![],
+                zone_constraints: vec![],
+            },
+            valid_from: 0,
+            valid_until: 0,
+            budget: TensionValue::ZERO,
+            spent: TensionValue::ZERO,
+            max_actions: 5,
+            actions_taken: 4,
+            revoked: false,
+            require_cosign: false,
+        };
+
+        assert!(lease.has_actions()); // 4 < 5.
+
+        let exhausted = CapabilityLease {
+            actions_taken: 5,
+            ..lease
+        };
+        assert!(!exhausted.has_actions()); // 5 >= 5.
+    }
 }

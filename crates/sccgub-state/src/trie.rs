@@ -235,4 +235,105 @@ mod tests {
         let root2 = trie.root(); // Should be a cache hit.
         assert_eq!(root1, root2);
     }
+
+    #[test]
+    fn test_remove_existing_key() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"key".to_vec(), b"val".to_vec());
+        assert!(!trie.is_empty());
+
+        let removed = trie.remove(&b"key".to_vec());
+        assert_eq!(removed, Some(b"val".to_vec()));
+        assert!(trie.is_empty());
+        assert_eq!(trie.root(), ZERO_HASH);
+    }
+
+    #[test]
+    fn test_remove_nonexistent_key() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"exists".to_vec(), b"val".to_vec());
+        let root_before = trie.root();
+
+        let removed = trie.remove(&b"nope".to_vec());
+        assert_eq!(removed, None);
+        // Root should not have been invalidated.
+        assert_eq!(trie.root(), root_before);
+    }
+
+    #[test]
+    fn test_remove_invalidates_cache() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"a".to_vec(), b"1".to_vec());
+        trie.insert(b"b".to_vec(), b"2".to_vec());
+        let root_with_both = trie.root();
+
+        trie.remove(&b"b".to_vec());
+        let root_after_remove = trie.root();
+        assert_ne!(
+            root_with_both, root_after_remove,
+            "Removing a key must change the root"
+        );
+    }
+
+    #[test]
+    fn test_prefix_iter_matching() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"data/a".to_vec(), b"1".to_vec());
+        trie.insert(b"data/b".to_vec(), b"2".to_vec());
+        trie.insert(b"meta/x".to_vec(), b"3".to_vec());
+        trie.insert(b"data/c".to_vec(), b"4".to_vec());
+
+        let data_entries: Vec<_> = trie.prefix_iter(b"data/").collect();
+        assert_eq!(data_entries.len(), 3);
+        // BTreeMap preserves order.
+        assert_eq!(data_entries[0].0, &b"data/a".to_vec());
+        assert_eq!(data_entries[1].0, &b"data/b".to_vec());
+        assert_eq!(data_entries[2].0, &b"data/c".to_vec());
+    }
+
+    #[test]
+    fn test_prefix_iter_no_match() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"data/a".to_vec(), b"1".to_vec());
+
+        let results: Vec<_> = trie.prefix_iter(b"nope/").collect();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_count_prefix() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"balance/aaa".to_vec(), b"100".to_vec());
+        trie.insert(b"balance/bbb".to_vec(), b"200".to_vec());
+        trie.insert(b"balance/ccc".to_vec(), b"300".to_vec());
+        trie.insert(b"nonce/aaa".to_vec(), b"1".to_vec());
+
+        assert_eq!(trie.count_prefix(b"balance/"), 3);
+        assert_eq!(trie.count_prefix(b"nonce/"), 1);
+        assert_eq!(trie.count_prefix(b"nothing/"), 0);
+    }
+
+    #[test]
+    fn test_contains_and_len() {
+        let mut trie = StateTrie::new();
+        assert_eq!(trie.len(), 0);
+        assert!(!trie.contains(&b"key".to_vec()));
+
+        trie.insert(b"key".to_vec(), b"val".to_vec());
+        assert_eq!(trie.len(), 1);
+        assert!(trie.contains(&b"key".to_vec()));
+
+        trie.remove(&b"key".to_vec());
+        assert_eq!(trie.len(), 0);
+        assert!(!trie.contains(&b"key".to_vec()));
+    }
+
+    #[test]
+    fn test_root_readonly_consistent() {
+        let mut trie = StateTrie::new();
+        trie.insert(b"x".to_vec(), b"y".to_vec());
+        let mutable_root = trie.root();
+        let readonly_root = trie.root_readonly();
+        assert_eq!(mutable_root, readonly_root);
+    }
 }
