@@ -846,9 +846,6 @@ components:
         tx_hex:
           type: string
           description: Hex-encoded bincode-serialized SymbolicTransition.
-        idempotency_key:
-          type: string
-          nullable: true
     SubmitGovernanceParamRequest:
       type: object
       required: [tx_hex]
@@ -856,9 +853,6 @@ components:
         tx_hex:
           type: string
           description: Hex-encoded bincode-serialized SymbolicTransition.
-        idempotency_key:
-          type: string
-          nullable: true
     SubmitGovernanceVoteRequest:
       type: object
       required: [tx_hex]
@@ -866,9 +860,6 @@ components:
         tx_hex:
           type: string
           description: Hex-encoded bincode-serialized SymbolicTransition.
-        idempotency_key:
-          type: string
-          nullable: true
     TxSubmitResponse:
       type: object
       required: [tx_id, status]
@@ -886,9 +877,6 @@ components:
           nullable: true
         error:
           $ref: "#/components/schemas/ApiError"
-        request_id:
-          type: string
-          nullable: true
     SchemaApiResponse:
       type: object
       required: [success, data]
@@ -899,9 +887,6 @@ components:
         data:
           $ref: "#/components/schemas/SchemaResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     OpenApiSpecApiResponse:
       type: object
@@ -914,9 +899,6 @@ components:
           $ref: "#/components/schemas/OpenApiSpecResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     ChainStatusApiResponse:
       type: object
       required: [success, data]
@@ -927,9 +909,6 @@ components:
         data:
           $ref: "#/components/schemas/ChainStatusResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     GovernanceParamsApiResponse:
       type: object
@@ -942,9 +921,6 @@ components:
           $ref: "#/components/schemas/GovernanceParamsResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     GovernanceProposalsApiResponse:
       type: object
       required: [success, data]
@@ -955,9 +931,6 @@ components:
         data:
           $ref: "#/components/schemas/GovernanceProposalsResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     NetworkPeersApiResponse:
       type: object
@@ -970,9 +943,6 @@ components:
           $ref: "#/components/schemas/NetworkPeersResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     NetworkPeerApiResponse:
       type: object
       required: [success, data]
@@ -983,9 +953,6 @@ components:
         data:
           $ref: "#/components/schemas/NetworkPeerResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     BlockApiResponse:
       type: object
@@ -998,9 +965,6 @@ components:
           $ref: "#/components/schemas/BlockResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     PaginatedStateApiResponse:
       type: object
       required: [success, data]
@@ -1011,9 +975,6 @@ components:
         data:
           $ref: "#/components/schemas/PaginatedStateResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     HealthApiResponse:
       type: object
@@ -1026,9 +987,6 @@ components:
           $ref: "#/components/schemas/HealthResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     FinalityCertificatesApiResponse:
       type: object
       required: [success, data]
@@ -1039,9 +997,6 @@ components:
         data:
           $ref: "#/components/schemas/FinalityCertificatesResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     SlashingSummaryApiResponse:
       type: object
@@ -1054,9 +1009,6 @@ components:
           $ref: "#/components/schemas/SlashingSummaryResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     SlashingValidatorApiResponse:
       type: object
       required: [success, data]
@@ -1067,9 +1019,6 @@ components:
         data:
           $ref: "#/components/schemas/SlashingValidatorResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     SlashingEvidenceApiResponse:
       type: object
@@ -1082,9 +1031,6 @@ components:
           $ref: "#/components/schemas/SlashingEvidenceListResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     TxDetailApiResponse:
       type: object
       required: [success, data]
@@ -1095,9 +1041,6 @@ components:
         data:
           $ref: "#/components/schemas/TxDetailResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
     ReceiptApiResponse:
       type: object
@@ -1110,9 +1053,6 @@ components:
           $ref: "#/components/schemas/ReceiptSummary"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     BlockReceiptsApiResponse:
       type: object
       required: [success, data]
@@ -1124,9 +1064,6 @@ components:
           $ref: "#/components/schemas/BlockReceiptsResponse"
         error:
           nullable: true
-        request_id:
-          type: string
-          nullable: true
     TxSubmitApiResponse:
       type: object
       required: [success, data]
@@ -1137,9 +1074,6 @@ components:
         data:
           $ref: "#/components/schemas/TxSubmitResponse"
         error:
-          nullable: true
-        request_id:
-          type: string
           nullable: true
 "##,
     );
