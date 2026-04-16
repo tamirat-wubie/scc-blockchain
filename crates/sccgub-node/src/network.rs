@@ -852,7 +852,9 @@ impl NetworkRuntime {
         let submitted = chain.submit_transition(msg.transaction);
         if submitted.is_ok() {
             if let Some(bridge) = &self.app_state {
-                let _ = bridge.sync_from_chain(&chain).await;
+                if let Err(e) = bridge.sync_from_chain(&chain).await {
+                    tracing::warn!("API bridge sync failed after tx gossip: {}", e);
+                }
             }
         }
         Ok(())
@@ -1009,7 +1011,9 @@ impl NetworkRuntime {
                     eprintln!("Warning: state store flush failed: {}", e);
                 }
                 if let Some(bridge) = &self.app_state {
-                    let _ = bridge.sync_from_chain(&chain).await;
+                    if let Err(e) = bridge.sync_from_chain(&chain).await {
+                        tracing::warn!("API bridge sync failed after block import: {}", e);
+                    }
                 }
                 let snapshot = if self.snapshot_interval > 0
                     && height > 0
@@ -1037,7 +1041,9 @@ impl NetworkRuntime {
                             if let Err(e) = store.save_snapshot(&snapshot) {
                                 eprintln!("Warning: failed to persist snapshot: {}", e);
                             }
-                            let _ = store.rotate_snapshots(3);
+                            if let Err(e) = store.rotate_snapshots(3) {
+                                eprintln!("Warning: snapshot rotation failed: {}", e);
+                            }
                         }
                     });
                 }
@@ -1199,7 +1205,9 @@ impl NetworkRuntime {
                         if let Err(e) = store.save_snapshot(&snapshot) {
                             eprintln!("Warning: failed to persist snapshot: {}", e);
                         }
-                        let _ = store.rotate_snapshots(3);
+                        if let Err(e) = store.rotate_snapshots(3) {
+                            eprintln!("Warning: snapshot rotation failed: {}", e);
+                        }
                     }
                 });
             }
@@ -1208,7 +1216,9 @@ impl NetworkRuntime {
             eprintln!("Warning: state store flush failed: {}", e);
         }
         if let Some(bridge) = &self.app_state {
-            let _ = bridge.sync_from_chain(&chain).await;
+            if let Err(e) = bridge.sync_from_chain(&chain).await {
+                tracing::warn!("API bridge sync failed after consensus commit: {}", e);
+            }
         }
         drop(chain);
         self.pending_blocks.lock().await.remove(&block_hash);
@@ -1374,7 +1384,12 @@ impl NetworkRuntime {
         };
         let mut registry = self.registry.lock().await;
         if let Some(peer) = registry.peers.get_mut(&validator_id) {
-            peer.score = peer.score.saturating_sub(self.config.peer_score_penalty);
+            // N-2: Clamp at ban threshold to prevent deep-negative accumulation
+            // that would make decay_scores recovery impractically slow.
+            peer.score = peer
+                .score
+                .saturating_sub(self.config.peer_score_penalty)
+                .max(self.config.peer_score_ban_threshold.saturating_sub(1));
             peer.violations = peer.violations.saturating_add(1);
             if peer.score <= self.config.peer_score_ban_threshold
                 || peer.violations >= self.config.peer_max_violations
@@ -1585,7 +1600,9 @@ impl NetworkRuntime {
                                 eprintln!("Warning: state store flush failed: {}", e);
                             }
                             if let Some(bridge) = &self.app_state {
-                                let _ = bridge.sync_from_chain(&chain).await;
+                                if let Err(e) = bridge.sync_from_chain(&chain).await {
+                                    tracing::warn!("API bridge sync failed after finalize: {}", e);
+                                }
                             }
                             let height = chain.height();
                             let block = chain.latest_block().cloned();
@@ -1620,7 +1637,9 @@ impl NetworkRuntime {
                                 if let Err(e) = store.save_snapshot(&snapshot) {
                                     eprintln!("Warning: failed to persist snapshot: {}", e);
                                 }
-                                let _ = store.rotate_snapshots(3);
+                                if let Err(e) = store.rotate_snapshots(3) {
+                                    eprintln!("Warning: snapshot rotation failed: {}", e);
+                                }
                             }
                         });
                     }

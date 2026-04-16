@@ -1220,6 +1220,7 @@ impl Chain {
                 }
 
                 // Update finality tracker.
+                let prev_finalized_height = self.finality.finalized_height;
                 self.finality.on_new_block(height);
                 if matches!(
                     self.state.state.governance_state.finality_mode,
@@ -1295,8 +1296,8 @@ impl Chain {
                     });
                 }
 
-                // Emit finality event if new blocks were finalized.
-                if self.finality.finalized_height > 0 {
+                // B-8: Only emit finality event when finalized height actually advances.
+                if self.finality.finalized_height > prev_finalized_height {
                     events.emit(sccgub_types::events::ChainEvent::BlockFinalized {
                         block_height: self.finality.finalized_height,
                         block_hash: self
@@ -1758,13 +1759,19 @@ fn replay_governance_from_transitions<F>(
                     || key.starts_with(b"norms/governance/proposals/")
                 {
                     if let Ok(proposal_id) = <[u8; 32]>::try_from(&value[..]) {
-                        let _ = proposals.vote(
+                        if let Err(e) = proposals.vote(
                             &proposal_id,
                             tx.actor.agent_id,
                             tx.actor.governance_level,
                             true,
                             height,
-                        );
+                        ) {
+                            tracing::warn!(
+                                "Replay governance vote failed for proposal {}: {}",
+                                hex::encode(&proposal_id[..4]),
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -4307,5 +4314,97 @@ mod tests {
                 receipt.verdict
             );
         }
+    }
+
+    // ── import_block tests (B-6) ─────────────────────────────────
+
+    #[test]
+    fn test_import_block_succeeds_for_valid_empty_block() {
+        // Use build_candidate_block (no mutation) then import into a clone.
+        let chain = Chain::init();
+        let block = chain.build_candidate_block().unwrap();
+
+        let mut importer = chain.clone();
+        let result = importer.import_block(block.clone());
+        assert!(
+            result.is_ok(),
+            "import of valid block should succeed: {:?}",
+            result.err()
+        );
+        assert_eq!(importer.height(), 1);
+        assert_eq!(
+            importer.latest_block().unwrap().header.block_id,
+            block.header.block_id
+        );
+    }
+
+    #[test]
+    fn test_import_block_rejects_wrong_height() {
+        let mut producer = Chain::init();
+        producer.produce_block().unwrap();
+        let block_2 = producer.build_candidate_block().unwrap();
+
+        // importer is at height 0, block_2 is for height 2 → mismatch.
+        let mut importer = Chain::from_blocks(vec![producer.blocks[0].clone()]).unwrap();
+        let result = importer.import_block(block_2);
+        assert!(result.is_err(), "should reject height mismatch");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_lowercase().contains("height"),
+            "error should mention height: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_import_block_rejects_wrong_parent_hash() {
+        let chain = Chain::init();
+        let mut block = chain.build_candidate_block().unwrap();
+        block.header.parent_id = [0xFFu8; 32]; // Corrupt parent hash.
+
+        let mut importer = chain.clone();
+        let result = importer.import_block(block);
+        assert!(result.is_err(), "should reject parent hash mismatch");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_lowercase().contains("parent"),
+            "error should mention parent: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_import_block_double_import_same_block_fails() {
+        let chain = Chain::init();
+        let block = chain.build_candidate_block().unwrap();
+
+        let mut importer = chain.clone();
+        importer.import_block(block.clone()).unwrap();
+        // Second import of same block: height now wrong (expects 2, got 1).
+        let result = importer.import_block(block);
+        assert!(result.is_err(), "should reject double import");
+    }
+
+    #[test]
+    fn test_import_block_advances_finality() {
+        let mut producer = Chain::init();
+        producer.governance_limits.max_consecutive_proposals = 100;
+        // Produce enough blocks for finality to advance (default confirmation_depth + 1).
+        for _ in 0..5 {
+            producer.produce_block().unwrap();
+        }
+
+        // Import all produced blocks into a chain cloned from genesis.
+        let mut importer = Chain::from_blocks(vec![producer.blocks[0].clone()]).unwrap();
+        importer.governance_limits.max_consecutive_proposals = 100;
+        for block in &producer.blocks[1..] {
+            importer.import_block(block.clone()).unwrap();
+        }
+        assert_eq!(importer.height(), producer.height());
+        // Finality should match between producer and importer.
+        assert_eq!(
+            importer.finality.finalized_height, producer.finality.finalized_height,
+            "imported chain finality should match producer"
+        );
     }
 }
