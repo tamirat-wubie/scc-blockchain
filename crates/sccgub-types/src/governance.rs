@@ -221,4 +221,48 @@ mod tests {
             "finality.mode must be in the governed parameter allowlist"
         );
     }
+
+    #[test]
+    fn test_finality_mode_deterministic_validates() {
+        assert!(FinalityMode::Deterministic.validate().is_ok());
+    }
+
+    #[test]
+    fn test_finality_mode_bft_valid_quorum() {
+        let mode = FinalityMode::BftCertified {
+            quorum_threshold: 3,
+        };
+        assert!(mode.validate().is_ok());
+    }
+
+    #[test]
+    fn test_finality_mode_bft_zero_quorum_rejected() {
+        let mode = FinalityMode::BftCertified {
+            quorum_threshold: 0,
+        };
+        let err = mode.validate().unwrap_err();
+        assert!(err.contains("quorum_threshold"));
+    }
+
+    #[test]
+    fn test_governance_snapshot_fields() {
+        let snap = GovernanceSnapshot {
+            state_hash: [0u8; 32],
+            active_norm_count: 5,
+            emergency_mode: true,
+            finality_mode: FinalityMode::BftCertified {
+                quorum_threshold: 3,
+            },
+            governance_limits: GovernanceLimitsSnapshot::default(),
+            finality_config: FinalityConfigSnapshot::default(),
+        };
+        assert_eq!(snap.active_norm_count, 5);
+        assert!(snap.emergency_mode);
+        assert_eq!(
+            snap.finality_mode,
+            FinalityMode::BftCertified {
+                quorum_threshold: 3
+            }
+        );
+    }
 }
