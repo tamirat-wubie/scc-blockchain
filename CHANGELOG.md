@@ -176,9 +176,17 @@ v3 genesis requires `body.genesis_consensus_params`,
 `body.genesis_validator_set`, and `body.genesis_constitutional_ceilings`;
 every `(param, ceiling)` pair must be in bounds at genesis.
 
-### Test counts
+### Release summary
 
-1076 tests passing (up from 922 in v0.3.0). Workspace clippy clean under
+**1078 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1078 tests across 9 crates (up from 922 in v0.3.0).
+- 26 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 26 versioned API routes, refreshable from Rust
+  source in one command.
+
+Workspace clippy clean under
 `cargo clippy --workspace --all-targets -- -D warnings`.
 
 ### Deferred to follow-up patches
