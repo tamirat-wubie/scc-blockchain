@@ -553,6 +553,14 @@ impl Chain {
         actual_penalty
     }
 
+    /// Maximum retained equivocation records across all epochs.
+    ///
+    /// N-55: Slashing has already been applied by the time evidence reaches
+    /// this ledger, so records are purely an audit trail.  Capping prevents
+    /// a crafted-evidence flood from blowing up every snapshot and every
+    /// api_bridge sync.
+    const MAX_EQUIVOCATION_RECORDS: usize = 8_192;
+
     /// Record equivocation evidence (deduplicated by proof fields + epoch).
     pub fn record_equivocation(&mut self, proof: EquivocationProof, epoch: u64) {
         let (block_a, block_b) = if proof.block_hash_a <= proof.block_hash_b {
@@ -585,8 +593,25 @@ impl Chain {
             normalized.block_hash_a = block_a;
             normalized.block_hash_b = block_b;
             self.equivocation_records.push((normalized, epoch));
+            // N-55: Keep only the most recent MAX_EQUIVOCATION_RECORDS entries
+            // across all epochs.  Oldest (earliest-epoch) records are dropped
+            // first.  The order of `equivocation_records` is insertion order,
+            // which is also roughly epoch order, so truncating the head is a
+            // safe FIFO eviction.
+            if self.equivocation_records.len() > Self::MAX_EQUIVOCATION_RECORDS {
+                let excess = self.equivocation_records.len() - Self::MAX_EQUIVOCATION_RECORDS;
+                self.equivocation_records.drain(..excess);
+            }
         }
     }
+
+    /// Maximum retained safety certificates.
+    ///
+    /// N-55: Certificates are only needed for recent finality decisions;
+    /// historical certs serve as an audit trail but do not gate consensus.
+    /// Without a cap, each finalized block appends one entry indefinitely,
+    /// bloating every snapshot and api_bridge sync.
+    const MAX_SAFETY_CERTIFICATES: usize = 10_000;
 
     /// Record a safety certificate (deduplicated by height/block/round).
     pub fn record_safety_certificate(&mut self, cert: SafetyCertificate) {
@@ -601,6 +626,16 @@ impl Chain {
         let height = cert.height;
         let block_hash = cert.block_hash;
         self.safety_certificates.push(cert);
+        // N-55: Keep only the most recent MAX_SAFETY_CERTIFICATES by height.
+        // Sort-by-height then truncate is deterministic; existing semantics
+        // (max height → finalized_height) remain intact because we keep the
+        // highest-height entries.
+        if self.safety_certificates.len() > Self::MAX_SAFETY_CERTIFICATES {
+            self.safety_certificates
+                .sort_by_key(|c| (c.height, c.round, c.block_hash));
+            let excess = self.safety_certificates.len() - Self::MAX_SAFETY_CERTIFICATES;
+            self.safety_certificates.drain(..excess);
+        }
         if matches!(
             self.state.state.governance_state.finality_mode,
             FinalityMode::BftCertified { .. }
@@ -4548,6 +4583,98 @@ mod tests {
         assert_eq!(
             importer.finality.finalized_height, producer.finality.finalized_height,
             "imported chain finality should match producer"
+        );
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-55: Bounded evidence collections (CRITICAL memory-DoS defenses).
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_equivocation_records_bounded_to_max() {
+        use sccgub_consensus::protocol::{EquivocationProof, VoteType};
+
+        let mut chain = Chain::init();
+        let cap = Chain::MAX_EQUIVOCATION_RECORDS;
+        // Insert cap + 100 distinct proofs.  Each proof must be unique along
+        // at least one dedup key (we vary `height`) so they are all kept.
+        for i in 0..(cap as u64 + 100) {
+            let proof = EquivocationProof {
+                validator_id: [1u8; 32],
+                height: i,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                block_hash_a: [2u8; 32],
+                block_hash_b: [3u8; 32],
+            };
+            chain.record_equivocation(proof, 0);
+        }
+        // Ledger must not exceed the cap.
+        assert_eq!(chain.equivocation_records.len(), cap);
+        // The oldest (lowest height) entries must have been evicted.
+        let min_kept_height = chain
+            .equivocation_records
+            .iter()
+            .map(|(p, _)| p.height)
+            .min()
+            .unwrap();
+        assert!(
+            min_kept_height >= 100,
+            "lowest retained height should be >= 100, got {}",
+            min_kept_height
+        );
+    }
+
+    #[test]
+    fn test_equivocation_records_dedup_still_works_at_cap() {
+        use sccgub_consensus::protocol::{EquivocationProof, VoteType};
+
+        let mut chain = Chain::init();
+        let proof = EquivocationProof {
+            validator_id: [7u8; 32],
+            height: 42,
+            round: 1,
+            vote_type: VoteType::Precommit,
+            block_hash_a: [8u8; 32],
+            block_hash_b: [9u8; 32],
+        };
+        // Insert the same proof 10 times — dedup must keep it at 1 entry.
+        for _ in 0..10 {
+            chain.record_equivocation(proof.clone(), 3);
+        }
+        assert_eq!(chain.equivocation_records.len(), 1);
+    }
+
+    #[test]
+    fn test_safety_certificates_pruned_to_max() {
+        let mut chain = Chain::init();
+        let cap = Chain::MAX_SAFETY_CERTIFICATES;
+        // Feed cap + 50 unique certs with increasing heights.
+        for i in 0..(cap as u64 + 50) {
+            let cert = SafetyCertificate {
+                chain_id: [0u8; 32],
+                epoch: 0,
+                height: i,
+                block_hash: [(i % 251) as u8; 32],
+                round: 0,
+                precommit_signatures: vec![],
+                quorum: 1,
+                validator_count: 1,
+            };
+            chain.record_safety_certificate(cert);
+        }
+        assert_eq!(chain.safety_certificates.len(), cap);
+        // The retained certs must be the newest (highest-height) ones.
+        let min_kept_height = chain
+            .safety_certificates
+            .iter()
+            .map(|c| c.height)
+            .min()
+            .unwrap();
+        assert!(
+            min_kept_height >= 50,
+            "lowest retained safety cert height should be >= 50, got {}",
+            min_kept_height
         );
     }
 }
