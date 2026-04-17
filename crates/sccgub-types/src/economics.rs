@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::consensus_params::ConsensusParams;
 use crate::tension::TensionValue;
 
 /// Economic model per v2.0 spec Section 13.
@@ -66,6 +67,72 @@ impl EconomicState {
     pub fn reset_epoch(&mut self) {
         self.fees_collected = TensionValue::ZERO;
         self.rewards_distributed = TensionValue::ZERO;
+    }
+
+    /// Patch-05 §20.1: compute the v4 gas price using median-over-window
+    /// instead of single-block `T_prior`.
+    ///
+    /// - `prior_tensions`: the window of recent per-block tension values
+    ///   (most recent last). Length must satisfy
+    ///   `params.median_tension_window`; if the chain is younger than
+    ///   the window size, the caller passes whatever is available
+    ///   (a shorter slice — see §20.1 warming window).
+    /// - `tension_budget`: current budget used as the divisor.
+    /// - `params`: `ConsensusParams` supplying `fee_tension_alpha` and
+    ///   the window-size reference value. `self.alpha` is ignored in
+    ///   the v4 path; `self.base_fee` is retained.
+    ///
+    /// Formula: `gas_price = base_fee * (1 + alpha * T_median / T_budget)`.
+    /// Median is the sorted middle element (§20.1 oddness invariant).
+    ///
+    /// Pure and deterministic: no wall-clock, no randomness. Same
+    /// `(window, budget, params)` always produces the same result.
+    pub fn effective_fee_median(
+        &self,
+        prior_tensions: &[TensionValue],
+        tension_budget: TensionValue,
+        params: &ConsensusParams,
+    ) -> TensionValue {
+        if tension_budget.raw() <= 0 {
+            return self.base_fee;
+        }
+        // Warming window: chain younger than W. Use whatever prior
+        // tensions exist. With zero prior blocks, use ZERO (equivalent
+        // to base_fee).
+        if prior_tensions.is_empty() {
+            return self.base_fee;
+        }
+        let t_median = median_of_tensions(prior_tensions);
+        // fee = base_fee * (1 + alpha * T_median / T_budget)
+        let one = TensionValue(TensionValue::SCALE);
+        let ratio =
+            TensionValue(t_median.raw().saturating_mul(TensionValue::SCALE) / tension_budget.raw());
+        let alpha = TensionValue(params.fee_tension_alpha);
+        let multiplier = one + alpha.mul_fp(ratio);
+        self.base_fee.mul_fp(multiplier)
+    }
+}
+
+/// Median of a non-empty slice of `TensionValue`. Sorts a copy; input
+/// is not mutated. For odd-length slices returns the middle element
+/// (§20.1 spec). For even-length slices returns the lower-middle
+/// element — deterministic but not formally spec-specified (the
+/// `median_tension_window` validator ensures odd-length in practice).
+///
+/// Bounded by input: `min(slice) <= median <= max(slice)`. This is the
+/// core of `INV-FEE-ORACLE-BOUNDED`.
+pub fn median_of_tensions(values: &[TensionValue]) -> TensionValue {
+    debug_assert!(!values.is_empty(), "median_of_tensions: empty slice");
+    let mut sorted: Vec<TensionValue> = values.to_vec();
+    sorted.sort();
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        // Even length: lower-middle element. See §20.1 — the
+        // ConsensusParams validator pins odd window size; this branch
+        // only fires during warming or under misconfiguration.
+        sorted[mid - 1]
+    } else {
+        sorted[mid]
     }
 }
 
@@ -151,5 +218,182 @@ mod tests {
 
         econ.reset_epoch();
         assert_eq!(econ.rewards_distributed, TensionValue::ZERO);
+    }
+
+    // ── Patch-05 §20 median-over-window fee oracle ─────────────────────
+
+    fn t(n: i64) -> TensionValue {
+        TensionValue::from_integer(n)
+    }
+
+    #[test]
+    fn patch_05_median_of_odd_slice() {
+        // Sorted middle of [1, 2, 3, 4, 5] is 3.
+        let values = vec![t(4), t(1), t(3), t(5), t(2)];
+        assert_eq!(median_of_tensions(&values), t(3));
+    }
+
+    #[test]
+    fn patch_05_median_of_single_element() {
+        assert_eq!(median_of_tensions(&[t(42)]), t(42));
+    }
+
+    #[test]
+    fn patch_05_median_of_tensions_bounded() {
+        // Property: min(slice) <= median <= max(slice). Core of
+        // INV-FEE-ORACLE-BOUNDED.
+        for &vals in &[
+            &[1i64, 2, 3, 4, 5][..],
+            &[100, -50, 20, 0, 75][..],
+            &[i64::MIN / 2, 0, i64::MAX / 2][..],
+            &[7, 7, 7, 7, 7][..],
+            &[0, 1000000][..],
+        ] {
+            let tv: Vec<TensionValue> = vals.iter().copied().map(t).collect();
+            let med = median_of_tensions(&tv);
+            let min = tv.iter().copied().min().unwrap();
+            let max = tv.iter().copied().max().unwrap();
+            assert!(
+                min <= med && med <= max,
+                "median {} outside [{}, {}] for {:?}",
+                med,
+                min,
+                max,
+                vals
+            );
+        }
+    }
+
+    #[test]
+    fn patch_05_median_does_not_mutate_input() {
+        let values = vec![t(5), t(1), t(3)];
+        let before = values.clone();
+        let _ = median_of_tensions(&values);
+        assert_eq!(values, before);
+    }
+
+    #[test]
+    fn patch_05_effective_fee_median_warming_window_uses_base_fee() {
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        // No prior tensions (genesis or very young chain): fee = base_fee.
+        let fee = econ.effective_fee_median(&[], t(1000), &params);
+        assert_eq!(fee, econ.base_fee);
+    }
+
+    #[test]
+    fn patch_05_effective_fee_median_zero_budget_returns_base_fee() {
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        let window = vec![t(100), t(200), t(300)];
+        let fee = econ.effective_fee_median(&window, TensionValue::ZERO, &params);
+        assert_eq!(fee, econ.base_fee);
+    }
+
+    #[test]
+    fn patch_05_effective_fee_median_increases_with_tension() {
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        let budget = t(1000);
+        // Low-tension window vs high-tension window — same length, same
+        // α — high window produces a larger fee.
+        let low = vec![t(10), t(20), t(30), t(40), t(50)];
+        let high = vec![t(100), t(200), t(300), t(400), t(500)];
+        let fee_low = econ.effective_fee_median(&low, budget, &params);
+        let fee_high = econ.effective_fee_median(&high, budget, &params);
+        assert!(
+            fee_high > fee_low,
+            "higher-tension window must produce higher fee: {} vs {}",
+            fee_high,
+            fee_low
+        );
+    }
+
+    #[test]
+    fn patch_05_fee_bounded_between_min_and_max() {
+        // INV-FEE-ORACLE-BOUNDED: gas_price is bounded because median is
+        // bounded. This test exercises the boundedness by computing fees
+        // over three windows with identical min and max but different
+        // interior values, and asserting all three fees lie inside
+        // [fee_at_min, fee_at_max].
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        let budget = t(1000);
+
+        // Fee assuming every sample in the window is the min.
+        let fee_at_min = econ.effective_fee_median(&[t(10); 5], budget, &params);
+        // Fee assuming every sample is the max.
+        let fee_at_max = econ.effective_fee_median(&[t(500); 5], budget, &params);
+
+        // Various mixes with min=10, max=500 — all medians must fall
+        // between those values, so fees must fall in [fee_at_min, fee_at_max].
+        for mix in &[
+            vec![t(10), t(100), t(200), t(300), t(500)],
+            vec![t(10), t(20), t(30), t(400), t(500)],
+            vec![t(10), t(250), t(300), t(499), t(500)],
+            vec![t(10), t(10), t(10), t(10), t(500)],
+        ] {
+            let fee = econ.effective_fee_median(mix, budget, &params);
+            assert!(
+                fee_at_min <= fee && fee <= fee_at_max,
+                "fee {} outside [{}, {}] for {:?}",
+                fee,
+                fee_at_min,
+                fee_at_max,
+                mix
+            );
+        }
+    }
+
+    #[test]
+    fn patch_05_single_block_cannot_move_median_on_odd_window() {
+        // Manipulation-resistance property: flipping ONE sample in a
+        // 5-element window cannot change the median if the other four
+        // samples bracket it.
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        let budget = t(1000);
+
+        // Baseline: four "normal" samples at 100 + one "normal" at 100.
+        let baseline = vec![t(100), t(100), t(100), t(100), t(100)];
+        let baseline_fee = econ.effective_fee_median(&baseline, budget, &params);
+
+        // Attacker flips one sample to extreme high.
+        let attacked_high = vec![t(100), t(100), t(100), t(100), t(1_000_000)];
+        let attacked_high_fee = econ.effective_fee_median(&attacked_high, budget, &params);
+
+        // Attacker flips one sample to extreme low.
+        let attacked_low = vec![t(0), t(100), t(100), t(100), t(100)];
+        let attacked_low_fee = econ.effective_fee_median(&attacked_low, budget, &params);
+
+        // All three must produce identical fees — the median of every
+        // window above is 100.
+        assert_eq!(baseline_fee, attacked_high_fee);
+        assert_eq!(baseline_fee, attacked_low_fee);
+    }
+
+    #[test]
+    fn patch_05_fee_uses_params_alpha_not_self_alpha() {
+        // `self.alpha` is the v3 path's default (0.1). v4 fees must
+        // pull α from `params.fee_tension_alpha` (0.5 default).
+        let econ = EconomicState::default();
+        let params_low_alpha = ConsensusParams {
+            fee_tension_alpha: TensionValue::SCALE / 100, // 0.01
+            ..Default::default()
+        };
+        let params_high_alpha = ConsensusParams {
+            fee_tension_alpha: TensionValue::SCALE, // 1.0
+            ..Default::default()
+        };
+        let window = vec![t(100), t(100), t(100), t(100), t(100)];
+        let budget = t(1000);
+        let fee_low = econ.effective_fee_median(&window, budget, &params_low_alpha);
+        let fee_high = econ.effective_fee_median(&window, budget, &params_high_alpha);
+        assert!(
+            fee_high > fee_low,
+            "higher α must produce higher fee: {} vs {}",
+            fee_high,
+            fee_low
+        );
     }
 }
