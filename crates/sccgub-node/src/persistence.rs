@@ -1160,4 +1160,37 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_latest_height_empty_returns_none() {
+        let dir = std::env::temp_dir().join(format!("sccgub_test_latest_h_{}", std::process::id()));
+        let store = ChainStore::new(&dir).unwrap();
+        let result = store.latest_height().unwrap();
+        assert_eq!(result, None, "empty store should return None");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_latest_height_returns_max_height() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_test_latest_h2_{}", std::process::id()));
+        let store = ChainStore::new(&dir).unwrap();
+        store.save_block(&test_block(0)).unwrap();
+        store.save_block(&test_block(1)).unwrap();
+        store.save_block(&test_block(2)).unwrap();
+
+        let result = store.latest_height().unwrap();
+        assert_eq!(result, Some(2), "should return highest block height");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_latest_snapshot_empty_returns_none() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_test_snap_empty_{}", std::process::id()));
+        let store = ChainStore::new(&dir).unwrap();
+        let result = store.load_latest_snapshot().unwrap();
+        assert!(result.is_none(), "empty snapshot dir should return None");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
