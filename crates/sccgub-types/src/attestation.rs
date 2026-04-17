@@ -69,6 +69,18 @@ impl ArtifactAttestation {
         if self.signature.len() < 64 {
             return Err("signature must be at least 64 bytes (Ed25519)".into());
         }
+        // N-59: Ed25519 signatures are exactly 64 bytes.  Previously only a
+        // minimum was enforced; a peer could gossip an attestation with a
+        // 1 MiB signature field, pass validation, and have it committed
+        // into a block forever.  128 bytes is twice the canonical length,
+        // leaving room for future signature schemes while still closing the
+        // unbounded-bloat vector.
+        if self.signature.len() > 128 {
+            return Err(format!(
+                "signature too long: {} bytes (max 128)",
+                self.signature.len()
+            ));
+        }
         if self.software_version.len() > MAX_STRING_LEN {
             return Err("software_version too long".into());
         }
@@ -117,6 +129,30 @@ mod tests {
     fn test_missing_authority_rejected() {
         let mut a = valid_attestation();
         a.authority = [0u8; 32];
+        assert!(a.validate().is_err());
+    }
+
+    // N-59: Attestation signature upper bound.
+
+    #[test]
+    fn test_oversized_signature_rejected() {
+        let mut a = valid_attestation();
+        a.signature = vec![0u8; 129]; // > 128-byte cap
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("signature too long"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_signature_at_upper_bound_accepted() {
+        let mut a = valid_attestation();
+        a.signature = vec![0u8; 128];
+        assert!(a.validate().is_ok());
+    }
+
+    #[test]
+    fn test_enormous_signature_rejected() {
+        let mut a = valid_attestation();
+        a.signature = vec![0u8; 1_000_000]; // 1 MiB attack
         assert!(a.validate().is_err());
     }
 }
