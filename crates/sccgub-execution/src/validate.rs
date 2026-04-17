@@ -97,26 +97,26 @@ pub fn admit_check_structural(
     }
     // Per-variant size checks.
     match &tx.payload {
-        sccgub_types::transition::OperationPayload::Write { key, value } => {
-            if key.len() > max_state_entry_size || value.len() > max_state_entry_size {
-                return Err("Payload key or value exceeds 1MB size limit".into());
-            }
+        sccgub_types::transition::OperationPayload::Write { key, value }
+            if key.len() > max_state_entry_size || value.len() > max_state_entry_size =>
+        {
+            return Err("Payload key or value exceeds 1MB size limit".into());
         }
-        sccgub_types::transition::OperationPayload::DeployContract { code, .. } => {
-            if code.len() > max_state_entry_size {
-                return Err(format!(
-                    "Contract code {} bytes exceeds 1MB limit",
-                    code.len()
-                ));
-            }
+        sccgub_types::transition::OperationPayload::DeployContract { code, .. }
+            if code.len() > max_state_entry_size =>
+        {
+            return Err(format!(
+                "Contract code {} bytes exceeds 1MB limit",
+                code.len()
+            ));
         }
-        sccgub_types::transition::OperationPayload::InvokeContract { args, .. } => {
-            if args.len() > max_state_entry_size {
-                return Err(format!(
-                    "Contract args {} bytes exceeds 1MB limit",
-                    args.len()
-                ));
-            }
+        sccgub_types::transition::OperationPayload::InvokeContract { args, .. }
+            if args.len() > max_state_entry_size =>
+        {
+            return Err(format!(
+                "Contract args {} bytes exceeds 1MB limit",
+                args.len()
+            ));
         }
         _ => {} // Noop, AssetTransfer, RegisterAgent, ProposeNorm — all bounded by fixed fields.
     }
