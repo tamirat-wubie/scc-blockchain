@@ -424,8 +424,8 @@ mod tests {
 
         assert!(ws.validate_nonces(&txs).is_err());
         // Both agents' nonces must be untouched.
-        assert!(ws.agent_nonces.get(&agent_a).is_none());
-        assert!(ws.agent_nonces.get(&agent_b).is_none());
+        assert!(!ws.agent_nonces.contains_key(&agent_a));
+        assert!(!ws.agent_nonces.contains_key(&agent_b));
     }
 
     #[test]
