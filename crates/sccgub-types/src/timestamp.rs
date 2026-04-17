@@ -105,7 +105,7 @@ impl BoundedVectorClock {
         }
         // Sort by last_active_epoch descending — keep the most recently active.
         self.entries
-            .sort_by(|a, b| b.1.last_active_epoch.cmp(&a.1.last_active_epoch));
+            .sort_by_key(|b| std::cmp::Reverse(b.1.last_active_epoch));
         self.entries.truncate(self.max_size as usize);
     }
 

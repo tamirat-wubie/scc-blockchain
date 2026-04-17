@@ -401,9 +401,9 @@ mod tests {
             "should be pruned to MAX_CONFIRMED_IDS"
         );
         // The first `overflow` IDs should have been evicted.
-        for i in 0..overflow {
+        for (i, id) in ids.iter().enumerate().take(overflow) {
             assert!(
-                !mempool.confirmed_ids.contains(&ids[i]),
+                !mempool.confirmed_ids.contains(id),
                 "oldest ID {} should be evicted",
                 i
             );

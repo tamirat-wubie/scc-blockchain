@@ -890,6 +890,15 @@ fn cmd_verify(data_dir: &std::path::Path) {
         }
 
         // Replay state via the shared economics + apply path.
+        // Validate nonces atomically BEFORE mutating balances/state.
+        if let Err(e) = state.validate_nonces(&block.body.transitions) {
+            println!(
+                "  [FAIL] Block #{}: nonce error: {}",
+                block.header.height, e
+            );
+            errors += 1;
+        }
+
         if block.header.height > 0 {
             let gas_price = sccgub_types::economics::EconomicState::default().effective_fee(
                 state.state.tension_field.total,
@@ -919,18 +928,6 @@ fn cmd_verify(data_dir: &std::path::Path) {
             &mut balances,
             &block.body.transitions,
         );
-
-        for tx in &block.body.transitions {
-            if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                println!(
-                    "  [FAIL] Block #{}: nonce error for tx {}: {}",
-                    block.header.height,
-                    hex::encode(tx.tx_id),
-                    e
-                );
-                errors += 1;
-            }
-        }
 
         state.set_height(block.header.height);
 
