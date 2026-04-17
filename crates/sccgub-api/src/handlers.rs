@@ -52,6 +52,11 @@ pub struct AppState {
     pub seen_tx_ids: std::collections::HashSet<[u8; 32]>,
     /// Insertion-ordered queue for LRU eviction of seen_tx_ids.
     pub seen_tx_order: std::collections::VecDeque<[u8; 32]>,
+    /// Patch-04 §18.2: pending `KeyRotation` events awaiting inclusion in
+    /// the next block. Bounded by `MAX_PENDING_TXS` (shared cap across
+    /// all pending submission queues). The block producer drains this
+    /// queue when forming a new block.
+    pub pending_key_rotations: Vec<sccgub_types::key_rotation::KeyRotation>,
 }
 
 /// Peer-level network stats snapshot for API exposure.

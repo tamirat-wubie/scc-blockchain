@@ -525,6 +525,103 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorApiResponse"
+  /api/v1/validators:
+    get:
+      operationId: getValidators
+      summary: Current active validator set (Patch-04 §15)
+      responses:
+        "200":
+          description: Validator set snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        "404":
+          description: No validator set committed (pre-v3 chain)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorApiResponse"
+  /api/v1/validators/history:
+    get:
+      operationId: getValidatorHistory
+      summary: Pending ValidatorSetChange events (Patch-04 §15.4)
+      responses:
+        "200":
+          description: Pending-change queue snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+  /api/v1/ceilings:
+    get:
+      operationId: getCeilings
+      summary: Constitutional ceilings (Patch-04 §17)
+      responses:
+        "200":
+          description: Genesis-bound ceiling values
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        "404":
+          description: No ceilings committed (pre-v3 chain)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorApiResponse"
+  /api/v1/tx/key-rotation:
+    post:
+      operationId: submitKeyRotation
+      summary: Submit a signed KeyRotation for mempool admission (Patch-04 §18.2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotation:
+                  type: object
+      responses:
+        "202":
+          description: Rotation accepted into the pending queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        "400":
+          description: Invalid rotation (structural validation failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorApiResponse"
+        "409":
+          description: Rotation already queued or already applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorApiResponse"
 components:
   schemas:
     ErrorCode:

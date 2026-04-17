@@ -6,6 +6,7 @@ use axum::{
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::handlers::{self, SharedState};
+use crate::patch_04;
 
 /// Build the API router with all endpoints.
 ///
@@ -104,6 +105,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/api/v1/governance/proposals/vote",
             post(handlers::submit_governance_vote),
+        )
+        // Patch-04 v3 endpoints (§15, §17, §18).
+        .route("/api/v1/validators", get(patch_04::get_validators))
+        .route(
+            "/api/v1/validators/history",
+            get(patch_04::get_validator_history),
+        )
+        .route("/api/v1/ceilings", get(patch_04::get_ceilings))
+        .route(
+            "/api/v1/tx/key-rotation",
+            post(patch_04::submit_key_rotation),
         )
         .route("/api/v1/tx/{tx_id}", get(handlers::get_tx))
         .route(
@@ -220,6 +232,7 @@ mod tests {
             pending_txs: Vec::new(),
             seen_tx_ids: HashSet::new(),
             seen_tx_order: std::collections::VecDeque::new(),
+            pending_key_rotations: Vec::new(),
         }))
     }
 
@@ -395,6 +408,7 @@ mod tests {
                 pending_txs: Vec::new(),
                 seen_tx_ids: HashSet::new(),
                 seen_tx_order: std::collections::VecDeque::new(),
+            pending_key_rotations: Vec::new(),
             })),
             tx_id_hex,
         )
@@ -452,6 +466,7 @@ mod tests {
             pending_txs: Vec::new(),
             seen_tx_ids: HashSet::new(),
             seen_tx_order: std::collections::VecDeque::new(),
+            pending_key_rotations: Vec::new(),
         }))
     }
 
@@ -1016,8 +1031,8 @@ mod tests {
         let router_count = router_paths.len();
         let spec_count = openapi_spec().matches("\n  /api/v1/").count();
 
-        assert_eq!(router_count, 22, "router must expose 22 versioned routes");
-        assert_eq!(spec_count, 22, "OpenAPI must list 22 versioned routes");
+        assert_eq!(router_count, 26, "router must expose 26 versioned routes");
+        assert_eq!(spec_count, 26, "OpenAPI must list 26 versioned routes");
         assert_eq!(
             spec_count, router_count,
             "OpenAPI path count must match router path count"
@@ -1039,6 +1054,10 @@ mod tests {
             "/api/v1/tx/submit",
             "/api/v1/tx/{tx_id}",
             "/api/v1/receipt/{tx_id}",
+            "/api/v1/validators",
+            "/api/v1/validators/history",
+            "/api/v1/ceilings",
+            "/api/v1/tx/key-rotation",
         ] {
             assert!(
                 router_paths.iter().any(|router_path| router_path == path),
