@@ -322,7 +322,16 @@ impl Chain {
                 }
             }
 
-            // 4. Apply transitions to running state (after validation succeeded).
+            // 4. Validate nonces atomically BEFORE mutating balances/state.
+            //    If any tx has an invalid nonce the ledger stays untouched.
+            state
+                .validate_nonces(&block.body.transitions)
+                .map_err(|detail| ImportError::NonceViolation {
+                    height: block.header.height,
+                    detail,
+                })?;
+
+            // 5. Apply economics and transitions (safe — nonces already verified).
             let gas_price = EconomicState::default().effective_fee(
                 state.state.tension_field.total,
                 state.state.tension_field.budget.current_budget,
@@ -347,14 +356,6 @@ impl Chain {
                 &mut balances,
                 &block.body.transitions,
             );
-            for tx in &block.body.transitions {
-                if let Err(e) = state.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                    return Err(ImportError::NonceViolation {
-                        height: block.header.height,
-                        detail: e,
-                    });
-                }
-            }
             if block.header.height % 100 == 0 {
                 treasury.advance_epoch();
                 commit_treasury_state(&mut state, &treasury);
@@ -821,6 +822,12 @@ impl Chain {
     pub fn import_block(&mut self, block: Block) -> Result<(), String> {
         self.validate_candidate_block(&block)?;
 
+        // Validate nonces atomically BEFORE mutating balances/state.
+        // If any tx has an invalid nonce the ledger stays untouched.
+        self.state
+            .validate_nonces(&block.body.transitions)
+            .map_err(|e| format!("Nonce violation: {}", e))?;
+
         let gas_price = self.economics.effective_fee(
             self.state.state.tension_field.total,
             self.state.state.tension_field.budget.current_budget,
@@ -842,11 +849,6 @@ impl Chain {
             &mut self.balances,
             &block.body.transitions,
         );
-        for tx in &block.body.transitions {
-            self.state
-                .check_nonce(&tx.actor.agent_id, tx.nonce)
-                .map_err(|e| format!("Nonce violation: {}", e))?;
-        }
         if block.header.height.is_multiple_of(100) {
             self.treasury.advance_epoch();
             commit_treasury_state(&mut self.state, &self.treasury);
@@ -1093,6 +1095,16 @@ impl Chain {
         let mut speculative_state = self.state.clone();
         let mut speculative_balances = self.balances.clone();
         let mut speculative_treasury = self.treasury.clone();
+
+        // Defense-in-depth: validate nonces atomically BEFORE mutating the
+        // speculative state. The pre-filter loop above should have caught any
+        // nonce drift, so a failure here is an invariant violation — but we
+        // still want to avoid leaving a half-mutated speculative ledger if it
+        // ever fires.
+        if let Err(e) = speculative_state.validate_nonces(&transitions) {
+            tracing::error!("Nonce invariant violation in block production: {}", e);
+        }
+
         let economics_outcome = sccgub_state::apply::apply_block_economics(
             &mut speculative_state,
             &mut speculative_balances,
@@ -1110,11 +1122,6 @@ impl Chain {
             &mut speculative_balances,
             &transitions,
         );
-        for tx in &transitions {
-            if let Err(e) = speculative_state.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                tracing::error!("Nonce invariant violation in block production: {}", e);
-            }
-        }
         if height % 100 == 0 {
             speculative_treasury.advance_epoch();
             commit_treasury_state(&mut speculative_state, &speculative_treasury);

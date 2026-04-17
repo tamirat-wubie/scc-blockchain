@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sccgub_types::consensus_params::ConsensusParams;
 use sccgub_types::state::{SymbolState, WorldState};
-use sccgub_types::transition::StateDelta;
+use sccgub_types::transition::{StateDelta, SymbolicTransition};
 use sccgub_types::{AgentId, MerkleRoot, SymbolAddress, ZERO_HASH};
 
 use crate::store::StateStore;
@@ -122,6 +122,23 @@ impl ManagedWorldState {
             ));
         }
         self.agent_nonces.insert(*agent_id, nonce);
+        Ok(())
+    }
+
+    /// Atomically validate and commit nonces for all transitions in a block.
+    ///
+    /// Snapshots `agent_nonces` before checking. If any nonce fails, the
+    /// snapshot is restored so no partial nonce mutations leak to the caller.
+    /// This MUST be called before `apply_block_transitions` / `apply_block_economics`
+    /// to avoid mutating the balance ledger on blocks with invalid nonces.
+    pub fn validate_nonces(&mut self, transitions: &[SymbolicTransition]) -> Result<(), String> {
+        let snapshot = self.agent_nonces.clone();
+        for tx in transitions {
+            if let Err(e) = self.check_nonce(&tx.actor.agent_id, tx.nonce) {
+                self.agent_nonces = snapshot;
+                return Err(e);
+            }
+        }
         Ok(())
     }
 
@@ -308,5 +325,112 @@ mod tests {
         let result = ws.check_nonce(&agent, 1);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("overflow"));
+    }
+
+    // ── validate_nonces tests ──────────────────────────────────────────
+
+    use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+    use sccgub_types::governance::PrecedenceLevel;
+    use sccgub_types::mfidel::MfidelAtomicSeal;
+    use sccgub_types::timestamp::CausalTimestamp;
+    use sccgub_types::transition::{
+        CausalJustification, OperationPayload, SymbolicTransition, TransitionIntent,
+        TransitionKind, TransitionMechanism, WHBindingIntent,
+    };
+    use std::collections::BTreeSet;
+
+    /// Build a minimal SymbolicTransition for the given agent/nonce.
+    fn make_tx(agent_id: [u8; 32], nonce: u128) -> SymbolicTransition {
+        let mut tx_id = [0u8; 32];
+        tx_id[0] = nonce as u8;
+        tx_id[1] = agent_id[0];
+        SymbolicTransition {
+            tx_id,
+            actor: AgentIdentity {
+                agent_id,
+                public_key: [0u8; 32],
+                mfidel_seal: MfidelAtomicSeal::from_height(0),
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: b"test".to_vec(),
+                declared_purpose: "test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: b"test".to_vec(),
+                why: CausalJustification {
+                    invoking_rule: [0u8; 32],
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "test".into(),
+            },
+            nonce,
+            signature: vec![0u8; 64],
+        }
+    }
+
+    #[test]
+    fn test_validate_nonces_success() {
+        let mut ws = ManagedWorldState::new();
+        let agent = [10u8; 32];
+        let txs = vec![make_tx(agent, 1), make_tx(agent, 2), make_tx(agent, 3)];
+
+        assert!(ws.validate_nonces(&txs).is_ok());
+        assert_eq!(ws.agent_nonces.get(&agent), Some(&3));
+    }
+
+    #[test]
+    fn test_validate_nonces_rolls_back_on_failure() {
+        let mut ws = ManagedWorldState::new();
+        let agent = [11u8; 32];
+
+        // Pre-commit nonce 1 so expected next is 2.
+        ws.agent_nonces.insert(agent, 1);
+
+        // Second tx has a gap (nonce 4 instead of 3) — should fail.
+        let txs = vec![make_tx(agent, 2), make_tx(agent, 4)];
+
+        assert!(ws.validate_nonces(&txs).is_err());
+        // Nonces must be rolled back to the snapshot value (1), not 2.
+        assert_eq!(ws.agent_nonces.get(&agent), Some(&1));
+    }
+
+    #[test]
+    fn test_validate_nonces_multi_agent_rollback() {
+        let mut ws = ManagedWorldState::new();
+        let agent_a = [20u8; 32];
+        let agent_b = [21u8; 32];
+
+        // Agent A: nonce 1 is valid.
+        // Agent B: nonce 5 is invalid (expected 1).
+        let txs = vec![make_tx(agent_a, 1), make_tx(agent_b, 5)];
+
+        assert!(ws.validate_nonces(&txs).is_err());
+        // Both agents' nonces must be untouched.
+        assert!(ws.agent_nonces.get(&agent_a).is_none());
+        assert!(ws.agent_nonces.get(&agent_b).is_none());
+    }
+
+    #[test]
+    fn test_validate_nonces_empty_block() {
+        let mut ws = ManagedWorldState::new();
+        assert!(ws.validate_nonces(&[]).is_ok());
     }
 }
