@@ -301,8 +301,9 @@ fn restore_snapshot_if_available(
             eprintln!("Warning: snapshot restore with store failed: {}", e);
             return false;
         }
-    } else {
-        chain.restore_from_snapshot(&snapshot);
+    } else if let Err(e) = chain.restore_from_snapshot(&snapshot) {
+        eprintln!("Warning: snapshot restore rejected: {}", e);
+        return false;
     }
 
     true
