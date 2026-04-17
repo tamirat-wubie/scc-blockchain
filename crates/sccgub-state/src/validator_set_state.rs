@@ -46,9 +46,7 @@ pub fn commit_validator_set(state: &mut ManagedWorldState, set: &ValidatorSet) {
 
 /// Read the current `ValidatorSet` from trie storage, if present.
 /// Returns `Ok(None)` when no set has been committed (pre-v3 chains).
-pub fn validator_set_from_trie(
-    state: &ManagedWorldState,
-) -> Result<Option<ValidatorSet>, String> {
+pub fn validator_set_from_trie(state: &ManagedWorldState) -> Result<Option<ValidatorSet>, String> {
     match state.get(&VALIDATOR_SET_TRIE_KEY.to_vec()) {
         Some(bytes) => ValidatorSet::from_canonical_bytes(bytes).map(Some),
         None => Ok(None),
@@ -68,8 +66,8 @@ pub fn pending_changes_from_trie(
 }
 
 fn commit_pending_changes(state: &mut ManagedWorldState, pending: &[ValidatorSetChange]) {
-    let bytes = bincode::serialize(pending)
-        .expect("Vec<ValidatorSetChange> serialization is infallible");
+    let bytes =
+        bincode::serialize(pending).expect("Vec<ValidatorSetChange> serialization is infallible");
     state.apply_delta(&StateDelta {
         writes: vec![StateWrite {
             address: PENDING_VALIDATOR_SET_CHANGES_TRIE_KEY.to_vec(),
@@ -97,8 +95,7 @@ pub fn apply_validator_set_change_admission(
     if !change.change_id_is_consistent() {
         return Err(ValidatorSetStateError::ChangeIdMismatch);
     }
-    let mut pending = pending_changes_from_trie(state)
-        .map_err(ValidatorSetStateError::Storage)?;
+    let mut pending = pending_changes_from_trie(state).map_err(ValidatorSetStateError::Storage)?;
     if pending.iter().any(|c| c.change_id == change.change_id) {
         return Err(ValidatorSetStateError::DuplicateChangeId);
     }
@@ -119,14 +116,11 @@ pub fn advance_validator_set_to_height(
     state: &mut ManagedWorldState,
     height: u64,
 ) -> Result<Vec<ValidatorSetChange>, ValidatorSetStateError> {
-    let pending = pending_changes_from_trie(state)
-        .map_err(ValidatorSetStateError::Storage)?;
+    let pending = pending_changes_from_trie(state).map_err(ValidatorSetStateError::Storage)?;
     if pending.is_empty() {
         return Ok(Vec::new());
     }
-    let mut set = match validator_set_from_trie(state)
-        .map_err(ValidatorSetStateError::Storage)?
-    {
+    let mut set = match validator_set_from_trie(state).map_err(ValidatorSetStateError::Storage)? {
         Some(s) => s,
         None => return Err(ValidatorSetStateError::SetNotInitialized),
     };
@@ -157,7 +151,10 @@ fn apply_kind_to_set(
             if records.iter().any(|r| r.agent_id == new_record.agent_id) {
                 return Err(ValidatorSetStateError::AgentAlreadyPresent);
             }
-            if records.iter().any(|r| r.validator_id == new_record.validator_id) {
+            if records
+                .iter()
+                .any(|r| r.validator_id == new_record.validator_id)
+            {
                 return Err(ValidatorSetStateError::ValidatorIdAlreadyInUse);
             }
             records.push(new_record.clone());
@@ -281,11 +278,7 @@ mod tests {
 
     #[test]
     fn patch_04_commit_and_read_validator_set() {
-        let set = ValidatorSet::new(vec![
-            record(1, 10, 30, 0),
-            record(2, 20, 40, 0),
-        ])
-        .unwrap();
+        let set = ValidatorSet::new(vec![record(1, 10, 30, 0), record(2, 20, 40, 0)]).unwrap();
         let mut state = ManagedWorldState::new();
         commit_validator_set(&mut state, &set);
         let loaded = validator_set_from_trie(&state).unwrap().unwrap();
@@ -501,8 +494,7 @@ mod tests {
         // two independent applications.
 
         fn build_and_run() -> (ValidatorSet, sccgub_types::Hash) {
-            let mut state =
-                seed_state_with_set(vec![record(0, 0, 10, 0)]);
+            let mut state = seed_state_with_set(vec![record(0, 0, 10, 0)]);
 
             let mut next_effective = 1u64;
             let mut next_agent: u8 = 1;

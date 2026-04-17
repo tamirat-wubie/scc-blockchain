@@ -199,11 +199,8 @@ pub fn phi_check_single_tx(
             // Patch-04 §18.5: reject transactions signed by a key that has
             // been rotated away. `state.state.height` is the current block
             // height at phase-evaluation time.
-            match crate::key_rotation_check::check_tx_superseded_key(
-                tx,
-                state,
-                state.state.height,
-            ) {
+            match crate::key_rotation_check::check_tx_superseded_key(tx, state, state.state.height)
+            {
                 crate::key_rotation_check::SupersededKeyCheck::Ok => {}
                 crate::key_rotation_check::SupersededKeyCheck::Superseded {
                     active_key, ..
@@ -536,10 +533,9 @@ fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
                     return PhiPhaseResult {
                         phase: PhiPhase::Feedback,
                         passed: false,
-                        details:
-                            "Block contains ValidatorSetChange events but \
+                        details: "Block contains ValidatorSetChange events but \
                              system/validator_set is not initialized"
-                                .into(),
+                            .into(),
                     };
                 }
                 Err(e) => {
@@ -553,8 +549,9 @@ fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
             // §17.2: enforce max_validator_set_changes_per_block_param
             // (caller's ConsensusParams, which is separately ceiling-bound
             //  at phase 10 via §17.4).
-            let max_per_block =
-                state.consensus_params.max_validator_set_changes_per_block_param as usize;
+            let max_per_block = state
+                .consensus_params
+                .max_validator_set_changes_per_block_param as usize;
             if changes.len() > max_per_block {
                 return PhiPhaseResult {
                     phase: PhiPhase::Feedback,
@@ -578,9 +575,7 @@ fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
                 block.header.height,
                 confirmation_depth,
             );
-            if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) =
-                validation
-            {
+            if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = validation {
                 return PhiPhaseResult {
                     phase: PhiPhase::Feedback,
                     passed: false,

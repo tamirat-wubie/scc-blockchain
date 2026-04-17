@@ -117,11 +117,8 @@ mod tests {
     #[test]
     fn patch_04_v3_block_with_ceilings_and_default_params_passes() {
         let mut state = ManagedWorldState::new();
-        commit_constitutional_ceilings_at_genesis(
-            &mut state,
-            &ConstitutionalCeilings::default(),
-        )
-        .unwrap();
+        commit_constitutional_ceilings_at_genesis(&mut state, &ConstitutionalCeilings::default())
+            .unwrap();
         let header = header_with_version(PATCH_04_BLOCK_VERSION);
         assert_eq!(
             validate_ceilings_for_block(&state, &header),

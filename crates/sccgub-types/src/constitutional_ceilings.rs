@@ -279,7 +279,10 @@ mod tests {
             default_block_gas_limit: tx_gas + 1,
             ..Default::default()
         };
-        assert!(matches!(c.validate(&p), Err(CeilingViolation::MaxTxGas { .. })));
+        assert!(matches!(
+            c.validate(&p),
+            Err(CeilingViolation::MaxTxGas { .. })
+        ));
     }
 
     #[test]

@@ -197,9 +197,7 @@ impl RoundAdvance {
     /// Sorted view of admitted messages for inspection / test assertions.
     /// Returned as an iterator to keep `RoundAdvance`'s internal map
     /// private and preserve the BTreeMap discipline.
-    pub fn admitted_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Ed25519PublicKey, &NewRoundMessage)> {
+    pub fn admitted_iter(&self) -> impl Iterator<Item = (&Ed25519PublicKey, &NewRoundMessage)> {
         self.admitted.iter()
     }
 
@@ -474,7 +472,10 @@ mod tests {
         let mut msg = signed_new_round(sk, *pk, 5, 1, None);
         msg.signature[0] ^= 0xFF;
         let err = adv.admit(msg, &set, 5, 1);
-        assert!(matches!(err, Err(NewRoundRejection::SignatureInvalid { .. })));
+        assert!(matches!(
+            err,
+            Err(NewRoundRejection::SignatureInvalid { .. })
+        ));
     }
 
     #[test]
@@ -485,7 +486,10 @@ mod tests {
         adv.admit(signed_new_round(sk, *pk, 5, 1, None), &set, 5, 1)
             .unwrap();
         let err = adv.admit(signed_new_round(sk, *pk, 5, 1, None), &set, 5, 1);
-        assert!(matches!(err, Err(NewRoundRejection::DuplicateSigner { .. })));
+        assert!(matches!(
+            err,
+            Err(NewRoundRejection::DuplicateSigner { .. })
+        ));
     }
 
     #[test]

@@ -90,9 +90,7 @@ pub fn validate_ceilings_immutable(
 /// Rejection reasons for `ValidatorSetChange` submissions.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidatorSetChangeSubmissionRejection {
-    #[error(
-        "submitter precedence {have:?} insufficient; {kind} requires at least {required:?}"
-    )]
+    #[error("submitter precedence {have:?} insufficient; {kind} requires at least {required:?}")]
     InsufficientPrecedence {
         have: PrecedenceLevel,
         required: PrecedenceLevel,

@@ -271,8 +271,7 @@ pub async fn submit_key_rotation(
     // pending queue keyed by (agent_id, rotation_height).
     let mut app = state.write().await;
     if app.pending_key_rotations.iter().any(|r| {
-        r.agent_id == req.rotation.agent_id
-            && r.rotation_height == req.rotation.rotation_height
+        r.agent_id == req.rotation.agent_id && r.rotation_height == req.rotation.rotation_height
     }) {
         return (
             StatusCode::CONFLICT,
@@ -287,8 +286,7 @@ pub async fn submit_key_rotation(
     // at this height in chain state, reject.
     if let Ok(registry) = key_rotation_registry_from_trie(&app.state) {
         if registry.rotations().iter().any(|r| {
-            r.agent_id == req.rotation.agent_id
-                && r.rotation_height == req.rotation.rotation_height
+            r.agent_id == req.rotation.agent_id && r.rotation_height == req.rotation.rotation_height
         }) {
             return (
                 StatusCode::CONFLICT,
@@ -311,10 +309,7 @@ pub async fn submit_key_rotation(
         agent_id,
         queued_count,
     };
-    (
-        StatusCode::ACCEPTED,
-        axum::Json(ApiResponse::ok(resp)),
-    )
+    (StatusCode::ACCEPTED, axum::Json(ApiResponse::ok(resp)))
 }
 
 /// Validator record description used internally by tests and CLI.

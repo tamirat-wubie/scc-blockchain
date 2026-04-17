@@ -19,8 +19,8 @@
 
 use sccgub_crypto::signature::{verify, verify_strict};
 use sccgub_types::validator_set::{
-    EquivocationEvidence, EquivocationVoteType, RemovalReason, ValidatorSet,
-    ValidatorSetChange, ValidatorSetChangeKind,
+    EquivocationEvidence, EquivocationVoteType, RemovalReason, ValidatorSet, ValidatorSetChange,
+    ValidatorSetChangeKind,
 };
 
 /// Outcome of attempting to synthesize a slashing Remove from evidence.
@@ -81,10 +81,9 @@ pub fn synthesize_equivocation_removal(
     }
 
     // Resolve validator_id → agent_id via the current active set.
-    let Some(record) = current_set.find_active_by_validator_id(
-        &evidence.vote_a.validator_id,
-        h_admit,
-    ) else {
+    let Some(record) =
+        current_set.find_active_by_validator_id(&evidence.vote_a.validator_id, h_admit)
+    else {
         return EquivocationSynthesis::SignerNotInActiveSet;
     };
 
@@ -200,11 +199,7 @@ mod tests {
         }
     }
 
-    fn make_vote(
-        sk: &SigningKey,
-        pk: [u8; 32],
-        block_hash: [u8; 32],
-    ) -> EquivocationVote {
+    fn make_vote(sk: &SigningKey, pk: [u8; 32], block_hash: [u8; 32]) -> EquivocationVote {
         let height = 10u64;
         let round = 0u32;
         let vote_type = EquivocationVoteType::Prevote;
@@ -240,8 +235,7 @@ mod tests {
         let h_admit = 20u64;
         let delay = 3u64;
 
-        let result =
-            synthesize_equivocation_removal(&evidence, &set, h_admit, delay);
+        let result = synthesize_equivocation_removal(&evidence, &set, h_admit, delay);
         let change = match result {
             EquivocationSynthesis::Synthesized(c) => c,
             other => panic!("expected Synthesized, got {:?}", other),

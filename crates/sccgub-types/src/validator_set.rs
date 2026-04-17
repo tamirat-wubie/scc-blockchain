@@ -360,7 +360,11 @@ mod tests {
 
     #[test]
     fn patch_04_validator_set_canonical_order_by_agent_id() {
-        let out_of_order = vec![record(3, 30, 1, 0), record(1, 10, 1, 0), record(2, 20, 1, 0)];
+        let out_of_order = vec![
+            record(3, 30, 1, 0),
+            record(1, 10, 1, 0),
+            record(2, 20, 1, 0),
+        ];
         let set = ValidatorSet::new(out_of_order).unwrap();
         let agent_ids: Vec<u8> = set.records().iter().map(|r| r.agent_id[0]).collect();
         assert_eq!(agent_ids, vec![1, 2, 3]);

@@ -703,10 +703,16 @@ mod tests {
         let parsed = ConsensusParams::from_canonical_bytes(&bytes)
             .expect("V2 legacy bytes must decode into v3 ConsensusParams");
         let defaults = ConsensusParams::default();
-        assert_eq!(parsed.view_change_base_timeout_ms, defaults.view_change_base_timeout_ms);
+        assert_eq!(
+            parsed.view_change_base_timeout_ms,
+            defaults.view_change_base_timeout_ms
+        );
         assert_eq!(parsed.max_block_bytes, defaults.max_block_bytes);
         assert_eq!(parsed.max_active_proposals, defaults.max_active_proposals);
-        assert_eq!(parsed.max_validator_set_size, defaults.max_validator_set_size);
+        assert_eq!(
+            parsed.max_validator_set_size,
+            defaults.max_validator_set_size
+        );
     }
 
     #[test]

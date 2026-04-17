@@ -128,9 +128,12 @@ fn run_scenario() -> ScenarioOutcome {
     let v0 = keypair(10);
     let v1 = keypair(11);
     let v2 = keypair(12);
-    let genesis_set =
-        ValidatorSet::new(vec![record(0, v0.1, 30), record(1, v1.1, 30), record(2, v2.1, 40)])
-            .unwrap();
+    let genesis_set = ValidatorSet::new(vec![
+        record(0, v0.1, 30),
+        record(1, v1.1, 30),
+        record(2, v2.1, 40),
+    ])
+    .unwrap();
     commit_validator_set(&mut state, &genesis_set);
 
     // Add a new validator; confirmation depth 2 → activation_delay 3.
@@ -149,7 +152,14 @@ fn run_scenario() -> ScenarioOutcome {
 
     // Before effective height: no change.
     advance_validator_set_to_height(&mut state, 6).unwrap();
-    assert_eq!(validator_set_from_trie(&state).unwrap().unwrap().records().len(), 3);
+    assert_eq!(
+        validator_set_from_trie(&state)
+            .unwrap()
+            .unwrap()
+            .records()
+            .len(),
+        3
+    );
 
     // At effective height: record added.
     advance_validator_set_to_height(&mut state, 8).unwrap();
@@ -234,8 +244,14 @@ fn run_scenario() -> ScenarioOutcome {
     apply_key_rotation(&mut state, &rotation).unwrap();
 
     // Resolution check.
-    assert_eq!(active_public_key(&state, agent_alpha, 49).unwrap(), Some(pk_a));
-    assert_eq!(active_public_key(&state, agent_alpha, 50).unwrap(), Some(pk_b));
+    assert_eq!(
+        active_public_key(&state, agent_alpha, 49).unwrap(),
+        Some(pk_a)
+    );
+    assert_eq!(
+        active_public_key(&state, agent_alpha, 50).unwrap(),
+        Some(pk_b)
+    );
 
     // Global key index: old key marked superseded; new key present.
     let idx = key_index_from_trie(&state).unwrap();
@@ -251,7 +267,9 @@ fn run_scenario() -> ScenarioOutcome {
     let leader_a = select_leader(&final_set, height, round, &prior_a)
         .expect("leader selection over non-empty set")
         .agent_id;
-    let leader_a2 = select_leader(&final_set, height, round, &prior_a).unwrap().agent_id;
+    let leader_a2 = select_leader(&final_set, height, round, &prior_a)
+        .unwrap()
+        .agent_id;
     assert_eq!(leader_a, leader_a2, "leader must be deterministic");
 
     // Timeout backoff + cap. base=1000, cap=60_000: 6th round caps.
@@ -265,8 +283,12 @@ fn run_scenario() -> ScenarioOutcome {
     // final_set active set.
     let target_round = 1u32;
     let mut advance = RoundAdvance::new();
-    let payload =
-        sccgub_consensus::view_change::NewRoundMessage::canonical_bytes(height, target_round, &None, &v1.1);
+    let payload = sccgub_consensus::view_change::NewRoundMessage::canonical_bytes(
+        height,
+        target_round,
+        &None,
+        &v1.1,
+    );
     let nr1 = sccgub_consensus::view_change::NewRoundMessage {
         height,
         round: target_round,
@@ -274,9 +296,15 @@ fn run_scenario() -> ScenarioOutcome {
         signer: v1.1,
         signature: sign(&v1.0, &payload),
     };
-    advance.admit(nr1, &final_set, height, target_round).unwrap();
-    let payload =
-        sccgub_consensus::view_change::NewRoundMessage::canonical_bytes(height, target_round, &None, &v2.1);
+    advance
+        .admit(nr1, &final_set, height, target_round)
+        .unwrap();
+    let payload = sccgub_consensus::view_change::NewRoundMessage::canonical_bytes(
+        height,
+        target_round,
+        &None,
+        &v2.1,
+    );
     let nr2 = sccgub_consensus::view_change::NewRoundMessage {
         height,
         round: target_round,
@@ -284,7 +312,9 @@ fn run_scenario() -> ScenarioOutcome {
         signer: v2.1,
         signature: sign(&v2.0, &payload),
     };
-    advance.admit(nr2, &final_set, height, target_round).unwrap();
+    advance
+        .admit(nr2, &final_set, height, target_round)
+        .unwrap();
     assert!(
         advance.has_quorum(&final_set, height),
         "v1+v2 should clear quorum under final_set at height {}",

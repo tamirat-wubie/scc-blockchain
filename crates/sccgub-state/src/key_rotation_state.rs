@@ -268,11 +268,7 @@ mod tests {
         }
     }
 
-    fn seed_agent(
-        state: &mut ManagedWorldState,
-        agent_id: AgentId,
-        public_key: Ed25519PublicKey,
-    ) {
+    fn seed_agent(state: &mut ManagedWorldState, agent_id: AgentId, public_key: Ed25519PublicKey) {
         register_original_key(state, agent_id, public_key, 0).unwrap();
     }
 
@@ -556,8 +552,7 @@ mod tests {
                 // every third agent also rotates once
                 if i % 3 == 0 {
                     let (new_sk, new_pk) = keypair(i.wrapping_add(200));
-                    let rotation =
-                        make_rotation(agent, &sk, pk, &new_sk, new_pk, 10 + i as u64);
+                    let rotation = make_rotation(agent, &sk, pk, &new_sk, new_pk, 10 + i as u64);
                     apply_key_rotation(&mut state, &rotation).unwrap();
                 }
             }

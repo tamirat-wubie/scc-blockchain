@@ -208,16 +208,13 @@ pub fn validate_cpog(
         if !changes.is_empty() {
             match sccgub_state::validator_set_state::validator_set_from_trie(state) {
                 Ok(Some(current_set)) => {
-                    let result =
-                        crate::validator_set::validate_all_validator_set_changes(
-                            changes,
-                            &current_set,
-                            block.header.height,
-                            2, // PROTOCOL.md §7 default k
-                        );
-                    if let crate::validator_set::ValidatorSetChangeValidation::Invalid(
-                        rej,
-                    ) = result
+                    let result = crate::validator_set::validate_all_validator_set_changes(
+                        changes,
+                        &current_set,
+                        block.header.height,
+                        2, // PROTOCOL.md §7 default k
+                    );
+                    if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = result
                     {
                         errors.push(format!(
                             "CPoG #12 (validator set capture-prevention): {}",

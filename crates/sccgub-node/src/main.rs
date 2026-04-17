@@ -2546,14 +2546,8 @@ fn cmd_validators(data_dir: &std::path::Path) {
     println!("=== Validator Set (height {}) ===\n", height);
     println!("  Total records:        {}", set.records().len());
     println!("  Active at this height: {}", set.active_at(height).len());
-    println!(
-        "  Total active power:   {}",
-        set.total_power_at(height)
-    );
-    println!(
-        "  Quorum threshold:     {}",
-        set.quorum_power_at(height)
-    );
+    println!("  Total active power:   {}", set.total_power_at(height));
+    println!("  Quorum threshold:     {}", set.quorum_power_at(height));
     println!();
     for r in set.records() {
         println!(
@@ -2598,15 +2592,42 @@ fn cmd_ceilings(data_dir: &std::path::Path) {
     match constitutional_ceilings_from_trie(&chain.state) {
         Ok(Some(c)) => {
             println!("=== Constitutional Ceilings ===\n");
-            println!("  max_proof_depth_ceiling:              {}", c.max_proof_depth_ceiling);
-            println!("  max_tx_gas_ceiling:                   {}", c.max_tx_gas_ceiling);
-            println!("  max_block_gas_ceiling:                {}", c.max_block_gas_ceiling);
-            println!("  max_contract_steps_ceiling:           {}", c.max_contract_steps_ceiling);
-            println!("  max_address_length_ceiling:           {}", c.max_address_length_ceiling);
-            println!("  max_state_entry_size_ceiling:         {}", c.max_state_entry_size_ceiling);
-            println!("  max_tension_swing_ceiling:            {}", c.max_tension_swing_ceiling);
-            println!("  max_block_bytes_ceiling:              {}", c.max_block_bytes_ceiling);
-            println!("  max_active_proposals_ceiling:         {}", c.max_active_proposals_ceiling);
+            println!(
+                "  max_proof_depth_ceiling:              {}",
+                c.max_proof_depth_ceiling
+            );
+            println!(
+                "  max_tx_gas_ceiling:                   {}",
+                c.max_tx_gas_ceiling
+            );
+            println!(
+                "  max_block_gas_ceiling:                {}",
+                c.max_block_gas_ceiling
+            );
+            println!(
+                "  max_contract_steps_ceiling:           {}",
+                c.max_contract_steps_ceiling
+            );
+            println!(
+                "  max_address_length_ceiling:           {}",
+                c.max_address_length_ceiling
+            );
+            println!(
+                "  max_state_entry_size_ceiling:         {}",
+                c.max_state_entry_size_ceiling
+            );
+            println!(
+                "  max_tension_swing_ceiling:            {}",
+                c.max_tension_swing_ceiling
+            );
+            println!(
+                "  max_block_bytes_ceiling:              {}",
+                c.max_block_bytes_ceiling
+            );
+            println!(
+                "  max_active_proposals_ceiling:         {}",
+                c.max_active_proposals_ceiling
+            );
             println!(
                 "  max_view_change_base_timeout_ms:      {}",
                 c.max_view_change_base_timeout_ms
@@ -2659,7 +2680,8 @@ fn cmd_rotate_key(data_dir: &std::path::Path, passphrase: &str, rotation_height:
     let new_key = generate_keypair();
     let new_pk = *new_key.verifying_key().as_bytes();
 
-    let payload = KeyRotation::canonical_rotation_bytes(&agent_id, &old_pk, &new_pk, rotation_height);
+    let payload =
+        KeyRotation::canonical_rotation_bytes(&agent_id, &old_pk, &new_pk, rotation_height);
     let sig_old = sign(&old_key, &payload);
     let sig_new = sign(&new_key, &payload);
 

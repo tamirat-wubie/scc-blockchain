@@ -101,11 +101,7 @@ pub fn validate_validator_set_change(
 
     // Duplicate-signer check (implicit precondition of the §15.4 canonical
     // sort + duplicate ban).
-    let mut seen: Vec<[u8; 32]> = change
-        .quorum_signatures
-        .iter()
-        .map(|(pk, _)| *pk)
-        .collect();
+    let mut seen: Vec<[u8; 32]> = change.quorum_signatures.iter().map(|(pk, _)| *pk).collect();
     seen.sort();
     for w in seen.windows(2) {
         if w[0] == w[1] {
@@ -119,8 +115,7 @@ pub fn validate_validator_set_change(
     // signature verifies under `verify_strict`. Quorum (§15.5 rule 3) is
     // tallied on the fly so the rejection surfaces the closest-to-quorum
     // state on partial success.
-    let payload =
-        ValidatorSetChange::canonical_change_bytes(&change.kind, change.proposed_at);
+    let payload = ValidatorSetChange::canonical_change_bytes(&change.kind, change.proposed_at);
     let mut signer_power: u128 = 0;
     for (signer_pk, sig) in &change.quorum_signatures {
         let Some(record) = current_set.find_active_by_validator_id(signer_pk, h_admit) else {
@@ -176,9 +171,7 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use sccgub_crypto::signature::sign;
     use sccgub_types::mfidel::MfidelAtomicSeal;
-    use sccgub_types::validator_set::{
-        RemovalReason, ValidatorRecord, ValidatorSetChangeKind,
-    };
+    use sccgub_types::validator_set::{RemovalReason, ValidatorRecord, ValidatorSetChangeKind};
 
     fn keypair(seed: u8) -> (SigningKey, [u8; 32]) {
         let sk = SigningKey::from_bytes(&[seed; 32]);
@@ -198,10 +191,7 @@ mod tests {
     }
 
     /// Build a 3-validator active set with known signing keys and equal power.
-    fn three_validator_set() -> (
-        ValidatorSet,
-        Vec<(SigningKey, [u8; 32])>,
-    ) {
+    fn three_validator_set() -> (ValidatorSet, Vec<(SigningKey, [u8; 32])>) {
         let v0 = keypair(10);
         let v1 = keypair(11);
         let v2 = keypair(12);
@@ -219,10 +209,8 @@ mod tests {
         proposed_at: u64,
         signers: &[(SigningKey, [u8; 32])],
     ) -> ValidatorSetChange {
-        let change_id =
-            ValidatorSetChange::compute_change_id(kind, proposed_at);
-        let payload =
-            ValidatorSetChange::canonical_change_bytes(kind, proposed_at);
+        let change_id = ValidatorSetChange::compute_change_id(kind, proposed_at);
+        let payload = ValidatorSetChange::canonical_change_bytes(kind, proposed_at);
         let mut sigs: Vec<([u8; 32], Vec<u8>)> = signers
             .iter()
             .map(|(sk, pk)| (*pk, sign(sk, &payload)))
@@ -345,9 +333,7 @@ mod tests {
         let res = validate_validator_set_change(&change, &set, 10, 2);
         assert!(matches!(
             res,
-            ValidatorSetChangeValidation::Invalid(
-                ValidatorSetChangeRejection::ChangeIdMismatch
-            )
+            ValidatorSetChangeValidation::Invalid(ValidatorSetChangeRejection::ChangeIdMismatch)
         ));
     }
 
@@ -418,9 +404,7 @@ mod tests {
         let res = validate_validator_set_change(&change, &set, 10, 2);
         assert!(matches!(
             res,
-            ValidatorSetChangeValidation::Invalid(
-                ValidatorSetChangeRejection::DuplicateSigner
-            )
+            ValidatorSetChangeValidation::Invalid(ValidatorSetChangeRejection::DuplicateSigner)
         ));
     }
 

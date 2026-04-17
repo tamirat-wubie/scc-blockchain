@@ -117,9 +117,7 @@ impl BlockHeader {
     /// preserving replay of v2 chains under v3 code.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
         bincode::deserialize::<Self>(bytes)
-            .or_else(|_| {
-                bincode::deserialize::<LegacyBlockHeaderV2>(bytes).map(BlockHeader::from)
-            })
+            .or_else(|_| bincode::deserialize::<LegacyBlockHeaderV2>(bytes).map(BlockHeader::from))
             .map_err(|e| format!("BlockHeader deserialize: {}", e))
     }
 }

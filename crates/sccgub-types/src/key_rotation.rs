@@ -203,8 +203,7 @@ impl KeyIndex {
             active_from,
             superseded_at: None,
         });
-        self.entries
-            .sort_by_key(|e| (e.public_key, e.active_from));
+        self.entries.sort_by_key(|e| (e.public_key, e.active_from));
         Ok(())
     }
 
@@ -307,7 +306,10 @@ mod tests {
         let mut reg = KeyRotationRegistry::new();
         reg.append(make_rotation(1, 10, 11, 5)).unwrap();
         let err = reg.append(make_rotation(1, 12, 13, 5));
-        assert!(matches!(err, Err(KeyRotationError::DuplicateAtHeight { .. })));
+        assert!(matches!(
+            err,
+            Err(KeyRotationError::DuplicateAtHeight { .. })
+        ));
     }
 
     #[test]
@@ -319,11 +321,13 @@ mod tests {
 
         let agent = [1u8; 32];
         assert_eq!(
-            reg.active_rotation_at(agent, 4).map(|r| r.new_public_key[0]),
+            reg.active_rotation_at(agent, 4)
+                .map(|r| r.new_public_key[0]),
             None
         );
         assert_eq!(
-            reg.active_rotation_at(agent, 5).map(|r| r.new_public_key[0]),
+            reg.active_rotation_at(agent, 5)
+                .map(|r| r.new_public_key[0]),
             Some(11)
         );
         assert_eq!(
