@@ -4,7 +4,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Hardening-stage governed blockchain kernel - v0.3.0. Protocol spec frozen ([PROTOCOL.md](PROTOCOL.md)). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 922 tests in the current workspace listing. New chains default to block version 2, where validator liquidity lives under the canonical agent account; block version 1 replay remains supported for legacy compatibility. CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
+**Status:** Hardening-stage governed blockchain kernel - v0.4.0 (Patch-04). Protocol spec at [PROTOCOL.md](PROTOCOL.md); pending v0.4.0 amendment at [PATCH_04.md](PATCH_04.md) introducing v3 validator set management (§15), view-change protocol (§16), constitutional ceilings (§17), identity-preserving key rotation (§18). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 1076 tests in the current workspace listing. New chains default to block version 2 (v3 is opt-in; see [PATCH_04.md §19](PATCH_04.md)). CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
 
 ## Where It Stands (Executive Summary)
 
@@ -15,7 +15,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Genesis -> submit tx -> produce blocks -> import/replay with full verification.
 - Deterministic validation: every rejection has a reason (receipts).
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
-- REST API with 22 versioned endpoints for state, blocks, receipts, governance, and finality.
+- REST API with 26 versioned endpoints for state, blocks, receipts, governance, finality, and v3 validator-set/ceilings/key-rotation views.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
 - Hardening posture: 922 tests, CI green on Ubuntu + Windows + security audit.
 
@@ -49,8 +49,8 @@ The validation kernel is hardened and truthful; the next work is making it distr
 
 | Layer | Crate | Description |
 |-------|-------|-------------|
-| 7 | `sccgub-node` | 23 CLI commands, chain lifecycle, mempool, block log + snapshots, observability |
-| 6 | `sccgub-api` | REST API (22 versioned endpoints), CORS, structured error codes, versioned routes |
+| 7 | `sccgub-node` | 26 CLI commands, chain lifecycle, mempool, block log + snapshots, observability |
+| 6 | `sccgub-api` | REST API (26 versioned endpoints), CORS, structured error codes, versioned routes |
 | 5 | `sccgub-governance` | Norms, precedence, proposals with timelocks, anti-concentration, symbolic intelligence agent policy |
 | 4 | `sccgub-consensus` | Two-round BFT voting, bounded finality, slashing, partition recovery, safety proofs |
 | 3 | `sccgub-execution` | 13-phase Phi traversal (all real), CPoG, gas metering, runtime invariant monitor |
@@ -85,7 +85,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Artifacts:** External artifact governance layer (provenance, attestations, lineage, rights, sessions, disputes)
 - **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
-## REST API (22 versioned endpoints)
+## REST API (26 versioned endpoints)
 
 ```
 GET  /api/v1/status                  Chain summary (height, finality, tension, governance)
@@ -107,14 +107,18 @@ GET  /api/v1/block/{height}/receipts  Block receipts with gas breakdown
 GET  /api/v1/state                   Paginated world state (?offset=&limit=)
 GET  /api/v1/tx/{tx_id}              Transaction detail by hex ID
 GET  /api/v1/receipt/{tx_id}         Receipt with verdict + resource usage
+GET  /api/v1/validators              (Patch-04 §15) Active validator set + power + quorum
+GET  /api/v1/validators/history      (Patch-04 §15.4) Pending ValidatorSetChange queue
+GET  /api/v1/ceilings                (Patch-04 §17) Constitutional ceilings (v3 genesis-bound limits)
 POST /api/v1/tx/submit               Submit signed transaction (hex-encoded)
+POST /api/v1/tx/key-rotation         (Patch-04 §18) Submit signed KeyRotation (JSON)
 POST /api/v1/governance/params/propose Submit signed parameter proposal (hex-encoded)
 POST /api/v1/governance/proposals/vote Submit signed proposal vote (hex-encoded)
 ```
 
 Structured error codes (14 machine-readable `ErrorCode` variants). CORS enabled. Legacy routes at `/api/*`. OpenAPI contract: `crates/sccgub-api/openapi.yaml`. Refresh with `cargo run -q -p sccgub-api --bin generate_openapi -- --write crates/sccgub-api/openapi.yaml`. API state live-syncs when event hooks are active.
 
-## CLI Commands (23)
+## CLI Commands (26)
 
 ```bash
 # Chain lifecycle
@@ -168,6 +172,11 @@ Canonical schema: `specs/OBSERVE_JSON_SCHEMA.md`.
 # Economics
 sccgub treasury           # Treasury status + conservation check
 sccgub escrow             # Escrow registry summary
+
+# Patch-04 v3 operator commands
+sccgub validators                        # Active validator set + quorum (§15)
+sccgub ceilings                          # Constitutional ceilings (§17)
+sccgub rotate-key --rotation-height N    # Generate signed KeyRotation (§18)
 
 # Reference
 sccgub demo               # In-memory demonstration
@@ -251,6 +260,11 @@ pwsh ./scripts/ci-local.ps1
 | Nonce monotonicity | `state/world.rs`, `execution/validate.rs` | `adversarial_test.rs` | Replay rejected |
 | Vote authentication | `consensus/protocol.rs` | `adversarial_test.rs` | Forged/corrupted/non-member rejected |
 | Receipt completeness | `execution/invariants.rs` | `execution` unit tests | Missing/rejected receipt detected |
+| **INV-VALIDATOR-SET-CONTINUITY** (Patch-04 §15) | `state/validator_set_state.rs`, `execution/validator_set.rs`, `execution/cpog.rs` (#12) | `patch_04_conformance.rs`, state + execution `patch_04_*` tests | Replay-divergent active set / post-change self-admission rejected |
+| **INV-VALIDATOR-KEY-COHERENCE** (Patch-04 §15.8 / §18.7) | `state/key_rotation_state.rs`, `state/validator_set_state.rs` (RotateKey) | `patch_04_rotate_key_*`, `patch_04_key_rotation_chain` | Stale old_key rejected; mismatched new_validator_id rejected |
+| **INV-CEILING-PRESERVATION** (Patch-04 §17) | `execution/ceilings.rs`, `governance/patch_04.rs` | `patch_04_phase_10_rejects_ceiling_violation`, `patch_04_governance_rejects_ceiling_raise` | Block or proposal exceeding ceiling rejected |
+| **INV-KEY-ROTATION** (Patch-04 §18) | `state/key_rotation_state.rs`, `execution/key_rotation_check.rs` (phase 8) | `patch_04_superseded_key_rejected`, `patch_04_key_rotation_*` | Tx signed under superseded key rejected |
+| **INV-VIEW-CHANGE-LIVENESS** (Patch-04 §16) | `consensus/view_change.rs` | `patch_04_round_advancement_*`, `patch_04_leader_*` | Rounds advance under partition; leader folds `prior_block_hash` |
 
 ## Security Model
 
