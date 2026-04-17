@@ -96,12 +96,13 @@ impl ChainMetrics {
             self.peak_validation_ns = validation_ns;
         }
         // Running average using saturating arithmetic to prevent overflow.
-        if self.blocks_produced > 0 {
-            self.avg_validation_ns = self
-                .avg_validation_ns
-                .saturating_mul(self.blocks_produced - 1)
-                .saturating_add(validation_ns)
-                / self.blocks_produced;
+        if let Some(numerator) = self
+            .avg_validation_ns
+            .saturating_mul(self.blocks_produced.saturating_sub(1))
+            .saturating_add(validation_ns)
+            .checked_div(self.blocks_produced)
+        {
+            self.avg_validation_ns = numerator;
         }
     }
 
