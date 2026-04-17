@@ -284,7 +284,7 @@ pub async fn get_governance_proposals(
             submitted_at: proposal.submitted_at,
         })
         .collect::<Vec<_>>();
-    proposals.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+    proposals.sort_by_key(|b| std::cmp::Reverse(b.submitted_at));
 
     let total = proposals.len();
     let page = proposals
