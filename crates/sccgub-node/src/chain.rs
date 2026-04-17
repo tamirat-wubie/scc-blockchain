@@ -618,12 +618,7 @@ impl Chain {
         }
         let mut seen = BTreeSet::new();
         let mut merged = Vec::new();
-        for cert in self
-            .safety_certificates
-            .iter()
-            .cloned()
-            .chain(certs.into_iter())
-        {
+        for cert in self.safety_certificates.iter().cloned().chain(certs) {
             let key = (cert.height, cert.round, cert.block_hash);
             if seen.insert(key) {
                 merged.push(cert);

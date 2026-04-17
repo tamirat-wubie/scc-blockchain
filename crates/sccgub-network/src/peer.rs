@@ -172,7 +172,7 @@ impl PeerRegistry {
             .values()
             .filter(|p| p.state == PeerState::Connected && p.current_height > our_height)
             .collect();
-        candidates.sort_by(|a, b| b.current_height.cmp(&a.current_height));
+        candidates.sort_by_key(|b| std::cmp::Reverse(b.current_height));
         candidates
     }
 

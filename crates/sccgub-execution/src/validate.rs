@@ -95,7 +95,8 @@ pub fn admit_check_structural(
             max_symbol_address_len
         ));
     }
-    // Per-variant size checks.
+    // Per-variant size checks. Using match guards so the outer `match` is the
+    // single source of control flow (satisfies clippy::collapsible_match).
     match &tx.payload {
         sccgub_types::transition::OperationPayload::Write { key, value }
             if key.len() > max_state_entry_size || value.len() > max_state_entry_size =>
@@ -118,7 +119,8 @@ pub fn admit_check_structural(
                 args.len()
             ));
         }
-        _ => {} // Noop, AssetTransfer, RegisterAgent, ProposeNorm — all bounded by fixed fields.
+        _ => {} // Noop, AssetTransfer, RegisterAgent, ProposeNorm — all bounded by fixed fields;
+                // and the size-checked variants above only hit this arm when their guard fails (size OK).
     }
 
     // 3. WHBinding structural completeness (cheap checks only, no cross-checks).
