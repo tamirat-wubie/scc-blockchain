@@ -12,3 +12,5 @@ sccgub-types = { path = "../sccgub-types" }
 sccgub-crypto = { path = "../sccgub-crypto" }
 ed25519-dalek = { workspace = true }
 tracing = { workspace = true }
+blake3 = { workspace = true }
+bincode = { workspace = true }

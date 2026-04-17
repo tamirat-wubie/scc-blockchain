@@ -196,7 +196,50 @@ pub fn validate_cpog(
         }
     }
 
-    // 11. Run full 13-phase Phi traversal.
+    // 12. Patch-04 §15.5 capture-prevention: if the block carries
+    //     ValidatorSetChange events, the ACTIVE set used for quorum
+    //     verification must be the one derived from genesis +
+    //     already-committed changes at this height — NEVER a set that
+    //     includes the post-change projection. This duplicates the
+    //     §15.5 admission check at the block-envelope level to close the
+    //     capture-prevention invariant across both the Feedback-phase
+    //     check and the top-level CPoG gate.
+    if let Some(changes) = block.body.validator_set_changes.as_deref() {
+        if !changes.is_empty() {
+            match sccgub_state::validator_set_state::validator_set_from_trie(state) {
+                Ok(Some(current_set)) => {
+                    let result = crate::validator_set::validate_all_validator_set_changes(
+                        changes,
+                        &current_set,
+                        block.header.height,
+                        2, // PROTOCOL.md §7 default k
+                    );
+                    if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = result
+                    {
+                        errors.push(format!(
+                            "CPoG #12 (validator set capture-prevention): {}",
+                            rej
+                        ));
+                    }
+                }
+                Ok(None) => {
+                    errors.push(
+                        "CPoG #12: block carries ValidatorSetChange events but \
+                         system/validator_set is not initialized"
+                            .into(),
+                    );
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "CPoG #12: validator set unreadable during check: {}",
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
+    // 13. Run full 13-phase Phi traversal.
     let phi_log = phi_traversal_block(block, state);
     if !phi_log.is_all_passed() {
         for phase_result in &phi_log.phases_completed {
@@ -267,6 +310,7 @@ mod tests {
                 balance_root: ZERO_HASH,
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: ZERO_HASH,
             },
             body: BlockBody {
                 transitions: vec![],
@@ -274,6 +318,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

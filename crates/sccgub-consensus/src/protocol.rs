@@ -274,8 +274,14 @@ impl ConsensusRound {
         let mut proofs = Vec::new();
 
         // Check prevotes: same validator, different block hashes.
-        let mut seen: HashMap<Hash, Hash> = HashMap::new();
-        for vote in self.prevotes.values() {
+        // Iterate through a canonical (sorted-by-validator-id) view so
+        // equivocation evidence is produced in a deterministic order;
+        // prevotes itself is HashMap-backed for O(1) duplicate detection
+        // at admission. (§ Canonical-Encoding Discipline, Patch-04.)
+        let mut seen: std::collections::BTreeMap<Hash, Hash> = std::collections::BTreeMap::new();
+        let mut sorted_prevotes: Vec<&Vote> = self.prevotes.values().collect();
+        sorted_prevotes.sort_by_key(|v| v.validator_id);
+        for vote in sorted_prevotes {
             if let Some(&prev_block) = seen.get(&vote.validator_id) {
                 if prev_block != vote.block_hash {
                     proofs.push(EquivocationProof {

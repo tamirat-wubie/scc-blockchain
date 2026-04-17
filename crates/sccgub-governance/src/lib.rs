@@ -3,6 +3,7 @@ pub mod anti_concentration;
 pub mod containment;
 pub mod emergency;
 pub mod norms;
+pub mod patch_04;
 pub mod precedence;
 pub mod proposals;
 pub mod registration;

@@ -192,6 +192,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions: vec![],
@@ -199,6 +200,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: sccgub_types::causal::CausalGraphDelta::default(),
@@ -311,6 +313,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions,
@@ -318,6 +321,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: sccgub_types::causal::CausalGraphDelta::default(),
@@ -433,6 +437,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions: vec![],
@@ -440,6 +445,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: sccgub_types::causal::CausalGraphDelta::default(),

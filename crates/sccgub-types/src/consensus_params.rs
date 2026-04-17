@@ -69,6 +69,23 @@ pub struct ConsensusParams {
     pub max_state_entry_size: u32,
     /// Maximum allowed absolute swing between tension_before and tension_after.
     pub max_tension_swing: i64,
+
+    // ── v3 additions (Patch-04) ────────────────────────────────────────
+    // The six fields below are introduced in `header.version = 3`.
+    // v2 chains deserialize via `LegacyConsensusParamsV2` and receive
+    // the defaults declared in `Default` below.
+    /// View-change base timeout, milliseconds (§16.1).
+    pub view_change_base_timeout_ms: u32,
+    /// View-change maximum timeout (exponential-backoff cap), milliseconds (§16.1).
+    pub view_change_max_timeout_ms: u32,
+    /// Maximum canonical-encoded block size in bytes (§17.5).
+    pub max_block_bytes: u32,
+    /// Maximum concurrently-active governance proposals (§17.6).
+    pub max_active_proposals: u32,
+    /// Default active validator-set size (capped by `ConstitutionalCeilings`).
+    pub max_validator_set_size: u32,
+    /// Default maximum `ValidatorSetChange` events per block.
+    pub max_validator_set_changes_per_block_param: u32,
 }
 
 impl Default for ConsensusParams {
@@ -95,6 +112,13 @@ impl Default for ConsensusParams {
             max_symbol_address_len: 4096,
             max_state_entry_size: 1_048_576,
             max_tension_swing: 2_000_000,
+            // v3 (Patch-04) defaults — see PATCH_04.md §17.3.
+            view_change_base_timeout_ms: 1_000,
+            view_change_max_timeout_ms: 60_000,
+            max_block_bytes: 2_097_152,
+            max_active_proposals: 128,
+            max_validator_set_size: 64,
+            max_validator_set_changes_per_block_param: 4,
         }
     }
 }
@@ -112,8 +136,16 @@ impl ConsensusParams {
 
     /// Deserialize from canonical bincode read out of the trie.
     /// Runs bounds validation after deserialization (defense-in-depth).
+    ///
+    /// Fallback cascade: current struct → `LegacyConsensusParamsV2` (v0.3.0
+    /// schema, no v3 fields) → `LegacyConsensusParamsV1` (pre-v0.3.0 schema).
+    /// Fallback paths inject defaults for any fields missing in the older
+    /// encoding, so v2 chains continue to replay under Patch-04 code.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
         let params: Self = bincode::deserialize(bytes)
+            .or_else(|_| {
+                bincode::deserialize::<LegacyConsensusParamsV2>(bytes).map(ConsensusParams::from)
+            })
             .or_else(|_| {
                 bincode::deserialize::<LegacyConsensusParamsV1>(bytes).map(ConsensusParams::from)
             })
@@ -217,6 +249,32 @@ impl ConsensusParams {
                 return Err(format!("{} {} out of bounds (1..1000000)", label, value));
             }
         }
+
+        // ── Patch-04 v3 additions ─────────────────────────────────────
+        if self.view_change_base_timeout_ms == 0 {
+            return Err("view_change_base_timeout_ms must be > 0".into());
+        }
+        if self.view_change_max_timeout_ms < self.view_change_base_timeout_ms {
+            return Err(format!(
+                "view_change_max_timeout_ms {} < view_change_base_timeout_ms {}",
+                self.view_change_max_timeout_ms, self.view_change_base_timeout_ms
+            ));
+        }
+        if self.max_block_bytes < 1024 {
+            return Err(format!(
+                "max_block_bytes {} below sane floor (1024)",
+                self.max_block_bytes
+            ));
+        }
+        if self.max_active_proposals == 0 {
+            return Err("max_active_proposals must be > 0".into());
+        }
+        if self.max_validator_set_size == 0 {
+            return Err("max_validator_set_size must be > 0".into());
+        }
+        if self.max_validator_set_changes_per_block_param == 0 {
+            return Err("max_validator_set_changes_per_block_param must be > 0".into());
+        }
         Ok(())
     }
 }
@@ -244,6 +302,7 @@ struct LegacyConsensusParamsV1 {
 
 impl From<LegacyConsensusParamsV1> for ConsensusParams {
     fn from(value: LegacyConsensusParamsV1) -> Self {
+        let defaults = Self::default();
         Self {
             max_proof_depth: value.max_proof_depth,
             max_constraint_propagation_depth: 32,
@@ -265,6 +324,77 @@ impl From<LegacyConsensusParamsV1> for ConsensusParams {
             max_symbol_address_len: value.max_symbol_address_len,
             max_state_entry_size: value.max_state_entry_size,
             max_tension_swing: 2_000_000,
+            // v3 fields get Patch-04 defaults when migrating from V1.
+            view_change_base_timeout_ms: defaults.view_change_base_timeout_ms,
+            view_change_max_timeout_ms: defaults.view_change_max_timeout_ms,
+            max_block_bytes: defaults.max_block_bytes,
+            max_active_proposals: defaults.max_active_proposals,
+            max_validator_set_size: defaults.max_validator_set_size,
+            max_validator_set_changes_per_block_param: defaults
+                .max_validator_set_changes_per_block_param,
+        }
+    }
+}
+
+/// v0.3.0 schema of `ConsensusParams` (pre-Patch-04). Retained as a
+/// deserialization fallback so v2 chains replay under Patch-04 code without
+/// re-encoding the genesis `consensus_params` payload. The six v3 fields are
+/// filled with `ConsensusParams::default()` values on migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConsensusParamsV2 {
+    max_proof_depth: u32,
+    max_constraint_propagation_depth: u32,
+    max_constraint_propagation_steps: u64,
+    max_activated_symbols: u32,
+    max_scan_per_symbol: u64,
+    max_constraints_per_symbol: u64,
+    default_max_steps: u64,
+    default_tx_gas_limit: u64,
+    default_block_gas_limit: u64,
+    gas_tx_base: u64,
+    gas_compute_step: u64,
+    gas_state_read: u64,
+    gas_state_write: u64,
+    gas_sig_verify: u64,
+    gas_hash_op: u64,
+    gas_proof_byte: u64,
+    gas_payload_byte: u64,
+    max_symbol_address_len: u32,
+    max_state_entry_size: u32,
+    max_tension_swing: i64,
+}
+
+impl From<LegacyConsensusParamsV2> for ConsensusParams {
+    fn from(value: LegacyConsensusParamsV2) -> Self {
+        let defaults = Self::default();
+        Self {
+            max_proof_depth: value.max_proof_depth,
+            max_constraint_propagation_depth: value.max_constraint_propagation_depth,
+            max_constraint_propagation_steps: value.max_constraint_propagation_steps,
+            max_activated_symbols: value.max_activated_symbols,
+            max_scan_per_symbol: value.max_scan_per_symbol,
+            max_constraints_per_symbol: value.max_constraints_per_symbol,
+            default_max_steps: value.default_max_steps,
+            default_tx_gas_limit: value.default_tx_gas_limit,
+            default_block_gas_limit: value.default_block_gas_limit,
+            gas_tx_base: value.gas_tx_base,
+            gas_compute_step: value.gas_compute_step,
+            gas_state_read: value.gas_state_read,
+            gas_state_write: value.gas_state_write,
+            gas_sig_verify: value.gas_sig_verify,
+            gas_hash_op: value.gas_hash_op,
+            gas_proof_byte: value.gas_proof_byte,
+            gas_payload_byte: value.gas_payload_byte,
+            max_symbol_address_len: value.max_symbol_address_len,
+            max_state_entry_size: value.max_state_entry_size,
+            max_tension_swing: value.max_tension_swing,
+            view_change_base_timeout_ms: defaults.view_change_base_timeout_ms,
+            view_change_max_timeout_ms: defaults.view_change_max_timeout_ms,
+            max_block_bytes: defaults.max_block_bytes,
+            max_active_proposals: defaults.max_active_proposals,
+            max_validator_set_size: defaults.max_validator_set_size,
+            max_validator_set_changes_per_block_param: defaults
+                .max_validator_set_changes_per_block_param,
         }
     }
 }
@@ -296,6 +426,13 @@ mod tests {
         assert_eq!(p.max_symbol_address_len, 4096);
         assert_eq!(p.max_state_entry_size, 1_048_576);
         assert_eq!(p.max_tension_swing, 2_000_000);
+        // v3 (Patch-04) defaults.
+        assert_eq!(p.view_change_base_timeout_ms, 1_000);
+        assert_eq!(p.view_change_max_timeout_ms, 60_000);
+        assert_eq!(p.max_block_bytes, 2_097_152);
+        assert_eq!(p.max_active_proposals, 128);
+        assert_eq!(p.max_validator_set_size, 64);
+        assert_eq!(p.max_validator_set_changes_per_block_param, 4);
     }
 
     #[test]
@@ -485,5 +622,111 @@ mod tests {
             ..Default::default()
         };
         assert!(p.validate().is_err());
+    }
+
+    // ── Patch-04 v3 field coverage ───────────────────────────────────
+
+    #[test]
+    fn patch_04_view_change_max_below_base_rejected() {
+        let p = ConsensusParams {
+            view_change_base_timeout_ms: 10_000,
+            view_change_max_timeout_ms: 1_000,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_04_zero_view_change_base_rejected() {
+        let p = ConsensusParams {
+            view_change_base_timeout_ms: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_04_tiny_max_block_bytes_rejected() {
+        let p = ConsensusParams {
+            max_block_bytes: 512,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_04_zero_max_active_proposals_rejected() {
+        let p = ConsensusParams {
+            max_active_proposals: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_04_zero_max_validator_set_size_rejected() {
+        let p = ConsensusParams {
+            max_validator_set_size: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_04_legacy_v2_deserializes_with_v3_defaults() {
+        // Simulate a v0.3.0 genesis consensus_params payload. V2 schema has
+        // no v3 fields; fallback must inject defaults and yield a valid
+        // v3 ConsensusParams.
+        let v2 = LegacyConsensusParamsV2 {
+            max_proof_depth: 256,
+            max_constraint_propagation_depth: 32,
+            max_constraint_propagation_steps: 10_000,
+            max_activated_symbols: 16,
+            max_scan_per_symbol: 1000,
+            max_constraints_per_symbol: 64,
+            default_max_steps: 10_000,
+            default_tx_gas_limit: 1_000_000,
+            default_block_gas_limit: 50_000_000,
+            gas_tx_base: 1_000,
+            gas_compute_step: 10,
+            gas_state_read: 100,
+            gas_state_write: 500,
+            gas_sig_verify: 3_000,
+            gas_hash_op: 50,
+            gas_proof_byte: 5,
+            gas_payload_byte: 2,
+            max_symbol_address_len: 4096,
+            max_state_entry_size: 1_048_576,
+            max_tension_swing: 2_000_000,
+        };
+        let bytes = bincode::serialize(&v2).unwrap();
+        let parsed = ConsensusParams::from_canonical_bytes(&bytes)
+            .expect("V2 legacy bytes must decode into v3 ConsensusParams");
+        let defaults = ConsensusParams::default();
+        assert_eq!(
+            parsed.view_change_base_timeout_ms,
+            defaults.view_change_base_timeout_ms
+        );
+        assert_eq!(parsed.max_block_bytes, defaults.max_block_bytes);
+        assert_eq!(parsed.max_active_proposals, defaults.max_active_proposals);
+        assert_eq!(
+            parsed.max_validator_set_size,
+            defaults.max_validator_set_size
+        );
+    }
+
+    #[test]
+    fn patch_04_current_bytes_preserve_v3_fields() {
+        // v3 encoding roundtrips without loss. Regression guard against a
+        // fallback cascade silently truncating v3 fields.
+        let p = ConsensusParams {
+            view_change_base_timeout_ms: 2_500,
+            max_active_proposals: 200,
+            ..Default::default()
+        };
+        let bytes = p.to_canonical_bytes();
+        let back = ConsensusParams::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(back.view_change_base_timeout_ms, 2_500);
+        assert_eq!(back.max_active_proposals, 200);
     }
 }

@@ -658,6 +658,7 @@ mod tests {
                 balance_root: ZERO_HASH,
                 validator_id: ZERO_HASH,
                 version: 1,
+                round_history_root: ZERO_HASH,
             },
             body: BlockBody {
                 transitions: vec![],
@@ -665,6 +666,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

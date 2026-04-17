@@ -157,6 +157,22 @@ enum Commands {
     Treasury,
     /// Show escrow registry summary.
     Escrow,
+    /// Patch-04 §15: show current active validator set with power tallies.
+    Validators,
+    /// Patch-04 §17: show constitutional ceilings (genesis-bound upper limits).
+    Ceilings,
+    /// Patch-04 §18: emit a new signed KeyRotation event as JSON on stdout.
+    ///
+    /// The rotation is signed locally with the validator's current key as
+    /// `old_public_key` and a freshly generated keypair as `new_public_key`.
+    /// The JSON can be submitted to a running node via
+    /// `POST /api/v1/tx/key-rotation`. No state is mutated by this
+    /// command — it only produces the event.
+    RotateKey {
+        /// Block height at which the rotation should apply (§18.2 rule 1).
+        #[arg(long)]
+        rotation_height: u64,
+    },
 }
 
 #[tokio::main]
@@ -221,6 +237,11 @@ async fn main() {
         Commands::GovernedStatus => cmd_governed_status(&cli.data_dir),
         Commands::Treasury => cmd_treasury(&cli.data_dir),
         Commands::Escrow => cmd_escrow(&cli.data_dir),
+        Commands::Validators => cmd_validators(&cli.data_dir),
+        Commands::Ceilings => cmd_ceilings(&cli.data_dir),
+        Commands::RotateKey { rotation_height } => {
+            cmd_rotate_key(&cli.data_dir, passphrase, rotation_height)
+        }
     }
 }
 
@@ -1673,6 +1694,7 @@ async fn cmd_serve(
             pending_txs: Vec::new(),
             seen_tx_ids: std::collections::HashSet::new(),
             seen_tx_order: std::collections::VecDeque::new(),
+            pending_key_rotations: Vec::new(),
         }),
     ));
 
@@ -2479,6 +2501,222 @@ fn cmd_escrow(data_dir: &std::path::Path) {
     println!();
     println!("  (Escrow registry is initialized per-session;");
     println!("   persistent escrow state requires state trie integration.)");
+}
+
+// ── Patch-04 v3 CLI commands ──────────────────────────────────────
+
+fn cmd_validators(data_dir: &std::path::Path) {
+    use sccgub_state::validator_set_state::validator_set_from_trie;
+
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+    let chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
+
+    let set = match validator_set_from_trie(&chain.state) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            println!(
+                "No validator set committed at height {} (pre-v3 chain).",
+                chain.height()
+            );
+            return;
+        }
+        Err(e) => {
+            eprintln!("Failed to decode system/validator_set: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let height = chain.height();
+    println!("=== Validator Set (height {}) ===\n", height);
+    println!("  Total records:        {}", set.records().len());
+    println!("  Active at this height: {}", set.active_at(height).len());
+    println!("  Total active power:   {}", set.total_power_at(height));
+    println!("  Quorum threshold:     {}", set.quorum_power_at(height));
+    println!();
+    for r in set.records() {
+        println!(
+            "  agent={} validator_id={} power={} active_from={} active_until={} \
+             active_at_{}={}",
+            hex::encode(r.agent_id),
+            hex::encode(r.validator_id),
+            r.voting_power,
+            r.active_from,
+            match r.active_until {
+                Some(h) => h.to_string(),
+                None => "none".into(),
+            },
+            height,
+            r.is_active_at(height),
+        );
+    }
+}
+
+fn cmd_ceilings(data_dir: &std::path::Path) {
+    use sccgub_state::constitutional_ceilings_state::constitutional_ceilings_from_trie;
+
+    let store = match ChainStore::new(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open data directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let blocks = match store.load_all_blocks() {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("No chain found. Run `sccgub init` first.");
+            std::process::exit(1);
+        }
+    };
+    let chain = Chain::from_blocks(blocks).unwrap_or_else(|e| {
+        eprintln!("Chain import failed: {}", e);
+        std::process::exit(1);
+    });
+
+    match constitutional_ceilings_from_trie(&chain.state) {
+        Ok(Some(c)) => {
+            println!("=== Constitutional Ceilings ===\n");
+            println!(
+                "  max_proof_depth_ceiling:              {}",
+                c.max_proof_depth_ceiling
+            );
+            println!(
+                "  max_tx_gas_ceiling:                   {}",
+                c.max_tx_gas_ceiling
+            );
+            println!(
+                "  max_block_gas_ceiling:                {}",
+                c.max_block_gas_ceiling
+            );
+            println!(
+                "  max_contract_steps_ceiling:           {}",
+                c.max_contract_steps_ceiling
+            );
+            println!(
+                "  max_address_length_ceiling:           {}",
+                c.max_address_length_ceiling
+            );
+            println!(
+                "  max_state_entry_size_ceiling:         {}",
+                c.max_state_entry_size_ceiling
+            );
+            println!(
+                "  max_tension_swing_ceiling:            {}",
+                c.max_tension_swing_ceiling
+            );
+            println!(
+                "  max_block_bytes_ceiling:              {}",
+                c.max_block_bytes_ceiling
+            );
+            println!(
+                "  max_active_proposals_ceiling:         {}",
+                c.max_active_proposals_ceiling
+            );
+            println!(
+                "  max_view_change_base_timeout_ms:      {}",
+                c.max_view_change_base_timeout_ms
+            );
+            println!(
+                "  max_view_change_max_timeout_ms:       {}",
+                c.max_view_change_max_timeout_ms
+            );
+            println!(
+                "  max_validator_set_size_ceiling:       {}",
+                c.max_validator_set_size_ceiling
+            );
+            println!(
+                "  max_validator_set_changes_per_block:  {}",
+                c.max_validator_set_changes_per_block
+            );
+        }
+        Ok(None) => {
+            println!("No constitutional ceilings committed (pre-v3 chain).");
+        }
+        Err(e) => {
+            eprintln!("Failed to decode system/constitutional_ceilings: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Emit a new signed `KeyRotation` event as JSON on stdout.
+///
+/// The rotation:
+/// - `agent_id` is derived from the current validator key (pre-rotation).
+/// - `old_public_key` is the current validator public key.
+/// - `new_public_key` is a fresh keypair generated at command time; the
+///   corresponding signing key is printed to stderr (hex) so the caller
+///   can persist it. The intent is local one-shot key generation suitable
+///   for integration tests; production operators should use a keystore
+///   workflow for the new key material.
+fn cmd_rotate_key(data_dir: &std::path::Path, passphrase: &str, rotation_height: u64) {
+    use sccgub_governance::patch_04::validate_key_rotation_submission;
+    use sccgub_types::key_rotation::KeyRotation;
+
+    let (chain, _store) = load_chain_with_key(data_dir, passphrase);
+
+    let old_key = chain.validator_key.clone();
+    let old_pk = *old_key.verifying_key().as_bytes();
+
+    // Agent id for the validator (spend-account derivation used elsewhere).
+    let agent_id = sccgub_state::apply::validator_spend_account(chain.block_version, &old_pk);
+
+    let new_key = generate_keypair();
+    let new_pk = *new_key.verifying_key().as_bytes();
+
+    let payload =
+        KeyRotation::canonical_rotation_bytes(&agent_id, &old_pk, &new_pk, rotation_height);
+    let sig_old = sign(&old_key, &payload);
+    let sig_new = sign(&new_key, &payload);
+
+    let rotation = KeyRotation {
+        agent_id,
+        old_public_key: old_pk,
+        new_public_key: new_pk,
+        rotation_height,
+        signature_by_old_key: sig_old,
+        signature_by_new_key: sig_new,
+    };
+
+    if let Err(e) = validate_key_rotation_submission(&rotation) {
+        eprintln!("Generated rotation failed submission validation: {}", e);
+        std::process::exit(1);
+    }
+
+    let json = serde_json::json!({
+        "rotation": rotation,
+    });
+    match serde_json::to_string_pretty(&json) {
+        Ok(s) => println!("{}", s),
+        Err(e) => {
+            eprintln!("Failed to serialize rotation: {}", e);
+            std::process::exit(1);
+        }
+    }
+    eprintln!();
+    eprintln!("!! New private key material (hex, store securely):");
+    eprintln!("   {}", hex::encode(new_key.to_bytes()));
+    eprintln!();
+    eprintln!("Submit with:");
+    eprintln!("   curl -X POST http://<node>/api/v1/tx/key-rotation \\");
+    eprintln!("        -H 'content-type: application/json' \\");
+    eprintln!("        -d @<rotation-json>");
 }
 
 #[cfg(test)]

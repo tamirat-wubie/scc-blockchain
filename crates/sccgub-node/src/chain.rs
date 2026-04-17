@@ -2143,6 +2143,7 @@ fn build_genesis_block(
         balance_root,
         validator_id,
         version,
+        round_history_root: ZERO_HASH,
     };
 
     // Build proof without signature, then sign the (header, proof) pair.
@@ -2170,6 +2171,7 @@ fn build_genesis_block(
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params,
+            validator_set_changes: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -2300,6 +2302,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         balance_root,
         validator_id,
         version,
+        round_history_root: ZERO_HASH,
     };
     // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
     let header_bytes = canonical_bytes(&header);
@@ -2330,6 +2333,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params: None,
+            validator_set_changes: None,
         },
         receipts,
         causal_delta: CausalGraphDelta {

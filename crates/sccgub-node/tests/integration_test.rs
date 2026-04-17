@@ -161,6 +161,7 @@ fn build_test_block(
         balance_root: ZERO_HASH,
         validator_id,
         version: 1,
+        round_history_root: ZERO_HASH,
     };
     // Compute block_id from full header (same as chain.rs).
     let header_bytes = sccgub_crypto::canonical::canonical_bytes(&header);
@@ -187,6 +188,7 @@ fn build_test_block(
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params: None,
+            validator_set_changes: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),

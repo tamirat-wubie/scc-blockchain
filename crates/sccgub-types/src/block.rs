@@ -8,16 +8,20 @@ use crate::receipt::CausalReceipt;
 use crate::tension::TensionValue;
 use crate::timestamp::CausalTimestamp;
 use crate::transition::SymbolicTransition;
+use crate::validator_set::ValidatorSetChange;
 use crate::{ConstraintId, Hash, MerkleRoot, ZERO_HASH};
 
 pub const LEGACY_BLOCK_VERSION: u32 = 1;
 pub const CANONICAL_AGENT_BLOCK_VERSION: u32 = 2;
+/// Patch-04 introduces v3: validator-set management, view-change, constitutional
+/// ceilings, key rotation. v3 blocks carry `round_history_root` in the header.
+pub const PATCH_04_BLOCK_VERSION: u32 = 3;
 pub const CURRENT_BLOCK_VERSION: u32 = CANONICAL_AGENT_BLOCK_VERSION;
 
 pub fn is_supported_block_version(version: u32) -> bool {
     matches!(
         version,
-        LEGACY_BLOCK_VERSION | CANONICAL_AGENT_BLOCK_VERSION
+        LEGACY_BLOCK_VERSION | CANONICAL_AGENT_BLOCK_VERSION | PATCH_04_BLOCK_VERSION
     )
 }
 
@@ -69,6 +73,16 @@ pub struct BlockHeader {
     pub validator_id: Hash,
     /// Block format version.
     pub version: u32,
+    /// Patch-04 §16.6: commits to `BLAKE3(canonical_bytes(body.round_history))`
+    /// for v3 blocks at `round > 0`. For v2 blocks and v3 blocks at `round == 0`,
+    /// this is `ZERO_HASH`. Always emitted to keep canonical bincode positional;
+    /// v2 chains read legacy bytes via `BlockHeader::from_canonical_bytes`.
+    #[serde(default = "zero_hash_default")]
+    pub round_history_root: Hash,
+}
+
+fn zero_hash_default() -> Hash {
+    ZERO_HASH
 }
 
 /// Block body containing the transitions.
@@ -81,6 +95,79 @@ pub struct BlockBody {
     pub constraint_satisfaction: Vec<(ConstraintId, bool)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genesis_consensus_params: Option<Vec<u8>>,
+    /// Patch-04 §15.4: `ValidatorSetChange` events admitted in this block.
+    /// `None` for v2 blocks and v3 blocks carrying no set-change events.
+    /// Matches the existing `genesis_consensus_params` serde discipline:
+    /// `None` emits zero bytes under bincode, preserving v2 canonical encoding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator_set_changes: Option<Vec<ValidatorSetChange>>,
+}
+
+impl BlockHeader {
+    /// Canonical bincode bytes of this header (used for block ID hashing and
+    /// persisted block storage).
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("BlockHeader serialization is infallible")
+    }
+
+    /// Deserialize from canonical bincode with a fallback to the v2 schema.
+    ///
+    /// v2-encoded headers predate the Patch-04 `round_history_root` field.
+    /// The fallback decodes them with `round_history_root = ZERO_HASH`,
+    /// preserving replay of v2 chains under v3 code.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
+        bincode::deserialize::<Self>(bytes)
+            .or_else(|_| bincode::deserialize::<LegacyBlockHeaderV2>(bytes).map(BlockHeader::from))
+            .map_err(|e| format!("BlockHeader deserialize: {}", e))
+    }
+}
+
+/// v0.3.0 block-header schema (pre-Patch-04). Retained as a deserialization
+/// fallback so v2 chain data replays under v3 code without re-encoding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyBlockHeaderV2 {
+    chain_id: Hash,
+    block_id: Hash,
+    parent_id: Hash,
+    height: u64,
+    timestamp: CausalTimestamp,
+    state_root: MerkleRoot,
+    transition_root: MerkleRoot,
+    receipt_root: MerkleRoot,
+    causal_root: MerkleRoot,
+    proof_root: MerkleRoot,
+    governance_hash: Hash,
+    tension_before: TensionValue,
+    tension_after: TensionValue,
+    mfidel_seal: MfidelAtomicSeal,
+    balance_root: Hash,
+    validator_id: Hash,
+    version: u32,
+}
+
+impl From<LegacyBlockHeaderV2> for BlockHeader {
+    fn from(v: LegacyBlockHeaderV2) -> Self {
+        Self {
+            chain_id: v.chain_id,
+            block_id: v.block_id,
+            parent_id: v.parent_id,
+            height: v.height,
+            timestamp: v.timestamp,
+            state_root: v.state_root,
+            transition_root: v.transition_root,
+            receipt_root: v.receipt_root,
+            causal_root: v.causal_root,
+            proof_root: v.proof_root,
+            governance_hash: v.governance_hash,
+            tension_before: v.tension_before,
+            tension_after: v.tension_after,
+            mfidel_seal: v.mfidel_seal,
+            balance_root: v.balance_root,
+            validator_id: v.validator_id,
+            version: v.version,
+            round_history_root: ZERO_HASH,
+        }
+    }
 }
 
 impl Block {
@@ -154,6 +241,7 @@ mod tests {
                 balance_root: ZERO_HASH,
                 validator_id: [3u8; 32],
                 version: 1,
+                round_history_root: ZERO_HASH,
             },
             body: BlockBody {
                 transitions: vec![],
@@ -161,6 +249,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
@@ -252,7 +341,50 @@ mod tests {
     #[test]
     fn test_is_supported_block_version_unknown() {
         assert!(!is_supported_block_version(0));
-        assert!(!is_supported_block_version(3));
+        assert!(!is_supported_block_version(4));
         assert!(!is_supported_block_version(u32::MAX));
+    }
+
+    #[test]
+    fn patch_04_is_supported_block_version_v3() {
+        assert!(is_supported_block_version(PATCH_04_BLOCK_VERSION));
+    }
+
+    #[test]
+    fn patch_04_block_header_canonical_roundtrip_with_round_history_root() {
+        let mut b = genesis_block();
+        b.header.round_history_root = [0xABu8; 32];
+        let bytes = b.header.to_canonical_bytes();
+        let back = BlockHeader::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(back.round_history_root, [0xABu8; 32]);
+    }
+
+    #[test]
+    fn patch_04_block_header_legacy_v2_bytes_decode_with_zero_round_history_root() {
+        // Simulate v0.3.0 on-disk bytes: encode the legacy struct directly.
+        let legacy = LegacyBlockHeaderV2 {
+            chain_id: [1u8; 32],
+            block_id: [2u8; 32],
+            parent_id: ZERO_HASH,
+            height: 0,
+            timestamp: CausalTimestamp::genesis(),
+            state_root: ZERO_HASH,
+            transition_root: ZERO_HASH,
+            receipt_root: ZERO_HASH,
+            causal_root: ZERO_HASH,
+            proof_root: ZERO_HASH,
+            governance_hash: ZERO_HASH,
+            tension_before: TensionValue::ZERO,
+            tension_after: TensionValue::ZERO,
+            mfidel_seal: MfidelAtomicSeal::from_height(0),
+            balance_root: ZERO_HASH,
+            validator_id: [3u8; 32],
+            version: 2,
+        };
+        let v2_bytes = bincode::serialize(&legacy).unwrap();
+        let header = BlockHeader::from_canonical_bytes(&v2_bytes)
+            .expect("v2 legacy bytes must decode via fallback");
+        assert_eq!(header.round_history_root, ZERO_HASH);
+        assert_eq!(header.version, 2);
     }
 }
