@@ -127,6 +127,29 @@ impl ArtifactRef {
         if self.schema_version.len() > MAX_STRING_LEN {
             return Err("schema_version too long".into());
         }
+        // N-59: Cap the free-form strings inside `ArtifactKind::Custom` and
+        // `StorageScheme::Custom`.  Previously an attacker could smuggle
+        // unbounded strings through these enum variants (the locator and
+        // schema_* fields are capped but the enum inner strings were not),
+        // then have them committed into the trie and every snapshot.
+        if let ArtifactKind::Custom(ref s) = self.kind {
+            if s.len() > MAX_STRING_LEN {
+                return Err(format!(
+                    "ArtifactKind::Custom string too long: {} > {}",
+                    s.len(),
+                    MAX_STRING_LEN
+                ));
+            }
+        }
+        if let StorageScheme::Custom(ref s) = self.storage_scheme {
+            if s.len() > MAX_STRING_LEN {
+                return Err(format!(
+                    "StorageScheme::Custom string too long: {} > {}",
+                    s.len(),
+                    MAX_STRING_LEN
+                ));
+            }
+        }
         if self.byte_length == 0 {
             return Err("byte_length must be > 0".into());
         }
@@ -290,5 +313,31 @@ mod tests {
         assert!(preimage.starts_with(&[0xAA; 32]));
         assert!(preimage[32..64] == [0xBB; 32]);
         assert!(preimage[64..].starts_with(b"name"));
+    }
+
+    // N-59: Custom enum string length caps.
+
+    #[test]
+    fn test_oversized_custom_kind_rejected() {
+        let mut a = valid_artifact();
+        a.kind = ArtifactKind::Custom("x".repeat(MAX_STRING_LEN + 1));
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("ArtifactKind::Custom"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_oversized_custom_storage_scheme_rejected() {
+        let mut a = valid_artifact();
+        a.storage_scheme = StorageScheme::Custom("y".repeat(MAX_STRING_LEN + 1));
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("StorageScheme::Custom"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_custom_strings_at_cap_accepted() {
+        let mut a = valid_artifact();
+        a.kind = ArtifactKind::Custom("x".repeat(MAX_STRING_LEN));
+        a.storage_scheme = StorageScheme::Custom("y".repeat(MAX_STRING_LEN));
+        assert!(a.validate().is_ok());
     }
 }
