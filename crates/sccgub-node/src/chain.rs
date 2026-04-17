@@ -487,7 +487,12 @@ impl Chain {
                     height: snapshot.height,
                     detail,
                 })?,
-            None => chain.restore_from_snapshot(snapshot),
+            None => chain.restore_from_snapshot(snapshot).map_err(|detail| {
+                ImportError::SnapshotMismatch {
+                    height: snapshot.height,
+                    detail,
+                }
+            })?,
         }
 
         for block in blocks.iter().skip(snapshot_index + 1) {
@@ -1410,7 +1415,15 @@ impl Chain {
     }
 
     /// Restore chain state from a snapshot (fast load — no block replay needed).
-    pub fn restore_from_snapshot(&mut self, snapshot: &crate::persistence::StateSnapshot) {
+    ///
+    /// N-53: After rebuilding the trie from `snapshot.trie_entries`, the
+    /// re-computed trie root is verified against `snapshot.state_root`.  A
+    /// tampered snapshot file with mutated entries but unchanged root field
+    /// would otherwise silently produce a forked post-state.
+    pub fn restore_from_snapshot(
+        &mut self,
+        snapshot: &crate::persistence::StateSnapshot,
+    ) -> Result<(), String> {
         // Clear and rebuild trie.
         self.state = ManagedWorldState::new();
         self.state.state.governance_state = GovernanceState {
@@ -1420,6 +1433,20 @@ impl Chain {
         for (key, value) in &snapshot.trie_entries {
             self.state.trie.insert(key.clone(), value.clone());
         }
+
+        // N-53: Verify the re-computed trie root matches the snapshot's
+        // self-reported root before trusting any derived state.  This defeats
+        // snapshot-tampering attacks where an attacker mutates `trie_entries`
+        // while leaving `state_root` unchanged.
+        let computed_root = self.state.trie.root();
+        if computed_root != snapshot.state_root {
+            return Err(format!(
+                "Snapshot trie root mismatch: recomputed {} vs snapshot-reported {}",
+                hex::encode(computed_root),
+                hex::encode(snapshot.state_root)
+            ));
+        }
+
         self.state.consensus_params = consensus_params_from_trie(&self.state)
             .unwrap_or(None)
             .unwrap_or_default();
@@ -1472,6 +1499,7 @@ impl Chain {
         self.finality_config = snapshot.finality_config.clone();
         // E-3: Restore in-flight governance proposals from snapshot.
         self.proposals.proposals = snapshot.proposals.clone();
+        Ok(())
     }
 
     pub fn restore_from_snapshot_with_store(
@@ -1479,7 +1507,7 @@ impl Chain {
         snapshot: &crate::persistence::StateSnapshot,
         store: std::sync::Arc<dyn sccgub_state::store::StateStore>,
     ) -> Result<(), String> {
-        self.restore_from_snapshot(snapshot);
+        self.restore_from_snapshot(snapshot)?;
         self.state.bind_store(store)
     }
 
@@ -2359,7 +2387,7 @@ mod tests {
         let embedded = params.to_canonical_bytes();
 
         let mut restored = Chain::init();
-        restored.restore_from_snapshot(&snapshot);
+        restored.restore_from_snapshot(&snapshot).unwrap();
 
         assert_eq!(restored.state.consensus_params, params);
         assert_eq!(restored.state.state_root(), chain.state.state_root());
@@ -2543,7 +2571,7 @@ mod tests {
         let original_finality = chain.finality_config.clone();
 
         let mut chain2 = Chain::init();
-        chain2.restore_from_snapshot(&snapshot);
+        chain2.restore_from_snapshot(&snapshot).unwrap();
 
         assert_eq!(chain2.state.state_root(), original_root);
         assert_eq!(chain2.balances.total_supply(), original_supply);
@@ -2555,6 +2583,62 @@ mod tests {
             chain2.finality_config.confirmation_depth,
             original_finality.confirmation_depth
         );
+    }
+
+    #[test]
+    fn test_restore_from_snapshot_rejects_tampered_trie_entries() {
+        // N-53: Mutating `trie_entries` without updating `state_root` must be
+        // rejected so that a malicious snapshot file cannot silently fork state.
+        let mut chain = Chain::init();
+        chain.produce_block().unwrap();
+        chain.produce_block().unwrap();
+
+        let mut snapshot = chain.create_snapshot();
+        // Inject a bogus key/value into the trie entries while leaving the
+        // snapshot's self-reported `state_root` unchanged.
+        snapshot
+            .trie_entries
+            .push((b"malicious/backdoor".to_vec(), b"evil".to_vec()));
+
+        let mut victim = Chain::init();
+        let result = victim.restore_from_snapshot(&snapshot);
+        assert!(
+            result.is_err(),
+            "tampered snapshot must be rejected, got Ok"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("trie root mismatch"),
+            "expected root-mismatch error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_restore_from_snapshot_rejects_mutated_entry_value() {
+        // N-53: Mutating an existing trie entry's value (e.g., forging a
+        // balance) must be caught by the recomputed-root check.
+        let mut chain = Chain::init();
+        chain.produce_block().unwrap();
+
+        let mut snapshot = chain.create_snapshot();
+        // Flip at least one byte of the first trie entry's value.
+        if let Some((_, value)) = snapshot.trie_entries.first_mut() {
+            if value.is_empty() {
+                value.push(0xFF);
+            } else {
+                value[0] = value[0].wrapping_add(1);
+            }
+        } else {
+            // No entries to tamper — just append a bogus one to force divergence.
+            snapshot
+                .trie_entries
+                .push((b"system/tamper".to_vec(), b"x".to_vec()));
+        }
+
+        let mut victim = Chain::init();
+        let result = victim.restore_from_snapshot(&snapshot);
+        assert!(result.is_err(), "mutated value must be rejected");
     }
 
     #[test]
@@ -2579,7 +2663,7 @@ mod tests {
 
         let mut replayed = Chain::from_blocks(chain.blocks.clone())
             .expect("from_blocks should succeed for valid chain");
-        replayed.restore_from_snapshot(&snapshot);
+        replayed.restore_from_snapshot(&snapshot).unwrap();
         assert_eq!(replayed.state.state_root(), tip.header.state_root);
         assert_eq!(replayed.balances.balance_root(), tip.header.balance_root);
     }
@@ -2636,7 +2720,7 @@ mod tests {
         let snapshot = chain.create_snapshot();
 
         let mut restored = Chain::init();
-        restored.restore_from_snapshot(&snapshot);
+        restored.restore_from_snapshot(&snapshot).unwrap();
 
         assert_eq!(
             restored.state.state.governance_state.finality_mode,
@@ -3217,7 +3301,7 @@ mod tests {
 
         // Restore and verify.
         let mut chain2 = Chain::init();
-        chain2.restore_from_snapshot(&snapshot);
+        chain2.restore_from_snapshot(&snapshot).unwrap();
         assert_eq!(chain2.treasury.epoch, chain.treasury.epoch);
         assert_eq!(
             chain2.treasury.pending_fees.raw(),

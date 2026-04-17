@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(snapshot.height, replayed.height());
         assert_eq!(snapshot.state_root, replayed.state.state_root());
 
-        replayed.restore_from_snapshot(&snapshot);
+        replayed.restore_from_snapshot(&snapshot).unwrap();
 
         assert_eq!(
             replayed.state.state_root(),
@@ -753,7 +753,7 @@ mod tests {
         let mut replayed = Chain::from_blocks(blocks).unwrap();
         assert_eq!(replayed.finality_config.confirmation_depth, 7);
 
-        replayed.restore_from_snapshot(&snapshot);
+        replayed.restore_from_snapshot(&snapshot).unwrap();
         assert_eq!(replayed.finality_config.confirmation_depth, 7);
 
         let _ = fs::remove_dir_all(&dir);

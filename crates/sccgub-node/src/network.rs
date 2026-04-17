@@ -848,6 +848,23 @@ impl NetworkRuntime {
     }
 
     async fn handle_tx_gossip(&self, msg: TransactionGossipMessage) -> Result<(), String> {
+        // N-53: verify Ed25519 tx signature BEFORE acquiring the write lock.
+        // Previously the signature was only checked in the block-production gas
+        // loop, allowing a peer to flood the mempool with syntactically valid
+        // but cryptographically invalid transactions (valid-length all-zero
+        // signature) — a targeted DoS under chain write-lock contention.
+        if msg.transaction.signature.len() < 64 {
+            return Err("Transaction gossip rejected: signature too short".into());
+        }
+        let tx_bytes = sccgub_execution::validate::canonical_tx_bytes(&msg.transaction);
+        if !verify(
+            &msg.transaction.actor.public_key,
+            &tx_bytes,
+            &msg.transaction.signature,
+        ) {
+            return Err("Transaction gossip rejected: invalid Ed25519 signature".into());
+        }
+
         let mut chain = self.chain.write().await;
         let submitted = chain.submit_transition(msg.transaction);
         if submitted.is_ok() {
@@ -3437,7 +3454,7 @@ mod tests {
         assert_eq!(snapshot.height, replayed.height());
         assert_eq!(snapshot.state_root, replayed.state.state_root());
 
-        replayed.restore_from_snapshot(&snapshot);
+        replayed.restore_from_snapshot(&snapshot).unwrap();
         let peer = chain_peer.read().await;
         assert_eq!(replayed.state.state_root(), peer.state.state_root());
         assert_eq!(
@@ -5625,5 +5642,197 @@ mod tests {
         record_bandwidth(&runtime.bandwidth, addr, 200, 0).await;
         let err = runtime.check_bandwidth_limit(addr).await.unwrap_err();
         assert!(err.contains("bandwidth limit exceeded"));
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-53: Transaction gossip signature verification (pre-lock).
+    // ───────────────────────────────────────────────────────────────────
+
+    fn make_tx_with_custom_sig(
+        nonce: u128,
+        sig: Vec<u8>,
+    ) -> sccgub_types::transition::SymbolicTransition {
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::{
+            CausalJustification, OperationPayload, SymbolicTransition, TransitionIntent,
+            TransitionKind, TransitionMechanism, WHBindingIntent,
+        };
+        use std::collections::BTreeSet;
+
+        let key = generate_keypair();
+        let public_key = *key.verifying_key().as_bytes();
+        let mfidel_seal = MfidelAtomicSeal::from_height(1);
+        let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+            &public_key,
+            &sccgub_crypto::canonical::canonical_bytes(&mfidel_seal),
+        ]);
+        let target = b"data/test".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key,
+                mfidel_seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "gossip-test".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"v".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: sccgub_crypto::hash::blake3_hash(b"test-rule"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "gossip-test".into(),
+            },
+            nonce,
+            signature: sig,
+        };
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = sccgub_crypto::hash::blake3_hash(&canonical);
+        tx
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_gossip_rejects_short_signature() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        let tx = make_tx_with_custom_sig(1, vec![0u8; 32]); // too short
+        let err = runtime
+            .handle_tx_gossip(TransactionGossipMessage {
+                sender_id: [9u8; 32],
+                transaction: tx,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("signature too short"), "got: {}", err);
+        // The mempool must not have absorbed the invalid tx.
+        assert_eq!(chain.read().await.mempool.pending_snapshot().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_gossip_rejects_invalid_signature() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        // Valid length but cryptographically invalid (all zeros).
+        let tx = make_tx_with_custom_sig(1, vec![0u8; 64]);
+        let err = runtime
+            .handle_tx_gossip(TransactionGossipMessage {
+                sender_id: [9u8; 32],
+                transaction: tx,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("invalid Ed25519 signature"), "got: {}", err);
+        assert_eq!(chain.read().await.mempool.pending_snapshot().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_gossip_accepts_valid_signature() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        // Build a properly signed tx.
+        use sccgub_types::agent::{AgentIdentity, ResponsibilityState};
+        use sccgub_types::governance::PrecedenceLevel;
+        use sccgub_types::mfidel::MfidelAtomicSeal;
+        use sccgub_types::timestamp::CausalTimestamp;
+        use sccgub_types::transition::{
+            CausalJustification, OperationPayload, SymbolicTransition, TransitionIntent,
+            TransitionKind, TransitionMechanism, WHBindingIntent,
+        };
+        use std::collections::BTreeSet;
+
+        let key = generate_keypair();
+        let public_key = *key.verifying_key().as_bytes();
+        let mfidel_seal = MfidelAtomicSeal::from_height(1);
+        let agent_id = sccgub_crypto::hash::blake3_hash_concat(&[
+            &public_key,
+            &sccgub_crypto::canonical::canonical_bytes(&mfidel_seal),
+        ]);
+        let target = b"data/gossip-valid".to_vec();
+        let mut tx = SymbolicTransition {
+            tx_id: [0u8; 32],
+            actor: AgentIdentity {
+                agent_id,
+                public_key,
+                mfidel_seal,
+                registration_block: 0,
+                governance_level: PrecedenceLevel::Meaning,
+                norm_set: BTreeSet::new(),
+                responsibility: ResponsibilityState::default(),
+            },
+            intent: TransitionIntent {
+                kind: TransitionKind::StateWrite,
+                target: target.clone(),
+                declared_purpose: "valid-gossip".into(),
+            },
+            preconditions: vec![],
+            postconditions: vec![],
+            payload: OperationPayload::Write {
+                key: target.clone(),
+                value: b"v".to_vec(),
+            },
+            causal_chain: vec![],
+            wh_binding_intent: WHBindingIntent {
+                who: agent_id,
+                when: CausalTimestamp::genesis(),
+                r#where: target,
+                why: CausalJustification {
+                    invoking_rule: sccgub_crypto::hash::blake3_hash(b"gossip-rule"),
+                    precedence_level: PrecedenceLevel::Meaning,
+                    causal_ancestors: vec![],
+                    constraint_proof: vec![],
+                },
+                how: TransitionMechanism::DirectStateWrite,
+                which: BTreeSet::new(),
+                what_declared: "valid-gossip".into(),
+            },
+            nonce: 1,
+            signature: vec![],
+        };
+        let canonical = sccgub_execution::validate::canonical_tx_bytes(&tx);
+        tx.tx_id = sccgub_crypto::hash::blake3_hash(&canonical);
+        tx.signature = sign(&key, &canonical);
+
+        runtime
+            .handle_tx_gossip(TransactionGossipMessage {
+                sender_id: [7u8; 32],
+                transaction: tx,
+            })
+            .await
+            .unwrap();
+        // Mempool admitted the valid tx.
+        assert_eq!(chain.read().await.mempool.pending_snapshot().len(), 1);
     }
 }

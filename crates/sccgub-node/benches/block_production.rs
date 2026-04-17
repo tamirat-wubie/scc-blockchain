@@ -341,7 +341,7 @@ fn main() {
 
         let start = Instant::now();
         let mut restored = Chain::init();
-        restored.restore_from_snapshot(&snapshot);
+        restored.restore_from_snapshot(&snapshot).unwrap();
         let restore_elapsed = start.elapsed();
 
         println!(
