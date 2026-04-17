@@ -340,6 +340,7 @@ mod tests {
                 balance_root: [8u8; 32],
                 validator_id: [9u8; 32],
                 version: CURRENT_BLOCK_VERSION,
+                round_history_root: ZERO_HASH,
             },
             body: BlockBody {
                 transitions: vec![tx],

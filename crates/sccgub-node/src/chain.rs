@@ -2143,6 +2143,7 @@ fn build_genesis_block(
         balance_root,
         validator_id,
         version,
+        round_history_root: ZERO_HASH,
     };
 
     // Build proof without signature, then sign the (header, proof) pair.
@@ -2300,6 +2301,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
         balance_root,
         validator_id,
         version,
+        round_history_root: ZERO_HASH,
     };
     // block_id = Hash(full header with block_id=ZERO) — commits to all header fields.
     let header_bytes = canonical_bytes(&header);

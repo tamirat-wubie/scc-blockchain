@@ -658,6 +658,7 @@ mod tests {
                 balance_root: ZERO_HASH,
                 validator_id: ZERO_HASH,
                 version: 1,
+                round_history_root: ZERO_HASH,
             },
             body: BlockBody {
                 transitions: vec![],

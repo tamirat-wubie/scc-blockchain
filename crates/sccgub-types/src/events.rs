@@ -145,6 +145,28 @@ pub enum ChainEvent {
         action: String,
         block_height: u64,
     },
+
+    // === Patch-04 v3 events ===
+    /// A `ValidatorSetChange` event was admitted (§15.4). `effective_height`
+    /// is the deferred activation height (§15.5). `change_kind` is a
+    /// short string classifier: `"Add"`, `"Remove"`, `"RotatePower"`, or
+    /// `"RotateKey"`.
+    ValidatorSetChanged {
+        change_id: Hash,
+        change_kind: String,
+        target_agent_id: AgentId,
+        effective_height: u64,
+        admitted_at_height: u64,
+    },
+
+    /// A `KeyRotation` event was admitted (§18.2). For validators, this
+    /// event is paired with a `ValidatorSetChanged` of kind `"RotateKey"`.
+    KeyRotated {
+        agent_id: AgentId,
+        old_public_key: Hash,
+        new_public_key: Hash,
+        rotation_height: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -192,6 +192,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions: vec![],
@@ -311,6 +312,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions,
@@ -433,6 +435,7 @@ mod tests {
                 balance_root: [0u8; 32],
                 validator_id: [1u8; 32],
                 version: 1,
+                round_history_root: [0u8; 32],
             },
             body: sccgub_types::block::BlockBody {
                 transitions: vec![],
