@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use sccgub_types::Hash;
 
@@ -17,7 +17,7 @@ pub struct LawSyncRound {
     /// Height being synchronized.
     pub height: u64,
     /// Law set hashes proposed by each validator.
-    pub proposals: HashMap<Hash, Hash>, // validator_id -> law_set_hash
+    pub proposals: BTreeMap<Hash, Hash>, // validator_id -> law_set_hash
     /// Quorum threshold (⌊2n/3⌋ + 1).
     pub quorum: u32,
     /// Total validator count.
@@ -35,7 +35,7 @@ pub enum LawSyncResult {
     },
     /// No supermajority — cannot proceed with block production.
     NoConsensus {
-        proposals: HashMap<Hash, u32>, // law_hash -> vote count
+        proposals: BTreeMap<Hash, u32>, // law_hash -> vote count
     },
 }
 
@@ -45,7 +45,7 @@ impl LawSyncRound {
         let quorum = ((2u64 * validator_count as u64) / 3 + 1).min(u32::MAX as u64) as u32;
         Self {
             height,
-            proposals: HashMap::new(),
+            proposals: BTreeMap::new(),
             quorum,
             validator_count,
         }
@@ -63,7 +63,7 @@ impl LawSyncRound {
     /// Evaluate: determine if consensus on law set is reached.
     pub fn evaluate(&self) -> LawSyncResult {
         // Count votes per law set hash.
-        let mut votes: HashMap<Hash, u32> = HashMap::new();
+        let mut votes: BTreeMap<Hash, u32> = BTreeMap::new();
         for law_hash in self.proposals.values() {
             *votes.entry(*law_hash).or_insert(0) += 1;
         }

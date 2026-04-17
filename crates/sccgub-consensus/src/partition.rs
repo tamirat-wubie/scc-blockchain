@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use sccgub_types::Hash;
 
@@ -32,7 +32,7 @@ impl Default for PartitionConfig {
 #[derive(Debug, Clone, Default)]
 pub struct PartitionDetector {
     /// Last known block height per validator.
-    pub validator_heights: HashMap<Hash, u64>,
+    pub validator_heights: BTreeMap<Hash, u64>,
 }
 
 /// Result of partition detection.
