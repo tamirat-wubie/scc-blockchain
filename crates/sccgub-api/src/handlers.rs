@@ -17,6 +17,18 @@ pub const MAX_PENDING_TXS: usize = 10_000;
 /// Maximum tracked seen IDs (LRU-style: oldest evicted when full).
 pub const MAX_SEEN_TX_IDS: usize = 100_000;
 
+/// Hard cap on list-style API response entries (N-60).
+///
+/// Several read endpoints previously returned the entire chain-side
+/// collection unbounded (slashing events, equivocation evidence, safety
+/// certificates).  While the chain-side collections are now bounded
+/// (max 8k–10k by N-55), a single HTTP response of that size is still
+/// expensive to serialize and transport under a `chain.read()` guard —
+/// trivially weaponized by hammering the endpoint.  Cap each response
+/// at the NEWEST `MAX_API_RESPONSE_ENTRIES` entries (which is what
+/// monitoring dashboards actually need).
+pub const MAX_API_RESPONSE_ENTRIES: usize = 1_000;
+
 /// Shared application state for the API server.
 pub struct AppState {
     pub blocks: Vec<Block>,
@@ -168,13 +180,25 @@ pub async fn get_governance_params_schema() -> axum::Json<ApiResponse<serde_json
 }
 
 /// GET /finality/certificates — safety certificates for finalized blocks.
+///
+/// N-60: Response is capped at `MAX_API_RESPONSE_ENTRIES` newest certificates
+/// (by height).  `total` reports the chain-side count; `certificates` is the
+/// truncated response window.
 pub async fn get_finality_certificates(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<FinalityCertificatesResponse>> {
     let app = state.read().await;
+    let total_len = app.safety_certificates.len();
+    // Take the newest `MAX_API_RESPONSE_ENTRIES` entries.  Assumes the chain-
+    // side collection is roughly height-ordered (it is — see chain.rs::
+    // record_safety_certificate: sorted by (height, round, block_hash) before
+    // any truncation).  Using `iter().rev().take(...)` then reversing back
+    // gives newest-first up to the cap, without materializing a copy.
+    let skip = total_len.saturating_sub(MAX_API_RESPONSE_ENTRIES);
     let certificates = app
         .safety_certificates
         .iter()
+        .skip(skip)
         .map(|cert| SafetyCertificateResponse {
             chain_id: hex::encode(cert.chain_id),
             epoch: cert.epoch,
@@ -196,7 +220,7 @@ pub async fn get_finality_certificates(
         })
         .collect::<Vec<_>>();
     let resp = FinalityCertificatesResponse {
-        count: certificates.len() as u64,
+        count: total_len as u64,
         certificates,
     };
     axum::Json(ApiResponse::ok(resp))
@@ -1120,20 +1144,33 @@ fn slashing_event_response(event: &SlashingEvent) -> SlashingEventResponse {
 }
 
 /// GET /slashing -- slashing summary and events.
+///
+/// N-60: `events` is capped at the newest `MAX_API_RESPONSE_ENTRIES`
+/// entries.  `total_events` reports the true chain-side count.
 pub async fn get_slashing_summary(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<SlashingSummaryResponse>> {
     let app = state.read().await;
+    let total_events_count = app.slashing_events.len();
+    let total_removed_count = app.slashing_removed.len();
+    let skip_events = total_events_count.saturating_sub(MAX_API_RESPONSE_ENTRIES);
     let events: Vec<SlashingEventResponse> = app
         .slashing_events
         .iter()
+        .skip(skip_events)
         .map(slashing_event_response)
         .collect();
-    let removed_validators: Vec<String> = app.slashing_removed.iter().map(hex::encode).collect();
+    let skip_removed = total_removed_count.saturating_sub(MAX_API_RESPONSE_ENTRIES);
+    let removed_validators: Vec<String> = app
+        .slashing_removed
+        .iter()
+        .skip(skip_removed)
+        .map(hex::encode)
+        .collect();
 
     axum::Json(ApiResponse::ok(SlashingSummaryResponse {
-        total_events: events.len() as u64,
-        total_removed: removed_validators.len() as u64,
+        total_events: total_events_count as u64,
+        total_removed: total_removed_count as u64,
         removed_validators,
         events,
     }))
@@ -1182,10 +1219,18 @@ pub async fn get_slashing_validator(
         }
     };
     let removed = app.slashing_removed.contains(&validator_id);
-    let events: Vec<SlashingEventResponse> = app
+    // N-60: Cap per-validator events to the newest MAX_API_RESPONSE_ENTRIES
+    // in insertion order.  Filter first (only this validator's events), then
+    // take the tail.
+    let filtered: Vec<&SlashingEvent> = app
         .slashing_events
         .iter()
         .filter(|event| event.validator_id == validator_id)
+        .collect();
+    let skip = filtered.len().saturating_sub(MAX_API_RESPONSE_ENTRIES);
+    let events: Vec<SlashingEventResponse> = filtered
+        .into_iter()
+        .skip(skip)
         .map(slashing_event_response)
         .collect();
 
@@ -1201,43 +1246,58 @@ pub async fn get_slashing_validator(
 }
 
 /// GET /slashing/evidence -- equivocation evidence (all validators).
+///
+/// N-60: `evidence` is capped at the newest `MAX_API_RESPONSE_ENTRIES`
+/// entries.  `count` reports the chain-side count in whichever source
+/// collection was used.
 pub async fn get_slashing_evidence(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<SlashingEvidenceListResponse>> {
     let app = state.read().await;
-    let evidence: Vec<SlashingEvidenceResponse> = if !app.equivocation_records.is_empty() {
-        app.equivocation_records
-            .iter()
-            .map(|(proof, epoch)| SlashingEvidenceResponse {
-                validator_id: hex::encode(proof.validator_id),
-                height: proof.height,
-                round: proof.round,
-                vote_type: format!("{:?}", proof.vote_type),
-                block_hash_a: hex::encode(proof.block_hash_a),
-                block_hash_b: hex::encode(proof.block_hash_b),
-                epoch: *epoch,
-            })
-            .collect()
-    } else {
-        app.slashing_events
-            .iter()
-            .filter_map(|event| match &event.evidence {
-                SlashingEvidence::Equivocation(proof) => Some(SlashingEvidenceResponse {
+    let (total, evidence): (usize, Vec<SlashingEvidenceResponse>) =
+        if !app.equivocation_records.is_empty() {
+            let total = app.equivocation_records.len();
+            let skip = total.saturating_sub(MAX_API_RESPONSE_ENTRIES);
+            let list = app
+                .equivocation_records
+                .iter()
+                .skip(skip)
+                .map(|(proof, epoch)| SlashingEvidenceResponse {
                     validator_id: hex::encode(proof.validator_id),
                     height: proof.height,
                     round: proof.round,
                     vote_type: format!("{:?}", proof.vote_type),
                     block_hash_a: hex::encode(proof.block_hash_a),
                     block_hash_b: hex::encode(proof.block_hash_b),
-                    epoch: event.epoch,
-                }),
-                _ => None,
-            })
-            .collect()
-    };
+                    epoch: *epoch,
+                })
+                .collect();
+            (total, list)
+        } else {
+            // Collect fully (filter_map may drop entries), then cap to newest.
+            let full: Vec<SlashingEvidenceResponse> = app
+                .slashing_events
+                .iter()
+                .filter_map(|event| match &event.evidence {
+                    SlashingEvidence::Equivocation(proof) => Some(SlashingEvidenceResponse {
+                        validator_id: hex::encode(proof.validator_id),
+                        height: proof.height,
+                        round: proof.round,
+                        vote_type: format!("{:?}", proof.vote_type),
+                        block_hash_a: hex::encode(proof.block_hash_a),
+                        block_hash_b: hex::encode(proof.block_hash_b),
+                        epoch: event.epoch,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let total = full.len();
+            let skip = total.saturating_sub(MAX_API_RESPONSE_ENTRIES);
+            (total, full.into_iter().skip(skip).collect())
+        };
 
     axum::Json(ApiResponse::ok(SlashingEvidenceListResponse {
-        count: evidence.len() as u64,
+        count: total as u64,
         evidence,
     }))
 }
@@ -1282,7 +1342,8 @@ pub async fn get_slashing_evidence_for_validator(
         );
     }
 
-    let evidence: Vec<SlashingEvidenceResponse> = if !app.equivocation_records.is_empty() {
+    // N-60: Cap per-validator evidence to the newest MAX_API_RESPONSE_ENTRIES.
+    let full_evidence: Vec<SlashingEvidenceResponse> = if !app.equivocation_records.is_empty() {
         app.equivocation_records
             .iter()
             .filter(|(proof, _)| proof.validator_id == validator_id)
@@ -1315,11 +1376,14 @@ pub async fn get_slashing_evidence_for_validator(
             })
             .collect()
     };
+    let total = full_evidence.len();
+    let skip = total.saturating_sub(MAX_API_RESPONSE_ENTRIES);
+    let evidence: Vec<SlashingEvidenceResponse> = full_evidence.into_iter().skip(skip).collect();
 
     (
         axum::http::StatusCode::OK,
         axum::Json(ApiResponse::ok(SlashingEvidenceListResponse {
-            count: evidence.len() as u64,
+            count: total as u64,
             evidence,
         })),
     )
