@@ -10,6 +10,34 @@ use sccgub_types::Hash;
 const STORAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VALIDATOR_KEY_FILE: &str = "validator.key";
 
+/// Per-Vec length caps applied when deserializing persisted state from disk.
+///
+/// N-61: Snapshot and consensus-state loaders previously did a bare
+/// `serde_json::from_str` with no entry-count guard.  An attacker with
+/// local fs write access (misconfigured mount, container escape, or a
+/// legitimate operator whose disk was tampered with offline) could plant
+/// a `snapshot_*.json` with millions of entries; on the next node
+/// restart the deserialize + trie-rebuild loop would OOM before any
+/// existing guard could run (the N-53 trie-root check runs AFTER the
+/// full iteration).  Each cap is set above any realistic chain-state
+/// size but well below "adversarial".
+const MAX_PERSISTED_TRIE_ENTRIES: usize = 10_000_000;
+const MAX_PERSISTED_AGENT_NONCES: usize = 1_000_000;
+const MAX_PERSISTED_BALANCES: usize = 1_000_000;
+const MAX_PERSISTED_SLASHING_EVENTS: usize = 1_000_000;
+const MAX_PERSISTED_SLASHING_STAKES: usize = 100_000;
+const MAX_PERSISTED_SLASHING_REMOVED: usize = 100_000;
+const MAX_PERSISTED_SLASHING_ABSENCE: usize = 100_000;
+/// Equivocation records are runtime-bounded at 8_192 by N-55; allow 2x
+/// for migration headroom.
+const MAX_PERSISTED_EQUIVOCATION_RECORDS: usize = 16_384;
+/// Safety certificates are runtime-bounded at 10_000 by N-55; allow 2x.
+const MAX_PERSISTED_SAFETY_CERTIFICATES: usize = 20_000;
+const MAX_PERSISTED_VALIDATOR_SET: usize = 10_000;
+const MAX_PERSISTED_PROPOSALS: usize = 100_000;
+const MAX_PERSISTED_CONSENSUS_ROUNDS: usize = 10_000;
+const MAX_PERSISTED_PENDING_BLOCKS: usize = 64;
+
 fn default_finality_mode() -> sccgub_types::governance::FinalityMode {
     sccgub_types::governance::FinalityMode::Deterministic
 }
@@ -266,6 +294,15 @@ impl ChainStore {
         let data = fs::read_to_string(&path)?;
         let raw: std::collections::HashMap<String, serde_json::Value> =
             serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        // N-61: Reject maliciously large persisted maps before copying into
+        // an in-memory HashMap that the network layer will scan.
+        if raw.len() > MAX_PERSISTED_CONSENSUS_ROUNDS {
+            return Err(std::io::Error::other(format!(
+                "Persisted consensus_rounds.json has {} entries (max {})",
+                raw.len(),
+                MAX_PERSISTED_CONSENSUS_ROUNDS
+            )));
+        }
         let mut parsed = std::collections::HashMap::new();
         for (key, value) in raw {
             let height = key.parse::<u64>().map_err(|e| {
@@ -284,6 +321,14 @@ impl ChainStore {
         let data = fs::read_to_string(&path)?;
         let certs: Vec<SafetyCertificate> =
             serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        // N-61: Reject maliciously large persisted lists.
+        if certs.len() > MAX_PERSISTED_SAFETY_CERTIFICATES {
+            return Err(std::io::Error::other(format!(
+                "Persisted safety_certs.json has {} entries (max {})",
+                certs.len(),
+                MAX_PERSISTED_SAFETY_CERTIFICATES
+            )));
+        }
         Ok(certs)
     }
 
@@ -308,6 +353,16 @@ impl ChainStore {
         }
         let data = fs::read_to_string(&path)?;
         let blocks: Vec<Block> = serde_json::from_str(&data).map_err(std::io::Error::other)?;
+        // N-61: Reject maliciously large persisted pending-block files.
+        // Runtime cap is MAX_PENDING_BLOCKS (64 — see network.rs); a file
+        // exceeding that is adversarial.
+        if blocks.len() > MAX_PERSISTED_PENDING_BLOCKS {
+            return Err(std::io::Error::other(format!(
+                "Persisted pending_blocks.json has {} entries (max {})",
+                blocks.len(),
+                MAX_PERSISTED_PENDING_BLOCKS
+            )));
+        }
         let mut pending = std::collections::HashMap::new();
         for block in blocks {
             if !block.is_structurally_valid() {
@@ -410,8 +465,79 @@ impl ChainStore {
         };
         let json = fs::read_to_string(latest.path())?;
         let snapshot: StateSnapshot = serde_json::from_str(&json).map_err(std::io::Error::other)?;
+        // N-61: Defense-in-depth against a maliciously crafted snapshot
+        // file.  The existing N-53 trie-root recomputation would catch
+        // tampered entries, but only AFTER the full restore loop — by
+        // which time an attacker-planted file with 10^9 entries has
+        // already OOM'd the node.  Reject early on entry counts.
+        validate_snapshot_bounds(&snapshot)?;
         Ok(Some(snapshot))
     }
+}
+
+/// Enforce per-Vec entry-count bounds on a freshly-deserialized snapshot.
+/// Called by `load_latest_snapshot` before any downstream iteration.
+fn validate_snapshot_bounds(snapshot: &StateSnapshot) -> std::io::Result<()> {
+    macro_rules! check {
+        ($field:expr, $name:expr, $max:expr) => {
+            if $field.len() > $max {
+                return Err(std::io::Error::other(format!(
+                    "Snapshot {} has {} entries (max {})",
+                    $name,
+                    $field.len(),
+                    $max
+                )));
+            }
+        };
+    }
+    check!(
+        snapshot.trie_entries,
+        "trie_entries",
+        MAX_PERSISTED_TRIE_ENTRIES
+    );
+    check!(
+        snapshot.agent_nonces,
+        "agent_nonces",
+        MAX_PERSISTED_AGENT_NONCES
+    );
+    check!(snapshot.balances, "balances", MAX_PERSISTED_BALANCES);
+    check!(
+        snapshot.slashing_events,
+        "slashing_events",
+        MAX_PERSISTED_SLASHING_EVENTS
+    );
+    check!(
+        snapshot.slashing_stakes,
+        "slashing_stakes",
+        MAX_PERSISTED_SLASHING_STAKES
+    );
+    check!(
+        snapshot.slashing_removed,
+        "slashing_removed",
+        MAX_PERSISTED_SLASHING_REMOVED
+    );
+    check!(
+        snapshot.slashing_absence,
+        "slashing_absence",
+        MAX_PERSISTED_SLASHING_ABSENCE
+    );
+    check!(
+        snapshot.equivocation_records,
+        "equivocation_records",
+        MAX_PERSISTED_EQUIVOCATION_RECORDS
+    );
+    check!(
+        snapshot.safety_certificates,
+        "safety_certificates",
+        MAX_PERSISTED_SAFETY_CERTIFICATES
+    );
+    check!(
+        snapshot.validator_set,
+        "validator_set",
+        MAX_PERSISTED_VALIDATOR_SET
+    );
+    check!(snapshot.proposals, "proposals", MAX_PERSISTED_PROPOSALS);
+    Ok(())
 }
 
 /// Legacy validator-key masking retained only for backward-compatible reads.
@@ -1157,6 +1283,123 @@ mod tests {
         // Rotate again — nothing to remove.
         let removed = store.rotate_snapshots(2).unwrap();
         assert_eq!(removed, 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-61: Persisted-file entry-count caps.
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_snapshot_rejects_oversized_trie_entries() {
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_oversized_snapshot_{}", std::process::id()));
+        fs::create_dir_all(dir.join("state")).unwrap();
+        // Write a JSON snapshot with trie_entries.len() > cap.
+        // We don't actually allocate cap+1 entries; we construct a small
+        // snapshot and call `validate_snapshot_bounds` directly.
+        let mut snap = StateSnapshot {
+            height: 0,
+            state_root: [0u8; 32],
+            trie_entries: Vec::new(),
+            agent_nonces: Vec::new(),
+            balances: Vec::new(),
+            treasury_pending_raw: 0,
+            treasury_collected_raw: 0,
+            treasury_distributed_raw: 0,
+            treasury_burned_raw: 0,
+            treasury_epoch: 0,
+            finalized_height: 0,
+            slashing_events: Vec::new(),
+            slashing_stakes: Vec::new(),
+            slashing_removed: Vec::new(),
+            slashing_absence: Vec::new(),
+            equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
+            validator_set: Vec::new(),
+            governance_limits: Default::default(),
+            finality_config: Default::default(),
+            finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+            proposals: Vec::new(),
+        };
+        // Simulate a malicious file with trie_entries above cap.
+        snap.trie_entries = vec![(vec![0u8; 4], vec![0u8; 4]); MAX_PERSISTED_TRIE_ENTRIES + 1];
+        let err = validate_snapshot_bounds(&snap).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("trie_entries") && msg.contains("max"),
+            "expected trie_entries-cap error, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_snapshot_rejects_oversized_equivocation_records() {
+        use sccgub_consensus::protocol::{EquivocationProof, VoteType};
+
+        let mut snap = StateSnapshot {
+            height: 0,
+            state_root: [0u8; 32],
+            trie_entries: Vec::new(),
+            agent_nonces: Vec::new(),
+            balances: Vec::new(),
+            treasury_pending_raw: 0,
+            treasury_collected_raw: 0,
+            treasury_distributed_raw: 0,
+            treasury_burned_raw: 0,
+            treasury_epoch: 0,
+            finalized_height: 0,
+            slashing_events: Vec::new(),
+            slashing_stakes: Vec::new(),
+            slashing_removed: Vec::new(),
+            slashing_absence: Vec::new(),
+            equivocation_records: Vec::new(),
+            safety_certificates: Vec::new(),
+            validator_set: Vec::new(),
+            governance_limits: Default::default(),
+            finality_config: Default::default(),
+            finality_mode: sccgub_types::governance::FinalityMode::Deterministic,
+            proposals: Vec::new(),
+        };
+        let one_record = (
+            EquivocationProof {
+                validator_id: [0u8; 32],
+                height: 0,
+                round: 0,
+                vote_type: VoteType::Prevote,
+                block_hash_a: [0u8; 32],
+                block_hash_b: [0u8; 32],
+            },
+            0,
+        );
+        snap.equivocation_records = vec![one_record; MAX_PERSISTED_EQUIVOCATION_RECORDS + 1];
+        let err = validate_snapshot_bounds(&snap).unwrap_err();
+        assert!(err.to_string().contains("equivocation_records"));
+    }
+
+    #[test]
+    fn test_load_consensus_state_rejects_oversized_map() {
+        // Write a consensus_rounds.json with more entries than the cap,
+        // then verify load_consensus_state rejects it.
+        let dir =
+            std::env::temp_dir().join(format!("sccgub_oversized_consensus_{}", std::process::id()));
+        fs::create_dir_all(dir.join("blocks")).unwrap();
+        fs::create_dir_all(dir.join("state")).unwrap();
+        let store = ChainStore::new(&dir).unwrap();
+
+        // Build a JSON object with cap + 1 numeric keys.
+        let mut map = serde_json::Map::new();
+        for i in 0..(MAX_PERSISTED_CONSENSUS_ROUNDS + 1) {
+            map.insert(i.to_string(), serde_json::Value::Null);
+        }
+        let json = serde_json::to_string(&map).unwrap();
+        fs::write(dir.join("consensus_rounds.json"), json).unwrap();
+
+        let err = store.load_consensus_state().unwrap_err();
+        assert!(err.to_string().contains("consensus_rounds"));
 
         let _ = fs::remove_dir_all(&dir);
     }
