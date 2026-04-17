@@ -173,6 +173,12 @@ impl SlashingEngine {
             },
         };
         self.events.push(event.clone());
+
+        // Remove if stake drops to zero or below (matches slash_double_sign behavior).
+        if new_stake.raw() <= 0 {
+            self.removed.push(validator);
+        }
+
         Ok(event)
     }
 
@@ -354,5 +360,43 @@ mod tests {
         let event = engine.slash_double_sign(proof, 1).unwrap();
         assert_eq!(event.penalty, TensionValue::from_integer(500));
         assert!(engine.is_removed(&validator));
+    }
+
+    #[test]
+    fn test_divergence_removes_validator_at_zero_stake() {
+        let mut engine = SlashingEngine::new(SlashingConfig {
+            divergence_penalty_pct: 100, // 100% slash
+            ..Default::default()
+        });
+        let validator = [1u8; 32];
+        engine.set_stake(validator, TensionValue::from_integer(100));
+
+        let event = engine
+            .slash_divergence(validator, [2u8; 32], [3u8; 32], 1)
+            .unwrap();
+        assert_eq!(event.penalty, TensionValue::from_integer(100));
+        assert!(
+            engine.is_removed(&validator),
+            "validator with zero stake after divergence should be removed"
+        );
+    }
+
+    #[test]
+    fn test_divergence_does_not_remove_if_stake_remains() {
+        let mut engine = SlashingEngine::new(SlashingConfig {
+            divergence_penalty_pct: 10, // 10% slash
+            ..Default::default()
+        });
+        let validator = [1u8; 32];
+        engine.set_stake(validator, TensionValue::from_integer(1000));
+
+        engine
+            .slash_divergence(validator, [2u8; 32], [3u8; 32], 1)
+            .unwrap();
+        assert!(
+            !engine.is_removed(&validator),
+            "validator with remaining stake should not be removed"
+        );
+        assert_eq!(engine.stakes[&validator], TensionValue::from_integer(900));
     }
 }

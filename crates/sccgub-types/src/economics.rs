@@ -121,4 +121,35 @@ mod tests {
         econ.reset_epoch();
         assert_eq!(econ.fees_collected, TensionValue::ZERO);
     }
+
+    #[test]
+    fn test_effective_fee_zero_budget_returns_base_fee() {
+        let econ = EconomicState::default();
+        let fee = econ.effective_fee(TensionValue::from_integer(50), TensionValue::ZERO);
+        assert_eq!(
+            fee, econ.base_fee,
+            "zero budget should return base_fee (div-by-zero guard)"
+        );
+    }
+
+    #[test]
+    fn test_effective_fee_negative_budget_returns_base_fee() {
+        let econ = EconomicState::default();
+        let fee = econ.effective_fee(
+            TensionValue::from_integer(50),
+            TensionValue::from_integer(-10),
+        );
+        assert_eq!(fee, econ.base_fee, "negative budget should return base_fee");
+    }
+
+    #[test]
+    fn test_distribute_reward_accumulates() {
+        let mut econ = EconomicState::default();
+        econ.distribute_reward(TensionValue::from_integer(10));
+        econ.distribute_reward(TensionValue::from_integer(7));
+        assert_eq!(econ.rewards_distributed, TensionValue::from_integer(17));
+
+        econ.reset_epoch();
+        assert_eq!(econ.rewards_distributed, TensionValue::ZERO);
+    }
 }

@@ -469,4 +469,71 @@ mod tests {
         assert_eq!(SettlementFinality::Economic.required_depth(), 2);
         assert_eq!(SettlementFinality::Legal.required_depth(), 6);
     }
+
+    #[test]
+    fn test_duplicate_voting_rejected() {
+        let mut registry = ProposalRegistry::default();
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Meaning,
+                ProposalKind::AddNorm {
+                    name: "X".into(),
+                    description: "Y".into(),
+                    initial_fitness: TensionValue::from_integer(1),
+                    enforcement_cost: TensionValue::ZERO,
+                },
+                100,
+                10,
+            )
+            .unwrap();
+
+        // First vote succeeds.
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 102)
+            .unwrap();
+        // Same voter again → should be rejected.
+        let result = registry.vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 103);
+        assert!(result.is_err(), "duplicate vote should fail");
+        assert!(result.unwrap_err().contains("already voted"));
+    }
+
+    #[test]
+    fn test_deactivate_norm_proposal_lifecycle() {
+        let mut registry = ProposalRegistry::default();
+        let norm_id = [42u8; 32];
+
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Meaning,
+                ProposalKind::DeactivateNorm { norm_id },
+                100,
+                5,
+            )
+            .unwrap();
+
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Meaning, true, 102)
+            .unwrap();
+
+        let accepted = registry.finalize(106);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].status, ProposalStatus::Timelocked);
+
+        // Activate after timelock.
+        let result = registry.activate(&id, 106 + timelocks::ORDINARY);
+        assert!(result.is_ok());
+        // DeactivateNorm does not produce a norm, so result is Ok(None).
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_vote_on_nonexistent_proposal_fails() {
+        let mut registry = ProposalRegistry::default();
+        let fake_id = [99u8; 32];
+        let result = registry.vote(&fake_id, [1u8; 32], PrecedenceLevel::Meaning, true, 10);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
 }
