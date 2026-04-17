@@ -2118,4 +2118,89 @@ mod tests {
         let json = response_json(response).await;
         assert_eq!(json["data"]["count"], Value::from(1));
     }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-60: Response-body caps on unbounded-list endpoints.
+    // ───────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_v1_finality_certificates_response_is_capped() {
+        use sccgub_consensus::safety::SafetyCertificate;
+
+        let state = test_state();
+        // Populate with 2× MAX_API_RESPONSE_ENTRIES distinct certs.
+        {
+            let mut app = state.write().await;
+            let count = crate::handlers::MAX_API_RESPONSE_ENTRIES * 2;
+            for i in 0..count {
+                app.safety_certificates.push(SafetyCertificate {
+                    chain_id: [0u8; 32],
+                    epoch: 0,
+                    height: i as u64,
+                    block_hash: [(i % 251) as u8; 32],
+                    round: 0,
+                    precommit_signatures: vec![],
+                    quorum: 1,
+                    validator_count: 1,
+                });
+            }
+        }
+        let app = build_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/finality/certificates")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        // count reports the chain-side total; certificates array is capped.
+        assert_eq!(
+            json["data"]["count"].as_u64().unwrap(),
+            (crate::handlers::MAX_API_RESPONSE_ENTRIES * 2) as u64
+        );
+        let certs = json["data"]["certificates"].as_array().unwrap();
+        assert_eq!(certs.len(), crate::handlers::MAX_API_RESPONSE_ENTRIES);
+    }
+
+    #[tokio::test]
+    async fn test_v1_slashing_evidence_response_is_capped() {
+        use sccgub_consensus::protocol::{EquivocationProof, VoteType};
+
+        let state = test_state();
+        {
+            let mut app = state.write().await;
+            let count = crate::handlers::MAX_API_RESPONSE_ENTRIES + 200;
+            for i in 0..count {
+                app.equivocation_records.push((
+                    EquivocationProof {
+                        validator_id: [1u8; 32],
+                        height: i as u64,
+                        round: 0,
+                        vote_type: VoteType::Prevote,
+                        block_hash_a: [2u8; 32],
+                        block_hash_b: [3u8; 32],
+                    },
+                    0,
+                ));
+            }
+        }
+        let app = build_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/slashing/evidence")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        let evidence = json["data"]["evidence"].as_array().unwrap();
+        assert_eq!(evidence.len(), crate::handlers::MAX_API_RESPONSE_ENTRIES);
+    }
 }
