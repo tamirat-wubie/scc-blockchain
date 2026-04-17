@@ -140,6 +140,13 @@ pub fn validate_cpog(
                 return CpogResult::Invalid { errors };
             }
         };
+        // Validate nonces atomically BEFORE mutating the speculative state.
+        // Any failure surfaces as a CPoG error and stops replay cleanly.
+        if let Err(e) = speculative.validate_nonces(&block.body.transitions) {
+            errors.push(format!("Nonce violation during replay: {}", e));
+            return CpogResult::Invalid { errors };
+        }
+
         let gas_price = EconomicState::default().effective_fee(
             state.state.tension_field.total,
             state.state.tension_field.budget.current_budget,
@@ -163,11 +170,6 @@ pub fn validate_cpog(
             &mut spec_balances,
             &block.body.transitions,
         );
-        for tx in &block.body.transitions {
-            if let Err(e) = speculative.check_nonce(&tx.actor.agent_id, tx.nonce) {
-                errors.push(format!("Nonce violation during replay: {}", e));
-            }
-        }
 
         if block.header.height.is_multiple_of(100) {
             spec_treasury.advance_epoch();

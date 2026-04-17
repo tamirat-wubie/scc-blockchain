@@ -269,6 +269,9 @@ state.set_height(0)
 
 for each block in chain[1..]:
     reject if block.header.version != chain_version
+    # Atomically validate nonces BEFORE any state/balance mutation.
+    # On failure, agent_nonces is rolled back to its pre-block snapshot.
+    state.validate_nonces(block.body.transitions)
     gas_price = effective_fee(T_prior, T_budget)
     apply_block_economics(
         state,
@@ -282,8 +285,6 @@ for each block in chain[1..]:
         block_reward
     )
     apply_block_transitions(state, balances, block.body.transitions)
-    for each tx in block.body.transitions:
-        state.check_nonce(tx.actor.agent_id, tx.nonce)
     state.set_height(block.header.height)
 ```
 
