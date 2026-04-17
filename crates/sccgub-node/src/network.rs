@@ -34,6 +34,16 @@ const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
 const CONNECT_BACKOFF_MS: u64 = 5_000;
 const EMPTY_HASH: Hash = [0u8; 32];
+/// Maximum entries tracked in the per-peer rate-limit and bandwidth maps.
+///
+/// N-57: Without a cap an attacker cycling through synthetic peer addresses
+/// (spoofed source addrs, short-lived connections) can grow these maps
+/// unboundedly.  When capacity is reached we first evict entries whose
+/// rate-limit window is fully stale; if none are stale we drop the entry
+/// with the oldest `window_start_ms`, which is equivalent to LRU.
+const MAX_RATE_LIMIT_ENTRIES: usize = 4_096;
+const MAX_BANDWIDTH_ENTRIES: usize = 4_096;
+
 /// Maximum clock skew (ms) accepted on inbound Hello messages.
 ///
 /// N-56: Hello messages carry a signed `timestamp_ms` field.  Messages
@@ -1443,6 +1453,23 @@ impl NetworkRuntime {
     async fn check_rate_limit(&self, peer_addr: &str, priority: bool) -> Result<(), String> {
         let now = now_ms();
         let mut limits = self.rate_limits.lock().await;
+        // N-57: Evict stale / oldest entries before inserting a new one to
+        // prevent unbounded HashMap growth from synthetic peer addresses.
+        if !limits.contains_key(peer_addr) && limits.len() >= MAX_RATE_LIMIT_ENTRIES {
+            let window = self.config.inbound_msg_window_ms;
+            limits.retain(|_, v| now.saturating_sub(v.window_start_ms) < window.saturating_mul(2));
+            while limits.len() >= MAX_RATE_LIMIT_ENTRIES {
+                if let Some(victim_key) = limits
+                    .iter()
+                    .min_by_key(|(_, v)| v.window_start_ms)
+                    .map(|(k, _)| k.clone())
+                {
+                    limits.remove(&victim_key);
+                } else {
+                    break;
+                }
+            }
+        }
         let entry = limits.entry(peer_addr.to_string()).or_insert(RateState {
             window_start_ms: now,
             count: 0,
@@ -1498,6 +1525,22 @@ impl NetworkRuntime {
     async fn check_bandwidth_limit(&self, peer_addr: &str) -> Result<(), String> {
         let now = now_ms();
         let mut usage = self.bandwidth.lock().await;
+        // N-57: Evict stale / oldest entries before inserting a new one.
+        if !usage.contains_key(peer_addr) && usage.len() >= MAX_BANDWIDTH_ENTRIES {
+            let window = self.config.bandwidth_window_ms;
+            usage.retain(|_, v| now.saturating_sub(v.window_start_ms) < window.saturating_mul(2));
+            while usage.len() >= MAX_BANDWIDTH_ENTRIES {
+                if let Some(victim_key) = usage
+                    .iter()
+                    .min_by_key(|(_, v)| v.window_start_ms)
+                    .map(|(k, _)| k.clone())
+                {
+                    usage.remove(&victim_key);
+                } else {
+                    break;
+                }
+            }
+        }
         let entry = usage
             .entry(peer_addr.to_string())
             .or_insert(BandwidthState {
@@ -2277,6 +2320,18 @@ async fn record_bandwidth(
     outbound: u64,
 ) {
     let mut usage = usage.lock().await;
+    // N-57: Evict oldest entry if the map is at capacity and peer is new.
+    // Mirrors the eviction in check_bandwidth_limit so both insertion paths
+    // respect the same cap.
+    if !usage.contains_key(peer_addr) && usage.len() >= MAX_BANDWIDTH_ENTRIES {
+        if let Some(victim_key) = usage
+            .iter()
+            .min_by_key(|(_, v)| v.window_start_ms)
+            .map(|(k, _)| k.clone())
+        {
+            usage.remove(&victim_key);
+        }
+    }
     let entry = usage
         .entry(peer_addr.to_string())
         .or_insert(BandwidthState {
@@ -6238,5 +6293,53 @@ mod tests {
                 e
             );
         }
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-57: rate_limits + bandwidth HashMaps bounded.
+    // ───────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_rate_limits_hashmap_bounded_under_synthetic_peers() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        // Exercise check_rate_limit with more distinct peer addrs than the cap.
+        for i in 0..(MAX_RATE_LIMIT_ENTRIES + 500) {
+            let addr = format!("10.0.{}.{}:{}", (i / 256) % 256, i % 256, 1000 + i);
+            // Ignore rate-limit outcome; we only care about map size.
+            let _ = runtime.check_rate_limit(&addr, false).await;
+        }
+
+        let len = runtime.rate_limits.lock().await.len();
+        assert!(
+            len <= MAX_RATE_LIMIT_ENTRIES,
+            "rate_limits grew past cap: {} > {}",
+            len,
+            MAX_RATE_LIMIT_ENTRIES
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bandwidth_hashmap_bounded_under_synthetic_peers() {
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        for i in 0..(MAX_BANDWIDTH_ENTRIES + 500) {
+            let addr = format!("192.0.2.{}:{}", i % 256, 30000 + i);
+            record_bandwidth(&runtime.bandwidth, &addr, 1, 1).await;
+        }
+
+        let len = runtime.bandwidth.lock().await.len();
+        assert!(
+            len <= MAX_BANDWIDTH_ENTRIES,
+            "bandwidth grew past cap: {} > {}",
+            len,
+            MAX_BANDWIDTH_ENTRIES
+        );
     }
 }

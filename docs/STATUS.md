@@ -17,7 +17,7 @@ traversal and produce a causal receipt that proves what changed and why.
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
 - REST API with 22 versioned endpoints for state, blocks, receipts, governance, and finality.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 906 tests, CI green on Ubuntu + Windows + security audit.
+- Hardening posture: 911 tests, CI green on Ubuntu + Windows + security audit.
 - Minimal p2p networking: peer registry, hello/heartbeat, block sync, tx gossip, vote propagation, and per-peer
   limits (no hardened peer discovery or deeper DoS protection).
 - Persistence: block log and periodic snapshots; state is replay-authoritative by default on restart, with optional redb-backed startup-authoritative mode.

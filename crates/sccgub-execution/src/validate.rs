@@ -134,8 +134,35 @@ pub fn admit_check_structural(
         return Err("WHBinding: 'what_declared' is empty".into());
     }
 
+    // N-58: Free-form string fields previously only checked for non-emptiness;
+    // an attacker could stuff hundreds of MB into `what_declared` or
+    // `declared_purpose` and have it accepted into the mempool and committed
+    // into every block receipt.  Cap at MAX_FREEFORM_STRING_LEN.
+    if tx.wh_binding_intent.what_declared.len() > MAX_FREEFORM_STRING_LEN {
+        return Err(format!(
+            "WHBinding: 'what_declared' {} bytes exceeds max {}",
+            tx.wh_binding_intent.what_declared.len(),
+            MAX_FREEFORM_STRING_LEN
+        ));
+    }
+    if tx.intent.declared_purpose.len() > MAX_FREEFORM_STRING_LEN {
+        return Err(format!(
+            "Intent: 'declared_purpose' {} bytes exceeds max {}",
+            tx.intent.declared_purpose.len(),
+            MAX_FREEFORM_STRING_LEN
+        ));
+    }
+
     Ok(())
 }
+
+/// Maximum byte length of free-form descriptive string fields on a transition.
+///
+/// N-58: Applies to `WHBindingIntent::what_declared` and
+/// `TransitionIntent::declared_purpose`.  4 KiB is generous for any
+/// legitimate human-authored description and cheap to store in receipts;
+/// anything beyond that is almost certainly adversarial bloat.
+pub const MAX_FREEFORM_STRING_LEN: usize = 4_096;
 
 /// Validate a single transition before inclusion in a block.
 /// Checks: WHBinding, signature, agent_id binding, nonce, size limits, Phi traversal.
@@ -816,6 +843,51 @@ mod tests {
         let state = ManagedWorldState::new();
         let err = admit_check(&tx, &state).unwrap_err();
         assert!(err.contains("what_declared"));
+    }
+
+    // N-58: Free-form string length caps.
+
+    #[test]
+    fn test_admit_check_oversized_what_declared_rejected() {
+        let mut tx = make_signed_tx();
+        tx.wh_binding_intent.what_declared = "A".repeat(MAX_FREEFORM_STRING_LEN + 1);
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(
+            err.contains("what_declared") && err.contains("exceeds max"),
+            "expected length rejection, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_admit_check_oversized_declared_purpose_rejected() {
+        let mut tx = make_signed_tx();
+        tx.intent.declared_purpose = "B".repeat(MAX_FREEFORM_STRING_LEN + 1);
+        let state = ManagedWorldState::new();
+        let err = admit_check(&tx, &state).unwrap_err();
+        assert!(
+            err.contains("declared_purpose") && err.contains("exceeds max"),
+            "expected length rejection, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_admit_check_max_length_strings_accepted() {
+        // Strings exactly at the cap must be accepted.
+        let mut tx = make_signed_tx();
+        tx.wh_binding_intent.what_declared = "C".repeat(MAX_FREEFORM_STRING_LEN);
+        tx.intent.declared_purpose = "D".repeat(MAX_FREEFORM_STRING_LEN);
+        // Re-sign because we changed the tx.
+        let canonical = canonical_tx_bytes(&tx);
+        tx.tx_id = sccgub_crypto::hash::blake3_hash(&canonical);
+        // NOTE: admit_check does not verify signatures, so this tx body is
+        // sufficient to exercise the length gate.
+        let state = ManagedWorldState::new();
+        // Nonce check depends on state — fresh state expects nonce 1.
+        tx.nonce = 1;
+        admit_check(&tx, &state).expect("strings at cap must be accepted");
     }
 
     // --- seal_receipt_post_state tests ---
