@@ -34,6 +34,17 @@ const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
 const CONNECT_BACKOFF_MS: u64 = 5_000;
 const EMPTY_HASH: Hash = [0u8; 32];
+/// Maximum concurrent pending block proposals to keep in memory.
+///
+/// N-54: Without this cap, a validator could flood the network with
+/// cryptographically valid but semantically unique block proposals — each
+/// passing signature / proposer / candidate-body checks — and every one
+/// would land in `pending_blocks`.  At ~tens of KB per block, 100 k
+/// proposals exhaust ~1 GB of RAM and also amplify disk I/O via
+/// `persist_consensus_state()`.  A value of 64 is ample for all realistic
+/// BFT scenarios (max_rounds × validator_count), while making the attack
+/// an order of magnitude more expensive.
+const MAX_PENDING_BLOCKS: usize = 64;
 
 pub struct NetworkRuntime {
     chain: Arc<RwLock<Chain>>,
@@ -928,10 +939,21 @@ impl NetworkRuntime {
             let chain = self.chain.read().await;
             chain.validate_candidate_block_for_round(&block, Some(round))?;
         }
-        self.pending_blocks
-            .lock()
-            .await
-            .insert(block.header.block_id, block.clone());
+        {
+            let mut pending = self.pending_blocks.lock().await;
+            // N-54: Cap the pending-blocks buffer so a malicious validator
+            // cannot exhaust memory with a stream of cryptographically valid
+            // but unique proposals.  Duplicate block_ids still overwrite —
+            // only genuinely new proposals count against the budget.
+            if !pending.contains_key(&block.header.block_id) && pending.len() >= MAX_PENDING_BLOCKS
+            {
+                return Err(format!(
+                    "Pending block buffer full ({} blocks); proposal rejected",
+                    MAX_PENDING_BLOCKS
+                ));
+            }
+            pending.insert(block.header.block_id, block.clone());
+        }
 
         let epoch = self.current_epoch().await;
         let height = block.header.height;
@@ -5834,5 +5856,141 @@ mod tests {
             .unwrap();
         // Mempool admitted the valid tx.
         assert_eq!(chain.read().await.mempool.pending_snapshot().len(), 1);
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // N-54: pending_blocks buffer cap (memory DoS prevention).
+    // ───────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_block_proposal_rejected_when_pending_blocks_full() {
+        // Build a legitimate signed proposal first (so we know the check
+        // happens AFTER signature + proposer gates — i.e., the budget guard
+        // does not admit a structurally invalid block).
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk)];
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key.clone();
+            guard.set_validator_set(validators);
+        }
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        let block = {
+            chain
+                .read()
+                .await
+                .build_candidate_block_unchecked()
+                .unwrap()
+        };
+        let proposal = signed_block_proposal(
+            &key,
+            BlockProposalMessage {
+                proposer_id: pk,
+                block: block.clone(),
+                round: 0,
+                signature: Vec::new(),
+            },
+        );
+
+        // Artificially saturate pending_blocks up to the cap with bogus
+        // placeholder entries.  The next legitimate proposal must be
+        // rejected with a "buffer full" error because its block_id is new.
+        {
+            let mut pending = runtime.pending_blocks.lock().await;
+            for i in 0..MAX_PENDING_BLOCKS {
+                let mut placeholder = block.clone();
+                // Force a unique block_id so entries do not overwrite.
+                placeholder.header.block_id = [i as u8; 32];
+                pending.insert(placeholder.header.block_id, placeholder);
+            }
+            assert_eq!(pending.len(), MAX_PENDING_BLOCKS);
+        }
+
+        let err = runtime
+            .handle_block_proposal(proposal)
+            .await
+            .expect_err("proposal must be rejected when pending_blocks is full");
+        assert!(
+            err.contains("Pending block buffer full"),
+            "expected buffer-full rejection, got: {}",
+            err
+        );
+
+        // Buffer size must not have grown past the cap.
+        assert_eq!(
+            runtime.pending_blocks.lock().await.len(),
+            MAX_PENDING_BLOCKS
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_block_id_does_not_count_against_cap() {
+        // A re-broadcast of an already-pending proposal (same block_id) must
+        // still be accepted even when the buffer is at capacity — otherwise
+        // legitimate peer gossip would be rejected on a flooded buffer.
+        let key = generate_keypair();
+        let pk = *key.verifying_key().as_bytes();
+        let mut config = crate::config::NodeConfig::default().network;
+        config.validators = vec![hex::encode(pk)];
+        let validators = NetworkRuntime::validators_from_config(&config).unwrap();
+
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        {
+            let mut guard = chain.write().await;
+            guard.governance_limits.max_consecutive_proposals = 100;
+            guard.validator_key = key.clone();
+            guard.set_validator_set(validators);
+        }
+        let runtime = NetworkRuntime::new(chain.clone(), config).await.unwrap();
+
+        let block = {
+            chain
+                .read()
+                .await
+                .build_candidate_block_unchecked()
+                .unwrap()
+        };
+
+        // Pre-populate pending_blocks WITH the real block's id plus
+        // (MAX_PENDING_BLOCKS - 1) placeholders so the buffer is "full" but
+        // the real block_id is already present.
+        {
+            let mut pending = runtime.pending_blocks.lock().await;
+            pending.insert(block.header.block_id, block.clone());
+            for i in 0..(MAX_PENDING_BLOCKS - 1) {
+                let mut placeholder = block.clone();
+                placeholder.header.block_id = [(i as u8).wrapping_add(200); 32];
+                pending.insert(placeholder.header.block_id, placeholder);
+            }
+            assert_eq!(pending.len(), MAX_PENDING_BLOCKS);
+        }
+
+        let proposal = signed_block_proposal(
+            &key,
+            BlockProposalMessage {
+                proposer_id: pk,
+                block,
+                round: 0,
+                signature: Vec::new(),
+            },
+        );
+
+        // Duplicate block_id — must NOT be rejected by the budget guard.
+        // (It may still be rejected by downstream consensus logic, but the
+        // error must not be "Pending block buffer full".)
+        if let Err(e) = runtime.handle_block_proposal(proposal).await {
+            assert!(
+                !e.contains("Pending block buffer full"),
+                "duplicate block_id must not be rejected by the budget guard, got: {}",
+                e
+            );
+        }
     }
 }
