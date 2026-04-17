@@ -35,6 +35,13 @@ pub enum NetworkMessage {
 }
 
 /// Hello message — sent on connection to introduce a validator.
+///
+/// N-56: `timestamp_ms` is signed into the canonical bytes and enforced
+/// within a staleness window by the receiver, preventing Hello-replay
+/// attacks that would otherwise let an attacker hijack a victim
+/// validator's entry in the peer registry by replaying a previously
+/// captured valid Hello.  Older nodes that send `timestamp_ms = 0`
+/// (via `#[serde(default)]`) are rejected by the staleness check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelloMessage {
     pub validator_id: Hash,
@@ -46,6 +53,9 @@ pub struct HelloMessage {
     pub epoch: u64,
     #[serde(default)]
     pub known_peers: Vec<String>,
+    /// Unix time in milliseconds when this Hello was constructed.
+    #[serde(default)]
+    pub timestamp_ms: u64,
     pub signature: Vec<u8>,
 }
 
@@ -154,6 +164,7 @@ mod tests {
             protocol_version: 1,
             epoch: 0,
             known_peers: vec!["127.0.0.1:9000".to_string()],
+            timestamp_ms: 1_700_000_000_000,
             signature: vec![0u8; 64],
         });
 
