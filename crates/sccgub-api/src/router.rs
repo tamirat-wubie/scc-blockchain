@@ -362,6 +362,7 @@ mod tests {
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
                 validator_set_changes: None,
+                equivocation_evidence: None,
             },
             receipts: vec![receipt],
             causal_delta: CausalGraphDelta::default(),

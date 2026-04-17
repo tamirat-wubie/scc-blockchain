@@ -8,7 +8,7 @@ use crate::receipt::CausalReceipt;
 use crate::tension::TensionValue;
 use crate::timestamp::CausalTimestamp;
 use crate::transition::SymbolicTransition;
-use crate::validator_set::ValidatorSetChange;
+use crate::validator_set::{EquivocationEvidence, ValidatorSetChange};
 use crate::{ConstraintId, Hash, MerkleRoot, ZERO_HASH};
 
 pub const LEGACY_BLOCK_VERSION: u32 = 1;
@@ -101,6 +101,12 @@ pub struct BlockBody {
     /// `None` emits zero bytes under bincode, preserving v2 canonical encoding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validator_set_changes: Option<Vec<ValidatorSetChange>>,
+    /// Patch-05 §22: `EquivocationEvidence` records admitted in this block.
+    /// Each record pairs with a synthetic `ValidatorSetChange::Remove` in
+    /// `validator_set_changes` (§22.4 INV-SLASHING-LIVENESS). `None` for
+    /// v3 and earlier; same Option-discipline as other v4 fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equivocation_evidence: Option<Vec<EquivocationEvidence>>,
 }
 
 impl BlockHeader {
@@ -250,6 +256,7 @@ mod tests {
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
                 validator_set_changes: None,
+                equivocation_evidence: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

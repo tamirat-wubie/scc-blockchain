@@ -521,67 +521,136 @@ fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
         }
     }
 
-    // Patch-04 §15.5: validate ValidatorSetChange events against the
-    // CURRENT active set at H_admit (not the post-change set). Quorum,
-    // signatures, and change_id consistency are all checked here.
-    if let Some(changes) = block.body.validator_set_changes.as_deref() {
-        if !changes.is_empty() {
-            use sccgub_state::validator_set_state::validator_set_from_trie;
-            let current_set = match validator_set_from_trie(state) {
-                Ok(Some(s)) => s,
-                Ok(None) => {
-                    return PhiPhaseResult {
-                        phase: PhiPhase::Feedback,
-                        passed: false,
-                        details: "Block contains ValidatorSetChange events but \
-                             system/validator_set is not initialized"
-                            .into(),
-                    };
-                }
-                Err(e) => {
-                    return PhiPhaseResult {
-                        phase: PhiPhase::Feedback,
-                        passed: false,
-                        details: format!("ValidatorSet unreadable: {}", e),
-                    };
-                }
+    // Patch-04 §15.5 + Patch-05 §22: validate ValidatorSetChange events
+    // and EquivocationEvidence records against the CURRENT active set at
+    // H_admit (not the post-change set).
+    //
+    // Two validation branches:
+    //
+    // - Proposer-sourced changes (non-empty quorum_signatures): §15.5
+    //   validation — quorum tally, change_id consistency, signer
+    //   membership.
+    //
+    // - Evidence-sourced Remove events (empty quorum_signatures): §22.2
+    //   evidence-admission — cross-checked against matching
+    //   EquivocationEvidence in the same block.
+    //
+    // INV-SLASHING-LIVENESS (§22.4): every admitted EquivocationEvidence
+    // produces a matching synthetic Remove.
+    let has_changes = block
+        .body
+        .validator_set_changes
+        .as_ref()
+        .is_some_and(|v| !v.is_empty());
+    let has_evidence = block
+        .body
+        .equivocation_evidence
+        .as_ref()
+        .is_some_and(|v| !v.is_empty());
+    if has_changes || has_evidence {
+        use sccgub_state::validator_set_state::validator_set_from_trie;
+        let current_set = match validator_set_from_trie(state) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Feedback,
+                    passed: false,
+                    details: "Block contains validator-set events or equivocation \
+                         evidence but system/validator_set is not initialized"
+                        .into(),
+                };
+            }
+            Err(e) => {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Feedback,
+                    passed: false,
+                    details: format!("ValidatorSet unreadable: {}", e),
+                };
+            }
+        };
+
+        let changes_slice: &[sccgub_types::validator_set::ValidatorSetChange] =
+            block.body.validator_set_changes.as_deref().unwrap_or(&[]);
+        let evidence_slice: &[sccgub_types::validator_set::EquivocationEvidence] =
+            block.body.equivocation_evidence.as_deref().unwrap_or(&[]);
+
+        // §17.2: enforce max_validator_set_changes_per_block_param
+        // (caller's ConsensusParams, which is separately ceiling-bound
+        //  at phase 10 via §17.4).
+        let max_changes = state
+            .consensus_params
+            .max_validator_set_changes_per_block_param as usize;
+        if changes_slice.len() > max_changes {
+            return PhiPhaseResult {
+                phase: PhiPhase::Feedback,
+                passed: false,
+                details: format!(
+                    "Block carries {} ValidatorSetChange events, \
+                     exceeds max_validator_set_changes_per_block {}",
+                    changes_slice.len(),
+                    max_changes
+                ),
             };
-            // §17.2: enforce max_validator_set_changes_per_block_param
-            // (caller's ConsensusParams, which is separately ceiling-bound
-            //  at phase 10 via §17.4).
-            let max_per_block = state
-                .consensus_params
-                .max_validator_set_changes_per_block_param as usize;
-            if changes.len() > max_per_block {
-                return PhiPhaseResult {
-                    phase: PhiPhase::Feedback,
-                    passed: false,
-                    details: format!(
-                        "Block carries {} ValidatorSetChange events, \
-                         exceeds max_validator_set_changes_per_block {}",
-                        changes.len(),
-                        max_per_block
-                    ),
-                };
-            }
-            // §15.5 activation-delay derivation needs `k` (confirmation depth).
-            // PROTOCOL.md §7 pins the default at 2. v3 does not yet expose a
-            // per-chain override via ConsensusParams; when that field lands
-            // this lookup should switch to it.
-            let confirmation_depth = 2u64;
-            let validation = crate::validator_set::validate_all_validator_set_changes(
-                changes,
-                &current_set,
-                block.header.height,
-                confirmation_depth,
-            );
-            if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = validation {
-                return PhiPhaseResult {
-                    phase: PhiPhase::Feedback,
-                    passed: false,
-                    details: format!("ValidatorSetChange rejected: {}", rej),
-                };
-            }
+        }
+
+        // Patch-05 §29: enforce max_equivocation_evidence_per_block_param.
+        let max_evidence = state
+            .consensus_params
+            .max_equivocation_evidence_per_block_param as usize;
+        if evidence_slice.len() > max_evidence {
+            return PhiPhaseResult {
+                phase: PhiPhase::Feedback,
+                passed: false,
+                details: format!(
+                    "Block carries {} EquivocationEvidence records, \
+                     exceeds max_equivocation_evidence_per_block_param {}",
+                    evidence_slice.len(),
+                    max_evidence
+                ),
+            };
+        }
+
+        // Patch-05 §24: confirmation_depth now read from ConsensusParams.
+        let confirmation_depth = state.consensus_params.confirmation_depth;
+        let delay = crate::validator_set::activation_delay(confirmation_depth);
+
+        // §22: pair evidence with synthetic Removes; reject orphans and
+        // enforce INV-SLASHING-LIVENESS.
+        let admission = crate::evidence_admission::validate_evidence_admission(
+            changes_slice,
+            evidence_slice,
+            &current_set,
+            block.header.height,
+            delay,
+        );
+        if let crate::evidence_admission::EvidenceAdmissionResult::Invalid(rej) = admission {
+            return PhiPhaseResult {
+                phase: PhiPhase::Feedback,
+                passed: false,
+                details: format!("Evidence admission rejected: {}", rej),
+            };
+        }
+
+        // Partition and validate proposer-sourced changes (non-empty
+        // quorum_signatures) via §15.5. Evidence-sourced Removes have
+        // already been validated above.
+        let proposer_sourced: Vec<sccgub_types::validator_set::ValidatorSetChange> = changes_slice
+            .iter()
+            .filter(|c| !c.quorum_signatures.is_empty())
+            .cloned()
+            .collect();
+        let validation = crate::validator_set::validate_all_validator_set_changes(
+            &proposer_sourced,
+            &current_set,
+            block.header.height,
+            confirmation_depth,
+        );
+        if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = validation {
+            return PhiPhaseResult {
+                phase: PhiPhase::Feedback,
+                passed: false,
+                details: format!("ValidatorSetChange rejected: {}", rej),
+            };
         }
     }
 
@@ -684,6 +753,7 @@ mod tests {
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
                 validator_set_changes: None,
+                equivocation_evidence: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

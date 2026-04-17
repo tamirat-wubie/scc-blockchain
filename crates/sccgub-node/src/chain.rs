@@ -2172,6 +2172,7 @@ fn build_genesis_block(
             constraint_satisfaction: vec![],
             genesis_consensus_params,
             validator_set_changes: None,
+            equivocation_evidence: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -2334,6 +2335,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             constraint_satisfaction: vec![],
             genesis_consensus_params: None,
             validator_set_changes: None,
+            equivocation_evidence: None,
         },
         receipts,
         causal_delta: CausalGraphDelta {

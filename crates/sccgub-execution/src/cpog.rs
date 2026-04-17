@@ -208,11 +208,21 @@ pub fn validate_cpog(
         if !changes.is_empty() {
             match sccgub_state::validator_set_state::validator_set_from_trie(state) {
                 Ok(Some(current_set)) => {
+                    // Patch-05 §24: confirmation_depth now read from
+                    // ConsensusParams. Only proposer-sourced changes are
+                    // §15.5-validated here; evidence-sourced Removes
+                    // (empty quorum_signatures) flow through phase 12
+                    // via evidence_admission.
+                    let proposer_sourced: Vec<_> = changes
+                        .iter()
+                        .filter(|c| !c.quorum_signatures.is_empty())
+                        .cloned()
+                        .collect();
                     let result = crate::validator_set::validate_all_validator_set_changes(
-                        changes,
+                        &proposer_sourced,
                         &current_set,
                         block.header.height,
-                        2, // PROTOCOL.md §7 default k
+                        state.consensus_params.confirmation_depth,
                     );
                     if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) = result
                     {
@@ -319,6 +329,7 @@ mod tests {
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
                 validator_set_changes: None,
+                equivocation_evidence: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),
