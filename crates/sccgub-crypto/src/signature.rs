@@ -17,6 +17,21 @@ pub fn verify(public_key: &[u8; 32], data: &[u8], signature: &[u8]) -> bool {
     vk.verify(data, &sig).is_ok()
 }
 
+/// Verify an Ed25519 signature under the strict verifier. Rejects
+/// non-canonical encodings that `verify` accepts. Used by Patch-04
+/// consensus paths (§15.5, §16.4, §18.2) to prevent signature-malleability
+/// forgery. Migration of existing consensus call sites to this stricter
+/// verifier is tracked under Patch-04 Commit 5.
+pub fn verify_strict(public_key: &[u8; 32], data: &[u8], signature: &[u8]) -> bool {
+    let Ok(vk) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let Ok(sig) = Signature::from_slice(signature) else {
+        return false;
+    };
+    vk.verify_strict(data, &sig).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
