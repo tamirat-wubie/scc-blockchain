@@ -8,6 +8,7 @@ use crate::receipt::CausalReceipt;
 use crate::tension::TensionValue;
 use crate::timestamp::CausalTimestamp;
 use crate::transition::SymbolicTransition;
+use crate::validator_set::ValidatorSetChange;
 use crate::{ConstraintId, Hash, MerkleRoot, ZERO_HASH};
 
 pub const LEGACY_BLOCK_VERSION: u32 = 1;
@@ -94,6 +95,12 @@ pub struct BlockBody {
     pub constraint_satisfaction: Vec<(ConstraintId, bool)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genesis_consensus_params: Option<Vec<u8>>,
+    /// Patch-04 §15.4: `ValidatorSetChange` events admitted in this block.
+    /// `None` for v2 blocks and v3 blocks carrying no set-change events.
+    /// Matches the existing `genesis_consensus_params` serde discipline:
+    /// `None` emits zero bytes under bincode, preserving v2 canonical encoding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator_set_changes: Option<Vec<ValidatorSetChange>>,
 }
 
 impl BlockHeader {
@@ -244,6 +251,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

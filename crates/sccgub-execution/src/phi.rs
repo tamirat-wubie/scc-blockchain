@@ -170,7 +170,7 @@ pub fn phi_check_single_tx(
             details: "Module boundaries respected".into(),
         },
 
-        // Phase 8: Execution — payload consistency.
+        // Phase 8: Execution — payload consistency + §18.5 superseded-key rejection.
         PhiPhase::Execution => {
             let payload_result = crate::payload_check::check_payload_consistency(tx);
             if let crate::payload_check::PayloadConsistency::Inconsistent { reason } =
@@ -195,6 +195,36 @@ pub fn phi_check_single_tx(
                     passed: false,
                     details: "Zero nonce".into(),
                 };
+            }
+            // Patch-04 §18.5: reject transactions signed by a key that has
+            // been rotated away. `state.state.height` is the current block
+            // height at phase-evaluation time.
+            match crate::key_rotation_check::check_tx_superseded_key(
+                tx,
+                state,
+                state.state.height,
+            ) {
+                crate::key_rotation_check::SupersededKeyCheck::Ok => {}
+                crate::key_rotation_check::SupersededKeyCheck::Superseded {
+                    active_key, ..
+                } => {
+                    return PhiPhaseResult {
+                        phase,
+                        passed: false,
+                        details: format!(
+                            "Superseded signing key: active key at height {} is {}",
+                            state.state.height,
+                            hex::encode(active_key)
+                        ),
+                    };
+                }
+                crate::key_rotation_check::SupersededKeyCheck::StorageError(e) => {
+                    return PhiPhaseResult {
+                        phase,
+                        passed: false,
+                        details: format!("Key rotation registry unreadable: {}", e),
+                    };
+                }
             }
             PhiPhaseResult {
                 phase,
@@ -285,7 +315,7 @@ fn execute_block_phase(
     match phase {
         PhiPhase::Topology => phase_topology(block),
         PhiPhase::Body => phase_body(block, state),
-        PhiPhase::Architecture => phase_architecture(block),
+        PhiPhase::Architecture => phase_architecture(block, state),
         PhiPhase::Performance => phase_performance(block),
         PhiPhase::Feedback => phase_feedback(block, state),
         PhiPhase::Evolution => phase_evolution(block),
@@ -349,7 +379,7 @@ fn phase_body(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     }
 }
 
-fn phase_architecture(block: &Block) -> PhiPhaseResult {
+fn phase_architecture(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
     // Architecture layer consistency: verify validator_id and version.
     if block.header.validator_id == [0u8; 32] {
         return PhiPhaseResult {
@@ -364,10 +394,38 @@ fn phase_architecture(block: &Block) -> PhiPhaseResult {
             phase: PhiPhase::Architecture,
             passed: false,
             details: format!(
-                "Unsupported block version {}, expected 1 or 2",
+                "Unsupported block version {}, expected 1, 2, or 3",
                 block.header.version
             ),
         };
+    }
+
+    // Patch-04 §17.4: on v3 blocks, enforce ConstitutionalCeilings.
+    match crate::ceilings::validate_ceilings_for_block(state, &block.header) {
+        crate::ceilings::CeilingCheck::Valid | crate::ceilings::CeilingCheck::NotV3 => {}
+        crate::ceilings::CeilingCheck::CeilingsMissing => {
+            return PhiPhaseResult {
+                phase: PhiPhase::Architecture,
+                passed: false,
+                details: "v3 chain missing system/constitutional_ceilings at \
+                          phase-10 check (§19.1 requires it at genesis)"
+                    .into(),
+            };
+        }
+        crate::ceilings::CeilingCheck::Violation(v) => {
+            return PhiPhaseResult {
+                phase: PhiPhase::Architecture,
+                passed: false,
+                details: format!("Constitutional ceiling violated: {}", v),
+            };
+        }
+        crate::ceilings::CeilingCheck::Error(e) => {
+            return PhiPhaseResult {
+                phase: PhiPhase::Architecture,
+                passed: false,
+                details: format!("Constitutional ceilings unreadable: {}", e),
+            };
+        }
     }
 
     // Transition count consistency (block-wide check, moved from old Execution).
@@ -463,6 +521,72 @@ fn phase_feedback(block: &Block, state: &ManagedWorldState) -> PhiPhaseResult {
                     i, receipt.verdict
                 ),
             };
+        }
+    }
+
+    // Patch-04 §15.5: validate ValidatorSetChange events against the
+    // CURRENT active set at H_admit (not the post-change set). Quorum,
+    // signatures, and change_id consistency are all checked here.
+    if let Some(changes) = block.body.validator_set_changes.as_deref() {
+        if !changes.is_empty() {
+            use sccgub_state::validator_set_state::validator_set_from_trie;
+            let current_set = match validator_set_from_trie(state) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    return PhiPhaseResult {
+                        phase: PhiPhase::Feedback,
+                        passed: false,
+                        details:
+                            "Block contains ValidatorSetChange events but \
+                             system/validator_set is not initialized"
+                                .into(),
+                    };
+                }
+                Err(e) => {
+                    return PhiPhaseResult {
+                        phase: PhiPhase::Feedback,
+                        passed: false,
+                        details: format!("ValidatorSet unreadable: {}", e),
+                    };
+                }
+            };
+            // §17.2: enforce max_validator_set_changes_per_block_param
+            // (caller's ConsensusParams, which is separately ceiling-bound
+            //  at phase 10 via §17.4).
+            let max_per_block =
+                state.consensus_params.max_validator_set_changes_per_block_param as usize;
+            if changes.len() > max_per_block {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Feedback,
+                    passed: false,
+                    details: format!(
+                        "Block carries {} ValidatorSetChange events, \
+                         exceeds max_validator_set_changes_per_block {}",
+                        changes.len(),
+                        max_per_block
+                    ),
+                };
+            }
+            // §15.5 activation-delay derivation needs `k` (confirmation depth).
+            // PROTOCOL.md §7 pins the default at 2. v3 does not yet expose a
+            // per-chain override via ConsensusParams; when that field lands
+            // this lookup should switch to it.
+            let confirmation_depth = 2u64;
+            let validation = crate::validator_set::validate_all_validator_set_changes(
+                changes,
+                &current_set,
+                block.header.height,
+                confirmation_depth,
+            );
+            if let crate::validator_set::ValidatorSetChangeValidation::Invalid(rej) =
+                validation
+            {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Feedback,
+                    passed: false,
+                    details: format!("ValidatorSetChange rejected: {}", rej),
+                };
+            }
         }
     }
 
@@ -564,6 +688,7 @@ mod tests {
                 total_tension_delta: TensionValue::ZERO,
                 constraint_satisfaction: vec![],
                 genesis_consensus_params: None,
+                validator_set_changes: None,
             },
             receipts: vec![],
             causal_delta: CausalGraphDelta::default(),

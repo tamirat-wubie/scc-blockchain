@@ -188,6 +188,7 @@ fn build_test_block(
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params: None,
+            validator_set_changes: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),

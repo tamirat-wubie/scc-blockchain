@@ -2171,6 +2171,7 @@ fn build_genesis_block(
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params,
+            validator_set_changes: None,
         },
         receipts: vec![],
         causal_delta: CausalGraphDelta::default(),
@@ -2332,6 +2333,7 @@ fn build_block(params: BlockBuildParams<'_>) -> Block {
             total_tension_delta: TensionValue::ZERO,
             constraint_satisfaction: vec![],
             genesis_consensus_params: None,
+            validator_set_changes: None,
         },
         receipts,
         causal_delta: CausalGraphDelta {
