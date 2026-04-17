@@ -34,6 +34,15 @@ const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
 const CONNECT_BACKOFF_MS: u64 = 5_000;
 const EMPTY_HASH: Hash = [0u8; 32];
+/// Maximum in-memory dedup set size for equivocation evidence.
+///
+/// N-55: The chain-side `equivocation_records` is the authoritative ledger;
+/// this runtime-only set exists solely to short-circuit repeated slashing
+/// work for the same proof within a session.  A malicious validator could
+/// otherwise craft unlimited distinct `(block_hash_a, block_hash_b)` pairs
+/// and flood memory.  When the cap is hit the oldest entry is evicted; the
+/// chain-side dedup still prevents double-slashing.
+const MAX_EQUIVOCATION_DEDUP: usize = 8_192;
 /// Maximum concurrent pending block proposals to keep in memory.
 ///
 /// N-54: Without this cap, a validator could flood the network with
@@ -56,7 +65,13 @@ pub struct NetworkRuntime {
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<NetworkMessage>>>>,
     consensus_rounds: Arc<Mutex<HashMap<u64, RoundState>>>,
     pending_blocks: Arc<Mutex<HashMap<Hash, sccgub_types::block::Block>>>,
+    /// Dedup set for equivocation evidence, with insertion order for LRU eviction.
+    /// The chain-side `equivocation_records` is the authoritative ledger; this
+    /// set only suppresses duplicate slashing work within a runtime session.
+    /// Bounded by `MAX_EQUIVOCATION_DEDUP` to prevent unbounded memory growth
+    /// from crafted evidence with unique (block_hash_a, block_hash_b) pairs.
     equivocations: Arc<Mutex<HashSet<EquivocationKey>>>,
+    equivocations_order: Arc<Mutex<std::collections::VecDeque<EquivocationKey>>>,
     rate_limits: Arc<Mutex<HashMap<String, RateState>>>,
     bandwidth: Arc<Mutex<HashMap<String, BandwidthState>>>,
     peer_seeds: Arc<Mutex<HashSet<String>>>,
@@ -242,6 +257,7 @@ impl NetworkRuntime {
             consensus_rounds: Arc::new(Mutex::new(HashMap::new())),
             pending_blocks: Arc::new(Mutex::new(HashMap::new())),
             equivocations: Arc::new(Mutex::new(HashSet::new())),
+            equivocations_order: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             bandwidth: Arc::new(Mutex::new(HashMap::new())),
             peer_seeds: Arc::new(Mutex::new(peer_seeds)),
@@ -1309,7 +1325,21 @@ impl NetworkRuntime {
             if seen.contains(&key) {
                 return Ok(());
             }
+            // N-55: LRU eviction when the dedup set reaches its cap.  The
+            // chain-side `equivocation_records` is the authoritative ledger
+            // and has its own dedup, so evicting from this runtime set is
+            // always safe.
+            let mut order = self.equivocations_order.lock().await;
+            while seen.len() >= MAX_EQUIVOCATION_DEDUP {
+                match order.pop_front() {
+                    Some(oldest) => {
+                        seen.remove(&oldest);
+                    }
+                    None => break,
+                }
+            }
             seen.insert(key);
+            order.push_back(key);
         }
 
         let proof = EquivocationProof {
@@ -5928,6 +5958,54 @@ mod tests {
             runtime.pending_blocks.lock().await.len(),
             MAX_PENDING_BLOCKS
         );
+    }
+
+    #[tokio::test]
+    async fn test_equivocations_dedup_set_lru_eviction() {
+        // N-55: Verify the LRU eviction path by exercising the set directly.
+        // The chain-side ledger has its own dedup; this set is only a
+        // performance optimization and can safely evict oldest entries.
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_pk = *chain.read().await.validator_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        // Directly simulate the dedup-set path used by `record_equivocation`.
+        async fn record_key(rt: &NetworkRuntime, key: EquivocationKey) {
+            let mut seen = rt.equivocations.lock().await;
+            if seen.contains(&key) {
+                return;
+            }
+            let mut order = rt.equivocations_order.lock().await;
+            while seen.len() >= MAX_EQUIVOCATION_DEDUP {
+                if let Some(oldest) = order.pop_front() {
+                    seen.remove(&oldest);
+                } else {
+                    break;
+                }
+            }
+            seen.insert(key);
+            order.push_back(key);
+        }
+
+        // Insert cap + 100 distinct keys.
+        for i in 0..(MAX_EQUIVOCATION_DEDUP as u64 + 100) {
+            let key = EquivocationKey {
+                validator_id: [1u8; 32],
+                height: i,
+                round: 0,
+                vote_type: 0,
+                block_hash_a: [2u8; 32],
+                block_hash_b: [3u8; 32],
+                epoch: 0,
+            };
+            record_key(&runtime, key).await;
+        }
+
+        let seen_len = runtime.equivocations.lock().await.len();
+        let order_len = runtime.equivocations_order.lock().await.len();
+        assert_eq!(seen_len, MAX_EQUIVOCATION_DEDUP);
+        assert_eq!(order_len, MAX_EQUIVOCATION_DEDUP);
     }
 
     #[tokio::test]
