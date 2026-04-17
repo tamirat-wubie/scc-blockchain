@@ -34,6 +34,15 @@ const FRAME_HEADER_LEN: usize = 4;
 const MAX_SEED_PEERS: usize = 256;
 const CONNECT_BACKOFF_MS: u64 = 5_000;
 const EMPTY_HASH: Hash = [0u8; 32];
+/// Maximum clock skew (ms) accepted on inbound Hello messages.
+///
+/// N-56: Hello messages carry a signed `timestamp_ms` field.  Messages
+/// whose timestamp deviates from local wall-clock by more than this
+/// window are rejected as stale / replayed.  30 s is wide enough to
+/// tolerate normal NTP skew between validators and narrow enough to
+/// close the replay window meaningfully.
+const HELLO_MAX_SKEW_MS: u64 = 30_000;
+
 /// Maximum in-memory dedup set size for equivocation evidence.
 ///
 /// N-55: The chain-side `equivocation_records` is the authoritative ledger;
@@ -718,6 +727,20 @@ impl NetworkRuntime {
         }
         if msg.epoch != self.current_epoch().await {
             return Err("Hello epoch mismatch".into());
+        }
+        // N-56: Reject stale (replayed) Hello messages.  Without this check
+        // an attacker could capture a legitimate validator's signed Hello
+        // and replay it from a different address to hijack that validator's
+        // routing entry in the peer registry.  `timestamp_ms` is signed into
+        // the canonical bytes, so forging a fresh timestamp is not possible
+        // without the validator's private key.
+        let now = now_ms();
+        let skew = now.abs_diff(msg.timestamp_ms);
+        if msg.timestamp_ms == 0 || skew > HELLO_MAX_SKEW_MS {
+            return Err(format!(
+                "Hello timestamp out of window: now={} msg={} skew={}ms (max {}ms)",
+                now, msg.timestamp_ms, skew, HELLO_MAX_SKEW_MS
+            ));
         }
         if !verify_hello_signature(&msg) {
             return Err("Hello signature invalid".into());
@@ -1800,6 +1823,7 @@ impl NetworkRuntime {
                 protocol_version: self.config.protocol_version,
                 epoch: chain.treasury.epoch,
                 known_peers,
+                timestamp_ms: now_ms(),
                 signature: Vec::new(),
             },
         );
@@ -2354,6 +2378,7 @@ mod tests {
                 protocol_version: runtime.config.protocol_version,
                 epoch: runtime.current_epoch().await,
                 known_peers: vec![],
+                timestamp_ms: now_ms(),
                 signature: Vec::new(),
             },
         );
@@ -2367,6 +2392,148 @@ mod tests {
             "Expected allowlist rejection, got: {}",
             err
         );
+    }
+
+    // N-56: Hello-replay attack rejection.
+
+    #[tokio::test]
+    async fn test_handle_hello_rejects_stale_timestamp() {
+        // A signed Hello with a timestamp far in the past must be rejected,
+        // even though all other fields and the signature are valid.
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        // Timestamp from the distant past (signed → attacker cannot re-sign).
+        let stale_ts = now_ms().saturating_sub(HELLO_MAX_SKEW_MS * 10);
+        let hello = signed_hello(
+            &local_key,
+            HelloMessage {
+                validator_id: local_pk,
+                chain_id: runtime.chain_id,
+                current_height: 0,
+                finalized_height: 0,
+                protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
+                known_peers: vec![],
+                timestamp_ms: stale_ts,
+                signature: Vec::new(),
+            },
+        );
+
+        let err = runtime
+            .handle_hello(hello, "127.0.0.1:4000")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("timestamp out of window"),
+            "expected stale-timestamp rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_hello_rejects_zero_timestamp() {
+        // Legacy / malformed Hello with timestamp_ms = 0 (serde default for
+        // older nodes that don't set the field) must be rejected.
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let hello = signed_hello(
+            &local_key,
+            HelloMessage {
+                validator_id: local_pk,
+                chain_id: runtime.chain_id,
+                current_height: 0,
+                finalized_height: 0,
+                protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
+                known_peers: vec![],
+                timestamp_ms: 0,
+                signature: Vec::new(),
+            },
+        );
+
+        let err = runtime
+            .handle_hello(hello, "127.0.0.1:4001")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("timestamp out of window"),
+            "expected zero-timestamp rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_hello_rejects_future_timestamp() {
+        // Future-dated Hello (clock attack) must also be rejected.
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let future_ts = now_ms().saturating_add(HELLO_MAX_SKEW_MS * 10);
+        let hello = signed_hello(
+            &local_key,
+            HelloMessage {
+                validator_id: local_pk,
+                chain_id: runtime.chain_id,
+                current_height: 0,
+                finalized_height: 0,
+                protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
+                known_peers: vec![],
+                timestamp_ms: future_ts,
+                signature: Vec::new(),
+            },
+        );
+
+        let err = runtime
+            .handle_hello(hello, "127.0.0.1:4002")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("timestamp out of window"),
+            "expected future-timestamp rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_hello_accepts_fresh_timestamp() {
+        // Sanity: a valid fresh Hello still passes.
+        let chain = Arc::new(RwLock::new(Chain::init()));
+        let local_key = { chain.read().await.validator_key.clone() };
+        let local_pk = *local_key.verifying_key().as_bytes();
+        let config = default_network_config_with_validator(&local_pk);
+        let runtime = NetworkRuntime::new(chain, config).await.unwrap();
+
+        let hello = signed_hello(
+            &local_key,
+            HelloMessage {
+                validator_id: local_pk,
+                chain_id: runtime.chain_id,
+                current_height: 0,
+                finalized_height: 0,
+                protocol_version: runtime.config.protocol_version,
+                epoch: runtime.current_epoch().await,
+                known_peers: vec![],
+                timestamp_ms: now_ms(),
+                signature: Vec::new(),
+            },
+        );
+
+        runtime
+            .handle_hello(hello, "127.0.0.1:4003")
+            .await
+            .expect("fresh-timestamp Hello must be accepted");
     }
 
     #[tokio::test]
@@ -2387,6 +2554,7 @@ mod tests {
                 protocol_version: runtime.config.protocol_version,
                 epoch: runtime.current_epoch().await,
                 known_peers: vec![],
+                timestamp_ms: now_ms(),
                 signature: Vec::new(),
             },
         );
