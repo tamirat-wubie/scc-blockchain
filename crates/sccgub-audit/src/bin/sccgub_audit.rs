@@ -141,8 +141,7 @@ fn emit_violation(json_output: bool, conformance: bool, violation: &CeilingViola
                 );
             }
             CeilingViolation::CeilingsUnreadableAtTransition {
-                transition_height,
-                ..
+                transition_height, ..
             } => {
                 println!(
                     "violation:CeilingsUnreadableAtTransition:transition_height={}",

@@ -162,10 +162,7 @@ fn emit_fixtures(out_dir: &std::path::Path) -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    println!(
-        "emitted {} conformance fixture(s) to {:?}",
-        total, out_dir
-    );
+    println!("emitted {} conformance fixture(s) to {:?}", total, out_dir);
     ExitCode::from(0)
 }
 
