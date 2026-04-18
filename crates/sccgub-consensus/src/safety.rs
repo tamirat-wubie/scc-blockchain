@@ -95,7 +95,8 @@ impl SafetyCertificate {
                 crate::protocol::VoteType::Precommit,
             );
 
-            if !sccgub_crypto::signature::verify(public_key, &vote_data, signature) {
+            // Patch-05 §26: verify_strict for precommit-signature admission.
+            if !sccgub_crypto::signature::verify_strict(public_key, &vote_data, signature) {
                 return Err(format!(
                     "Invalid signature from validator {}",
                     hex::encode(validator_id)
@@ -179,7 +180,13 @@ impl EquivocationEvidence {
             self.round_a,
             2u8,
         ));
-        if !sccgub_crypto::signature::verify(public_key, &data_a, &self.signature_a) {
+        // Patch-05 §26: verify_strict on equivocation evidence. Prevents
+        // malleability-based framing: an attacker cannot forge a second
+        // "signature" that passes non-strict verify and frame an honest
+        // validator. §15.7 Stage 2 veto path handles the rescue case
+        // where a broken verifier produced admission-accepted malleable
+        // signatures.
+        if !sccgub_crypto::signature::verify_strict(public_key, &data_a, &self.signature_a) {
             return Err("Signature A verification failed".into());
         }
 
@@ -190,7 +197,7 @@ impl EquivocationEvidence {
             self.round_b,
             2u8,
         ));
-        if !sccgub_crypto::signature::verify(public_key, &data_b, &self.signature_b) {
+        if !sccgub_crypto::signature::verify_strict(public_key, &data_b, &self.signature_b) {
             return Err("Signature B verification failed".into());
         }
 

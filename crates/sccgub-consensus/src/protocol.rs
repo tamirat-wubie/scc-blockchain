@@ -160,7 +160,11 @@ impl ConsensusRound {
                 vote.round,
                 vote.vote_type,
             );
-            if !sccgub_crypto::signature::verify(public_key, &vote_data, &vote.signature) {
+            // Patch-05 §26: verify_strict rejects non-canonical signatures
+            // that verify accepts. Forged-equivocation resistance depends
+            // on this — §15.7 Stage 2 veto assumes all admitted votes
+            // pass the strict verifier.
+            if !sccgub_crypto::signature::verify_strict(public_key, &vote_data, &vote.signature) {
                 return Err("Vote signature verification failed".into());
             }
         }

@@ -674,7 +674,7 @@ mod tests {
         }
         apply_block_transitions(&mut state, &mut balances, &seed_txs);
 
-        let mut versions_before = std::collections::HashMap::new();
+        let mut versions_before = std::collections::BTreeMap::new();
         let alice_key = sccgub_types::namespace::balance_key(&alice);
         let alice_version = state
             .state
