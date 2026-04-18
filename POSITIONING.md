@@ -31,36 +31,88 @@ Date: 2026-04-18. Repo at v0.7.2, main @ b4c4daf.
 
 ## §1 What SCCGUB is
 
-SCCGUB is **a symbolic governance + attestation substrate**. A
-permissioned-or-permissionless chain whose distinguishing properties
-are:
+SCCGUB is **a cryptographically-bound-constitutional-immutability
+substrate** for institutions whose legitimacy depends on inability to
+modify their own foundational rules. The genuine technical moat is
+**immutable meta-governance**:
 
-- A typed, versioned **precedence hierarchy** (Genesis > Safety >
-  Meaning > Emotion > Optimization) enforced as a first-class
-  consensus property, not a soft convention.
-- A **13-phase Φ traversal** that every state-changing transition
-  passes before admission. Domain-neutral phases; uniform discipline
-  across whatever the substrate hosts.
-- An **append-only causal lineage H** with deterministic supersession
-  semantics, not deletion.
-- A **Mfidel-grounded identity layer** that ties every authority to a
-  position in the 34×8 Ge'ez atomic matrix — see §5 for what that
-  does and does not mean.
-- **Constitutional ceilings** that bind governance proposals at
-  genesis-write-once and cannot be raised by any later governance
-  path.
+> Constitutional ceilings are **genesis-write-once and not modifiable
+> by any governance path, including the governance path itself.**
 
-It is built to host **causally-anchored facts under governed
-authority**. Facts that benefit from this substrate include
-attestations of compliance, scientific replication records, regulated
-custody transfers, judicial proceedings, cultural-heritage provenance,
-and AI-agent reasoning traces. Whether any specific domain succeeds on
-the substrate depends on factors named openly in §8.
+No production-tier substrate I am aware of binds its own meta-
+governance at genesis with cryptographic finality. Cosmos governance
+can vote to raise its own parameters. Substrate runtime can be
+replaced by on-chain upgrade. Hyperledger Fabric channel admins can
+change channel policy. Tezos self-amends explicitly. SCCGUB cannot
+do any of these things to its constitutional ceilings; the ceilings
+sit below the governance layer, and governance cannot reach above
+itself. See PATCH_04.md §17 (ceilings spec) and `crates/sccgub-types/
+src/constitutional_ceilings.rs` (implementation).
+
+This property — and only this property — is the structural reason
+SCCGUB cannot be reproduced by composing
+Cosmos SDK + a custom module + W3C Verifiable Credentials + DID
+Resolution + Ethereum Attestation Service + a Hyperledger Fabric
+channel. Audit pt3 (`docs/THESIS_AUDIT_PT3.md`) walks every other
+claimed differentiator and finds them at parity with the alternative
+stack.
+
+**Supporting disciplines** (real but not the moat):
+
+- **Uniform 13-phase Φ traversal** at consensus level (every
+  transition passes all 13 phases, no exceptions). Individual phases
+  are matched by AnteHandler, pre_dispatch, endorsement+ordering+
+  validation, etc., across the alternative stack; the uniformity is
+  the discipline novelty.
+- **Append-only causal lineage H** with deterministic supersession
+  via `canonical_successor` (Patch-07 §D.4). Append-only is parity
+  across substrates; the determinism guarantee is good engineering.
+- **Mfidel-grounded identity** as semantic category (see §5). Pure
+  cultural-positioning differentiation; zero technical work. Real
+  for deployments where non-Western symbol-space matters; decorative
+  elsewhere.
+- **Three irreducible primitives** (ValueTransfer, Message,
+  Attestation) plus three standard-library templates. Table-stakes
+  for the niche, not the differentiator (see §3).
+
+### §1.1 Niche
+
+SCCGUB is built for **institutions whose legitimacy depends on
+inability to modify their own foundational rules**. Concretely:
+
+- **Constitutional courts** and supreme courts whose institutional
+  guarantee is "the rules of judgment cannot be rewritten by the
+  judges."
+- **Treaty enforcement bodies** whose legitimacy depends on
+  unchangeable cross-state commitments.
+- **Indigenous data sovereignty councils** whose authority requires
+  cryptographic finality on community-owned attestation rules.
+- **International standards bodies** whose foundational rule sets
+  must outlast the body itself.
+- **Algorithmic accountability registries** under the EU AI Act and
+  similar regimes, where "this model's training-data attestation
+  rules cannot be retroactively rewritten by the model's operator"
+  is exactly the immutability property.
+- **Post-settlement legal archives** — court records, land
+  registries in jurisdictions with weak institutional trust,
+  academic publication records after retraction windows close. The
+  shape: decision-made, record-sealed, no party can change the
+  archive's own rules later.
+
+This is a **narrow but real** addressable surface. It is not a
+"handful of global bodies" — there are many medium-scale registries
+in each category. It is also not "every institution that has audit-
+trail requirements" — the audits retired that framing.
+
+### §1.2 What SCCGUB is not
 
 SCCGUB is **not** a general-purpose L1, **not** a DeFi platform,
-**not** a "universal truth store," and **not** civilizational
-infrastructure. Earlier framings used these terms; this document
-retires them. See §10 for the explicit retirements.
+**not** a smart-contract execution environment, **not** a "universal
+truth store," **not** civilizational infrastructure, and **not** a
+"symbolic governance" substrate as the primary framing (the symbolic
+layer is real but not the moat — see §10.2 retirement). Earlier
+framings used these terms; this document retires them. See §10 for
+the explicit retirement list.
 
 ## §2 The kernel — what it is structurally
 
@@ -94,10 +146,24 @@ intermediate state.
 
 ## §3 Tier-2 primitives — three irreducible, three templates
 
-The refined thesis proposed six universal Tier-2 primitives. The
-audit identified that three of the six structurally decompose into
-the other three. Patch-07 ([PATCH_07.md](PATCH_07.md)) shipped the
-3+3 split:
+**Frame correction (per Audit pt3)**: ValueTransfer + Message +
+Attestation are **table stakes** for the niche, not the
+differentiator. EAS provides typed attestation; EIP-712 provides
+typed signed messages; ERC-20 provides typed value transfer;
+Hyperledger Fabric provides all three within channels. Every
+substrate competing for the niche has these or close equivalents.
+
+**The differentiator is not the primitives but the ceiling
+discipline that governs them.** The ceilings cap what governance
+can do to these primitives' parameters at runtime, and the ceilings
+are immutable per §1. A future patch can change `effective_fee`
+formula, but it cannot raise `min_effective_fee_floor` past its
+genesis value; a future governance proposal can RotatePower a
+validator, but it cannot raise `max_validator_set_size` past the
+genesis ceiling. The primitives are reproducible; the immutability
+of the rules governing them is not.
+
+Patch-07 ([PATCH_07.md](PATCH_07.md)) shipped the 3+3 split:
 
 **Irreducible kernel primitives:**
 
@@ -270,45 +336,81 @@ not as a tradable asset. The closest reference point is Hyperledger
 Fabric or Ceramic, both of which are tokenless. The funding model
 follows from this — see §9.
 
-## §7 Ten invariants as prerequisites to adapter work
+## §7 Invariant gate to adapter work
 
-Per audit recommendation, no new domain adapter shall be developed
-beyond the planned finance extraction until all ten audit-raised
-invariants are HELD per [`docs/INVARIANTS.md`](docs/INVARIANTS.md):
+Two tiers of invariants gate adapter work. **Ceiling-immutability
+invariants** are first because they are the moat per §1; if any of
+them is not HELD with cryptographic verifiability, the moat does not
+exist and no amount of adapter discipline matters. **Adapter-hygiene
+invariants** are second because they prevent the adapter ecosystem
+from drifting after the moat is in place.
+
+No new domain adapter shall be developed beyond the planned finance
+extraction until all invariants in both tiers are HELD per
+[`docs/INVARIANTS.md`](docs/INVARIANTS.md).
+
+### §7.1 Ceiling-immutability invariants (moat-defining, ordered first)
+
+These are the invariants that hold the §1 immutability claim.
+Because they define the moat, they are the highest-priority promotion
+targets and are subject to externally-auditable verification (see §11).
+
+- **INV-CEILING-PRESERVATION (Patch-04 §17, HELD)** — every block
+  validator runs `ConstitutionalCeilings::validate(&params)` at phase
+  10; any block whose `ConsensusParams` exceed any ceiling field is
+  rejected. Currently HELD.
+- **INV-CEILINGS-WRITE-ONCE (currently UNDECLARED, target Patch-08)**
+  — `system/constitutional_ceilings` is set at genesis and **no
+  governance path can rewrite it.** This is the literal mechanical
+  expression of the §1 moat. Today's enforcement is by absence of
+  any write code path; promotion to HELD requires a declared
+  invariant + a verifier (see §11).
+- **INV-CEILINGS-NEVER-RAISED-IN-HISTORY (currently UNDECLARED,
+  target Patch-08)** — the externally-auditable property: across
+  every `ChainVersionTransition` from genesis to tip, the ceilings
+  never went up. This is what an external party verifies. The
+  verifier function (§11) computes this in one pass over chain
+  history.
+
+### §7.2 Adapter-hygiene invariants (after the moat is held)
 
 **From PR #33 audit (Part 1):**
 
-1. INV-DOMAIN-ISOLATION — adapter X cannot write to adapter Y's
-   keyspace except via declared cross-domain refs.
-2. INV-ADAPTER-SCHEMA-STABILITY — once an adapter is referenced,
-   its schema cannot change in ways that invalidate existing
-   references.
-3. INV-SUPERSESSION-CLOSURE — references to superseded facts have a
-   declared resolution policy (frozen-pointer, propagate-supersession,
-   or reject-original).
-4. INV-ADAPTER-AUTHORITY-CONTAINMENT — authority granted in
-   adapter X does not implicitly carry to adapter Y.
+- INV-DOMAIN-ISOLATION — adapter X cannot write to adapter Y's
+  keyspace except via declared cross-domain refs.
+- INV-ADAPTER-SCHEMA-STABILITY — once an adapter is referenced, its
+  schema cannot change in ways that invalidate existing references.
+- INV-SUPERSESSION-CLOSURE — references to superseded facts have a
+  declared resolution policy (frozen-pointer, propagate-supersession,
+  or reject-original).
+- INV-ADAPTER-AUTHORITY-CONTAINMENT — authority granted in adapter
+  X does not implicitly carry to adapter Y.
 
 **From PR #34 audit (Part 2):**
 
-5. INV-MESSAGE-RETENTION-PAID — held at the type layer in v0.7.0.
-   See `MAX_MESSAGE_BODY_BYTES`. Promotion to consensus-layer-held
-   pending phase integration.
-6. INV-ESCROW-DECIDABILITY — held at the type layer in v0.7.0.
-   See `EscrowPredicateBounds`. Promotion pending phase integration.
-7. INV-REFERENCE-DISCOVERABILITY — partial at the type layer (size
-   cap, self-reference rejection); target-side discovery policy
-   awaits adapter runtime.
-8. INV-SUPERSESSION-UNIQUENESS — held at the type layer in v0.7.0
-   via `canonical_successor`. Promotion pending phase integration.
-9. INV-ASSET-REGISTRY-AUTHORITY — asset registration requires a
-   verifiable issuer credential whose revocation propagates.
-10. INV-CREDENTIAL-PROVENANCE — every authority credential declares
-    its issuer chain up to a genesis-registered root.
+- INV-MESSAGE-RETENTION-PAID — held at the type layer in v0.7.0.
+  See `MAX_MESSAGE_BODY_BYTES`. Promotion to consensus-layer-held
+  pending phase integration.
+- INV-ESCROW-DECIDABILITY — held at the type layer in v0.7.0. See
+  `EscrowPredicateBounds`. Promotion pending phase integration.
+- INV-REFERENCE-DISCOVERABILITY — partial at the type layer (size
+  cap, self-reference rejection); target-side discovery policy
+  awaits adapter runtime.
+- INV-SUPERSESSION-UNIQUENESS — held at the type layer in v0.7.0
+  via `canonical_successor`. Promotion pending phase integration.
+- INV-ASSET-REGISTRY-AUTHORITY — asset registration requires a
+  verifiable issuer credential whose revocation propagates.
+- INV-CREDENTIAL-PROVENANCE — every authority credential declares
+  its issuer chain up to a genesis-registered root.
 
-The discipline: adapter proliferation that outpaces invariant
-enforcement is the failure mode the audits most warned about. The
-ten-invariant gate is the structural defense.
+### §7.3 Discipline rationale
+
+Adapter proliferation that outpaces invariant enforcement is the
+failure mode the audits most warned about. The two-tier gate is the
+structural defense: ceiling immutability secures the moat; adapter
+hygiene secures the surface. Neither tier is optional. A patch that
+proposes new adapter work while §7.1 is not HELD requires a
+positioning amendment under §13 to justify the deviation.
 
 ## §8 Open problems — named, not solved
 
@@ -397,7 +499,56 @@ invariant per chain-version bump, sequential**, with two weeks
 minimum on testnet between bumps. That sequencing is the discipline,
 not a hard schedule.
 
-## §9 Resource narrative — code velocity vs institutional velocity
+### §8.5 Regulatory-precedent gap (Audit pt3 H.14) — TWO-SIDED OPEN
+
+SCCGUB has **zero production precedent** in any major regulated
+jurisdiction (MiCA, GDPR, HIPAA, DORA, FIPS-constrained domains).
+The alternative stack (Cosmos-based deployments, Hyperledger
+Fabric, EAS, W3C VCs) has years of established compliance patterns.
+A pilot adopter in a regulated domain on SCCGUB will be
+**establishing precedent, not following it.**
+
+This is two-sided:
+
+- **Downside**: pilot cost + risk is materially higher than for an
+  alternative-stack deployment. Counsel review must reason about
+  novel substrate properties rather than relying on existing
+  compliance patterns. First adopters bear the cost of regulator
+  education.
+- **Upside if cleared**: whoever lands the first compliant
+  deployment in a regulated jurisdiction **writes the precedent**
+  for that regime. The institutional value of being the canonical
+  reference deployment in (e.g.) EU AI Act algorithmic-accountability
+  registries is outsized — every subsequent deployment in that
+  category cites the first.
+
+The substrate provides the property; the operator carries the
+precedent risk; the precedent value accrues asymmetrically to the
+first adopter that survives counsel review. This is the standard
+shape of new-infrastructure adoption — naming it openly is the
+honest treatment.
+
+### §8.6 Post-quantum-cryptography migration (Audit pt3 G.4) — PARITY-OPEN
+
+NIST PQC standardization deadline is 2030. SCCGUB uses Ed25519,
+which is not post-quantum. Every Ed25519 signature accumulated
+between now and PQC activation becomes a forgery liability.
+
+This problem is **parity** with the alternative stack — Cosmos,
+Substrate, Ethereum, and Fabric all face the same Ed25519/secp256k1
+PQC migration cost. SCCGUB has no special exposure or special
+mitigation; the migration discipline is identical (re-sign
+accumulated history under PQC primitives, or accept-with-warning
+beyond a declared cutoff).
+
+What's open: SCCGUB has not yet committed to a PQC migration plan
+or even named the migration target primitive. Patch-08 should add
+a section declaring (a) the candidate PQC primitive (Dilithium,
+Falcon, SPHINCS+ are the NIST finalists at the date of this
+document), (b) the activation-height window relative to NIST 2030
+deadline, and (c) the re-signing procedure for accumulated H. The
+work is not optional; the deadline is fixed; the planning has not
+started.
 
 These two velocities are categorically different. Conflating them is
 the failure mode that produced the rejected "12 months to v1.0"
@@ -447,6 +598,29 @@ require positioning amendment first.
 | "Wealth and authority structurally separated" | Holds only if credential issuance is wealth-independent. Per §8.3, the credential issuer is not yet named, so the separation is design intent, not design. State as such. |
 | "Foundation-scale capital" (without naming a vehicle) | Named, not planned. Every reference to foundation funding must either name a candidate vehicle or be flagged as unresolved per §8.1. |
 | "Mfidel-grounded uniqueness" | The 272-position matrix does not provide uniqueness. Per §5, Mfidel is semantic category; uniqueness comes from the public key. Future references must use the §5 formulation. |
+| **"Symbolic governance + attestation substrate" as primary framing** | Audit pt3 (`docs/THESIS_AUDIT_PT3.md`) walked the symbolic layer (Φ + WHBinding + Mfidel + tension homeostasis) against Cosmos+VC+EAS+DID+Fabric and found parity or near-parity on every dimension except one. The genuine moat is **immutable meta-governance** (§1). The symbolic-governance framing remains accurate as supporting discipline but **misranks the real differentiator** when used as the lead. Public framings must lead with immutable meta-governance and treat the symbolic layer as supporting framing. See §10.2 for the substitute framing. |
+| **"No existing chain has governed attestation + messaging + value as uniform kernel primitives"** (already retired in earlier table row but here sharpened) | The original retirement was correct. Pt3 sharpened the narrowed defensible claim: "**no production-tier substrate binds its own meta-governance at genesis with cryptographic finality**." Use the sharpened claim where any uniqueness assertion is needed. |
+
+### §10.2 Substitute primary framing (per Audit pt3)
+
+The retired framing is replaced. Use exactly:
+
+> **SCCGUB is a cryptographically-bound-constitutional-immutability
+> substrate for institutions whose legitimacy depends on inability to
+> modify their own foundational rules.**
+
+This is the language that goes in README, status notes, external
+descriptions, and any public material. The earlier "symbolic
+governance + attestation substrate" formulation remains accurate as
+**internal architecture description** (§§3, 5) but is not the
+lead-with framing.
+
+**Why the substitute is right**: it names the moat (immutable
+meta-governance), names the niche (institutions requiring foundation
+immutability), and names neither aspirational scope ("universal,"
+"civilizational") nor decorative properties (Mfidel as primary,
+symbolic layer as primary). The framing is narrow, specific, and
+externally verifiable via §11's ceiling-verifier.
 
 ### §10.1 Retirement-scope cleanup checklist (precondition for merge)
 
@@ -502,7 +676,66 @@ record per the same principle. The cleanup precondition is therefore
 **satisfied** for in-tree files. External-surface action items
 remain operator responsibility outside this PR.
 
-## §11 Non-goals
+## §11 Moat verification — Patch-08 ceiling-verifier as structural commitment
+
+The §1 moat (immutable meta-governance) is **structurally meaningful
+only if it is externally auditable** by parties that do not trust
+the maintainer. An institution evaluating SCCGUB for a
+constitutional-court use case must be able to verify cryptographically
+that the ceilings have not been raised since genesis, **without
+reading source code or trusting maintainer claims**.
+
+Today this property is enforced by absence — there is no code path
+that writes `ConstitutionalCeilings::TRIE_KEY` after genesis-commit.
+That is sufficient for the property to *hold* but not for it to be
+*demonstrably held* to a third party. A potential adopter has to
+audit the codebase to confirm the absence; that is fragile and
+maintainer-dependent.
+
+**Patch-08 commits to ship `verify_ceilings_unchanged_since_genesis(...)`**
+as a moat-defining structural commitment. The function's contract:
+
+- Input: a chain identifier (genesis hash + chain-version-history
+  trie state).
+- Output: `Ok(())` if and only if every `ChainVersionTransition`
+  from genesis to current tip preserved every ConstitutionalCeilings
+  field at exactly its genesis value, OR returns the specific
+  `(transition_height, ceiling_field, before_value, after_value)`
+  tuple of the first violation.
+- Discipline: pure function over chain history. Reproducible by any
+  party with read access to the chain log.
+
+**Why this is moat-defining and not auxiliary**: if the verifier
+ships with an exploit path — encoding gap that doesn't cover a
+ceiling field, governance work-around the verifier doesn't catch,
+genesis-commit edge case, or canonical-encoding ambiguity — the
+moat collapses to LOW everywhere. **The mechanical correctness of
+this function is load-bearing on the entire Future A defensibility
+claim** (Audit pt3 §I caveat).
+
+**Consequences**:
+
+- Patch-08 §X (verifier) is consensus-critical infrastructure, not
+  auxiliary tooling. Test coverage requirement: ≥ 95% on the
+  verifier path including every ceiling field, every chain-version-
+  transition variant, and every adversarial encoding case.
+- The verifier MUST be runnable as a standalone tool by an external
+  party without operating a full node. Suggested form: an
+  archival-mode CLI + a public verification endpoint operated by
+  no fewer than three independent parties (proves no single party
+  can manipulate the verification result).
+- Until Patch-08 ships the verifier, any institutional pilot
+  conversation that depends on the §1 moat must include "verifier
+  ship date" as a deal-blocking dependency. The substrate cannot
+  honestly sell its moat without the verification artifact.
+
+**Patch-08 §X is moved from "nice-to-have verification" (Audit pt3
+H.15) to "moat-defining required deliverable" by this section.**
+Future patches that defer Patch-08 §X further require a positioning
+amendment under §13 explaining why the moat can credibly survive
+the deferral.
+
+## §12 Non-goals
 
 Explicit non-goals. Stated to prevent scope creep and to set
 expectations clearly.
@@ -527,7 +760,7 @@ expectations clearly.
   Both are deliberate.
 - **Not a token launch.** Per §6.
 
-## §12 What this document does and does not do
+## §13 What this document does and does not do
 
 **This document does:**
 
@@ -547,13 +780,15 @@ expectations clearly.
   jurisdiction GDPR authorization).
 - Authorize any specific adapter beyond finance extraction.
 - Endorse the "civilizational infrastructure" framing.
+- Endorse "symbolic governance + attestation substrate" as the
+  primary framing (Audit pt3 retired this — see §10.2 substitute).
 
-## §13 Amendment process
+## §14 Amendment process
 
 This document amends only by PR. A PR amending positioning must:
 
 1. Cite the structural change being committed.
-2. Identify which §1–§11 claims are affected.
+2. Identify which §1–§13 claims are affected.
 3. Identify which audits, patches, or invariants need parallel
    amendment.
 4. Pass the same CI bar as code patches.
@@ -561,7 +796,7 @@ This document amends only by PR. A PR amending positioning must:
 
 A patch that changes runtime behavior in a way that contradicts this
 document **MUST** carry a positioning amendment in the **same PR**.
-**Review by maintainer against §10's retired-framings list and §1–§11
+**Review by maintainer against §10's retired-framings list and §1–§13
 structural commitments will reject otherwise.** CI does not currently
 mechanically enforce positioning consistency; mechanical enforcement
 (a CI script that parses `POSITIONING.md` retired-framings + structural
@@ -570,16 +805,29 @@ deferred to a future patch and explicitly scoped there. Until then,
 maintainer review is the adjudication mechanism, and "in same PR" is
 the procedural lock.
 
-## §14 Concise restatement
+## §15 Concise restatement
 
-SCCGUB is a symbolic governance + attestation substrate with three
-irreducible kernel primitives (ValueTransfer, Message, Attestation),
-content-addressed off-chain storage as the structural commitment for
-large or sensitive payloads, Mfidel-grounded semantic identity over
-Ed25519 unique identifiers, no native token, fees in user-supplied
-currencies, ten invariants gating adapter proliferation, and four
-named open problems that no code patch can close. The substrate is
-code-complete-plausible in 6–12 months of part-time focused work and
-deployment-credible in 3–5 years contingent on capital. It is not a
-universal truth store, not civilizational infrastructure, not a
-DeFi platform, not a token. It is what it is.
+SCCGUB is a **cryptographically-bound-constitutional-immutability
+substrate** for institutions whose legitimacy depends on inability
+to modify their own foundational rules — constitutional courts,
+treaty bodies, indigenous data sovereignty councils, international
+standards bodies, algorithmic accountability registries under the
+EU AI Act, post-settlement legal archives. The genuine technical
+moat is one property: **constitutional ceilings are
+genesis-write-once and not modifiable by any governance path,
+including the governance path itself.** That property requires a
+moat-defining external verifier (§11). The supporting disciplines —
+three irreducible kernel primitives (ValueTransfer, Message,
+Attestation), content-addressed off-chain storage for large or
+sensitive payloads, Mfidel-grounded semantic identity over Ed25519
+unique identifiers, no native token, fees in user-supplied
+currencies, two-tier invariant gate (§7) on adapter proliferation —
+are real but not the moat. Six open problems that no code patch can
+close (capital, GDPR jurisdiction, credential body, chain-break
+sequencing, regulatory precedent gap, PQC migration). The substrate
+is code-complete-plausible in 6–12 months of part-time focused work
+and deployment-credible in 3–5 years contingent on §8.1. It is not
+a universal truth store, not civilizational infrastructure, not a
+DeFi platform, not a token, **not a "symbolic governance" substrate
+as the lead framing**. It is **infrastructure for institutions that
+cannot afford to be able to modify their own foundations.**
