@@ -14,6 +14,7 @@ pub mod escrow;
 pub mod key_rotation_state;
 pub mod store;
 pub mod tension;
+pub mod tension_history;
 pub mod treasury;
 pub mod trie;
 pub mod validator_set_state;

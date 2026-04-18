@@ -466,26 +466,68 @@ fn phase_architecture(block: &Block, state: &ManagedWorldState) -> PhiPhaseResul
 }
 
 fn phase_performance(block: &Block) -> PhiPhaseResult {
-    // Block-only: check Mfidel seal matches expected.
+    // Block-only: check block-HEADER Mfidel seal matches expected.
+    // Header seal stays on the height-only derivation for all versions
+    // so observers can see the Ge'ez cycle in the header stream —
+    // Patch-05 §21.2.
     let expected = sccgub_types::mfidel::MfidelAtomicSeal::from_height(block.header.height);
-    let matches = block.header.mfidel_seal == expected;
-    PhiPhaseResult {
-        phase: PhiPhase::Performance,
-        passed: matches,
-        details: if matches {
-            format!(
-                "Mfidel seal f[{}][{}] correct",
-                expected.row, expected.column
-            )
-        } else {
-            format!(
+    let header_matches = block.header.mfidel_seal == expected;
+    if !header_matches {
+        return PhiPhaseResult {
+            phase: PhiPhase::Performance,
+            passed: false,
+            details: format!(
                 "Mfidel seal mismatch: expected f[{}][{}], got f[{}][{}]",
                 expected.row,
                 expected.column,
                 block.header.mfidel_seal.row,
                 block.header.mfidel_seal.column
-            )
-        },
+            ),
+        };
+    }
+
+    // Patch-05 §21.4 INV-SEAL-NO-GRIND: for v4 blocks, every
+    // AgentRegistration transaction's `actor.mfidel_seal` must match
+    // `from_height_v4(block.header.height, block.header.parent_id)`.
+    // This prevents a registrant from grinding the grid cell by timing
+    // their submission — they cannot predict the prior_block_hash more
+    // than one block in advance, and wasted attempts cost registration gas.
+    if block.header.version >= sccgub_types::block::PATCH_05_BLOCK_VERSION {
+        let expected_reg = sccgub_types::mfidel::MfidelAtomicSeal::from_height_v4(
+            block.header.height,
+            &block.header.parent_id,
+        );
+        for (i, tx) in block.body.transitions.iter().enumerate() {
+            if matches!(
+                tx.intent.kind,
+                sccgub_types::transition::TransitionKind::AgentRegistration
+            ) && tx.actor.mfidel_seal != expected_reg
+            {
+                return PhiPhaseResult {
+                    phase: PhiPhase::Performance,
+                    passed: false,
+                    details: format!(
+                        "INV-SEAL-NO-GRIND: AgentRegistration tx {} has seal \
+                         f[{}][{}], expected f[{}][{}] at height {} under v4",
+                        i,
+                        tx.actor.mfidel_seal.row,
+                        tx.actor.mfidel_seal.column,
+                        expected_reg.row,
+                        expected_reg.column,
+                        block.header.height
+                    ),
+                };
+            }
+        }
+    }
+
+    PhiPhaseResult {
+        phase: PhiPhase::Performance,
+        passed: true,
+        details: format!(
+            "Mfidel seal f[{}][{}] correct",
+            expected.row, expected.column
+        ),
     }
 }
 

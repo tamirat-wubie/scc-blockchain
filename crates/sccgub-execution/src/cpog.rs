@@ -147,10 +147,31 @@ pub fn validate_cpog(
             return CpogResult::Invalid { errors };
         }
 
-        let gas_price = EconomicState::default().effective_fee(
-            state.state.tension_field.total,
-            state.state.tension_field.budget.current_budget,
-        );
+        // Patch-05 §20: v4 blocks use the median-over-window fee oracle.
+        // v1/v2/v3 continue to use the single-block `effective_fee`
+        // (frozen per PROTOCOL.md §9).
+        let econ = EconomicState::default();
+        let tension_budget = state.state.tension_field.budget.current_budget;
+        let gas_price = if block.header.version >= sccgub_types::block::PATCH_05_BLOCK_VERSION {
+            // v4: pull the last W tensions from state and median them.
+            match sccgub_state::tension_history::tension_history_from_trie(state) {
+                Ok(history) => {
+                    let w = state.consensus_params.median_tension_window as usize;
+                    let window = sccgub_state::tension_history::window(&history, w);
+                    econ.effective_fee_median(&window, tension_budget, &state.consensus_params)
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "tension_history unreadable for v4 fee oracle: {}",
+                        e
+                    ));
+                    return CpogResult::Invalid { errors };
+                }
+            }
+        } else {
+            // Legacy path (v1/v2/v3): unchanged PROTOCOL.md §9 formula.
+            econ.effective_fee(state.state.tension_field.total, tension_budget)
+        };
         if let Err(e) = apply_block_economics(
             &mut speculative,
             &mut spec_balances,

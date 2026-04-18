@@ -888,6 +888,24 @@ impl Chain {
             self.treasury.advance_epoch();
             commit_treasury_state(&mut self.state, &self.treasury);
         }
+        // Patch-05 §20: for v4 blocks, record the post-apply tension in
+        // the rolling history buffer so the next block's median fee
+        // oracle can consult the last W samples. Non-fatal: if storage
+        // write fails, the block is still committed (subsequent v4
+        // blocks would then fall back to the warming-window shorter
+        // slice, at worst charging base_fee until the buffer refills).
+        if block.header.version >= sccgub_types::block::PATCH_05_BLOCK_VERSION {
+            if let Err(e) = sccgub_state::tension_history::append_and_trim(
+                &mut self.state,
+                block.header.tension_after,
+            ) {
+                tracing::warn!(
+                    "tension_history append failed at height {}: {}",
+                    block.header.height,
+                    e
+                );
+            }
+        }
         self.state.set_height(block.header.height);
 
         // Mark included tx IDs as confirmed in mempool.

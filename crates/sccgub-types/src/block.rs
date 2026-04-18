@@ -16,12 +16,20 @@ pub const CANONICAL_AGENT_BLOCK_VERSION: u32 = 2;
 /// Patch-04 introduces v3: validator-set management, view-change, constitutional
 /// ceilings, key rotation. v3 blocks carry `round_history_root` in the header.
 pub const PATCH_04_BLOCK_VERSION: u32 = 3;
+/// Patch-05 introduces v4: fee oracle hardening (§20), Mfidel seal VRF (§21),
+/// evidence-sourced slashing admission (§22), confirmation_depth in
+/// ConsensusParams (§24), typed ModifyConsensusParam (§25),
+/// verify_strict migration (§26), admitted-and-activated change history (§27).
+pub const PATCH_05_BLOCK_VERSION: u32 = 4;
 pub const CURRENT_BLOCK_VERSION: u32 = CANONICAL_AGENT_BLOCK_VERSION;
 
 pub fn is_supported_block_version(version: u32) -> bool {
     matches!(
         version,
-        LEGACY_BLOCK_VERSION | CANONICAL_AGENT_BLOCK_VERSION | PATCH_04_BLOCK_VERSION
+        LEGACY_BLOCK_VERSION
+            | CANONICAL_AGENT_BLOCK_VERSION
+            | PATCH_04_BLOCK_VERSION
+            | PATCH_05_BLOCK_VERSION
     )
 }
 
@@ -348,13 +356,19 @@ mod tests {
     #[test]
     fn test_is_supported_block_version_unknown() {
         assert!(!is_supported_block_version(0));
-        assert!(!is_supported_block_version(4));
+        assert!(!is_supported_block_version(5));
         assert!(!is_supported_block_version(u32::MAX));
     }
 
     #[test]
     fn patch_04_is_supported_block_version_v3() {
         assert!(is_supported_block_version(PATCH_04_BLOCK_VERSION));
+    }
+
+    #[test]
+    fn patch_05_is_supported_block_version_v4() {
+        assert!(is_supported_block_version(PATCH_05_BLOCK_VERSION));
+        assert_eq!(PATCH_05_BLOCK_VERSION, 4);
     }
 
     #[test]
