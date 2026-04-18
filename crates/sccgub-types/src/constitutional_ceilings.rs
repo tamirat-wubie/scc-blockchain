@@ -70,6 +70,15 @@ pub struct ConstitutionalCeilings {
     /// Upper bound on `max_equivocation_evidence_per_block_param`.
     /// Default 16. Caps slashing-admission DoS surface.
     pub max_equivocation_evidence_per_block: u32,
+
+    // ── v5 additions (Patch-06 §31) ───────────────────────────────────
+    /// Lower bound on the composed `effective_fee_median` output. After
+    /// the median-over-window multiplier is applied, the returned fee is
+    /// clamped to `max(computed, min_effective_fee_floor)`. Closes the
+    /// fee-collapse attack where coordinated low-tension blocks drive
+    /// the effective fee below a viable spam-resistance threshold.
+    /// Default `TensionValue::SCALE / 100` (= 0.01 fee units).
+    pub min_effective_fee_floor: i128,
 }
 
 impl Default for ConstitutionalCeilings {
@@ -112,6 +121,10 @@ impl Default for ConstitutionalCeilings {
             max_confirmation_depth_ceiling: 8,
             // Equivocation evidence per block: ×4 over default (4), capped at 16
             max_equivocation_evidence_per_block: 16,
+            // Patch-06 §31: default floor 0.01 fee units. Small enough to
+            // be a no-op on healthy chains (default base_fee = 1.0), large
+            // enough to block a multi-block collapse to near-zero.
+            min_effective_fee_floor: crate::tension::TensionValue::SCALE / 100,
         }
     }
 }
@@ -172,8 +185,18 @@ impl ConstitutionalCeilings {
         bincode::serialize(self).expect("ConstitutionalCeilings serialization is infallible")
     }
 
+    /// Fallback cascade: current struct → `LegacyConstitutionalCeilingsV1`
+    /// (pre-Patch-06 schema, no v5 fields). A successful legacy parse
+    /// promotes to the current struct by filling v5 fields with defaults.
+    /// This lets a v3/v4 genesis continue to load under v5 code; the
+    /// fee-floor default is a no-op for any chain with `base_fee >=
+    /// floor` (i.e., every chain using the default `EconomicState`).
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes)
+        if let Ok(current) = bincode::deserialize::<ConstitutionalCeilings>(bytes) {
+            return Ok(current);
+        }
+        bincode::deserialize::<LegacyConstitutionalCeilingsV1>(bytes)
+            .map(ConstitutionalCeilings::from)
             .map_err(|e| format!("ConstitutionalCeilings deserialize: {}", e))
     }
 
@@ -291,6 +314,57 @@ impl ConstitutionalCeilings {
             });
         }
         Ok(())
+    }
+}
+
+/// Pre-Patch-06 `ConstitutionalCeilings` layout. Retained verbatim so a v3/v4
+/// genesis's serialized ceilings continue to deserialize under v5 code. New
+/// fields are filled from `ConstitutionalCeilings::default()` in the `From`
+/// conversion, so no chain sees a silent ceiling change on replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConstitutionalCeilingsV1 {
+    max_proof_depth_ceiling: u32,
+    max_tx_gas_ceiling: u64,
+    max_block_gas_ceiling: u64,
+    max_contract_steps_ceiling: u64,
+    max_address_length_ceiling: u32,
+    max_state_entry_size_ceiling: u32,
+    max_tension_swing_ceiling: i64,
+    max_block_bytes_ceiling: u32,
+    max_active_proposals_ceiling: u32,
+    max_view_change_base_timeout_ms: u32,
+    max_view_change_max_timeout_ms: u32,
+    max_validator_set_size_ceiling: u32,
+    max_validator_set_changes_per_block: u32,
+    max_fee_tension_alpha_ceiling: i128,
+    max_median_tension_window_ceiling: u32,
+    max_confirmation_depth_ceiling: u64,
+    max_equivocation_evidence_per_block: u32,
+}
+
+impl From<LegacyConstitutionalCeilingsV1> for ConstitutionalCeilings {
+    fn from(v: LegacyConstitutionalCeilingsV1) -> Self {
+        let defaults = ConstitutionalCeilings::default();
+        Self {
+            max_proof_depth_ceiling: v.max_proof_depth_ceiling,
+            max_tx_gas_ceiling: v.max_tx_gas_ceiling,
+            max_block_gas_ceiling: v.max_block_gas_ceiling,
+            max_contract_steps_ceiling: v.max_contract_steps_ceiling,
+            max_address_length_ceiling: v.max_address_length_ceiling,
+            max_state_entry_size_ceiling: v.max_state_entry_size_ceiling,
+            max_tension_swing_ceiling: v.max_tension_swing_ceiling,
+            max_block_bytes_ceiling: v.max_block_bytes_ceiling,
+            max_active_proposals_ceiling: v.max_active_proposals_ceiling,
+            max_view_change_base_timeout_ms: v.max_view_change_base_timeout_ms,
+            max_view_change_max_timeout_ms: v.max_view_change_max_timeout_ms,
+            max_validator_set_size_ceiling: v.max_validator_set_size_ceiling,
+            max_validator_set_changes_per_block: v.max_validator_set_changes_per_block,
+            max_fee_tension_alpha_ceiling: v.max_fee_tension_alpha_ceiling,
+            max_median_tension_window_ceiling: v.max_median_tension_window_ceiling,
+            max_confirmation_depth_ceiling: v.max_confirmation_depth_ceiling,
+            max_equivocation_evidence_per_block: v.max_equivocation_evidence_per_block,
+            min_effective_fee_floor: defaults.min_effective_fee_floor,
+        }
     }
 }
 
@@ -569,6 +643,60 @@ mod tests {
             c.validate(&p),
             Err(CeilingViolation::MaxEquivocationEvidencePerBlock { .. })
         ));
+    }
+
+    // ── Patch-06 §31 floor ─────────────────────────────────────────────
+
+    #[test]
+    fn patch_06_default_floor_matches_spec_31_2() {
+        let c = ConstitutionalCeilings::default();
+        assert_eq!(
+            c.min_effective_fee_floor,
+            crate::tension::TensionValue::SCALE / 100
+        );
+    }
+
+    #[test]
+    fn patch_06_legacy_ceilings_roundtrip_with_default_floor() {
+        // A pre-Patch-06 serialized ceiling (no min_effective_fee_floor field)
+        // must deserialize under v5 code and receive the default floor, so
+        // replay of a v3/v4 genesis does not break when the node is
+        // upgraded.
+        let legacy = LegacyConstitutionalCeilingsV1 {
+            max_proof_depth_ceiling: 512,
+            max_tx_gas_ceiling: 16_000_000,
+            max_block_gas_ceiling: 800_000_000,
+            max_contract_steps_ceiling: 40_000,
+            max_address_length_ceiling: 4_096,
+            max_state_entry_size_ceiling: 4_194_304,
+            max_tension_swing_ceiling: 4_000_000,
+            max_block_bytes_ceiling: 8_388_608,
+            max_active_proposals_ceiling: 256,
+            max_view_change_base_timeout_ms: 60_000,
+            max_view_change_max_timeout_ms: 3_600_000,
+            max_validator_set_size_ceiling: 128,
+            max_validator_set_changes_per_block: 8,
+            max_fee_tension_alpha_ceiling: crate::tension::TensionValue::SCALE,
+            max_median_tension_window_ceiling: 64,
+            max_confirmation_depth_ceiling: 8,
+            max_equivocation_evidence_per_block: 16,
+        };
+        let bytes = bincode::serialize(&legacy).unwrap();
+        let current = ConstitutionalCeilings::from_canonical_bytes(&bytes).unwrap();
+        let defaults = ConstitutionalCeilings::default();
+        assert_eq!(
+            current.min_effective_fee_floor,
+            defaults.min_effective_fee_floor
+        );
+        assert_eq!(current.max_proof_depth_ceiling, 512);
+    }
+
+    #[test]
+    fn patch_06_current_ceilings_roundtrip_stable() {
+        let c = ConstitutionalCeilings::default();
+        let bytes = c.to_canonical_bytes();
+        let back = ConstitutionalCeilings::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(c, back);
     }
 
     #[test]
