@@ -66,6 +66,22 @@ Rust CLI with the cross-language protocol specified in PATCH_09 §E.2.
 - Cross-language: 10 fixtures × 2 ports = 20 conformance runs, all
   produce byte-identical output.
 
+### Release summary
+
+**1320 tests, 10 crates, persistent block log + snapshots, all CI green.**
+
+- 1320 tests across 10 crates (unchanged from v0.8.0 — Patch-09 §A.1
+  is additive via the new `crates/sccgub-audit-py/` Python crate,
+  which contributes 30 Python tests + 20 cross-language conformance
+  runs on top of the Rust baseline).
+- 10th crate is `sccgub-audit`; Python port lives alongside it as
+  `sccgub-audit-py` (not a workspace member — Python crate, pure
+  stdlib, independently installable).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable
+  from Rust source in one command.
+
 ### POSITIONING / PATCH cross-references
 
 Addresses the PATCH_09.md §A.1 commitment directly. Does not yet
