@@ -31,36 +31,88 @@ Date: 2026-04-18. Repo at v0.7.2, main @ b4c4daf.
 
 ## §1 What SCCGUB is
 
-SCCGUB is **a symbolic governance + attestation substrate**. A
-permissioned-or-permissionless chain whose distinguishing properties
-are:
+**SCCGUB is a cryptographically-bound-constitutional-immutability
+substrate for institutions whose legitimacy depends on inability to
+modify their own foundations.** The symbolic governance and
+attestation layers are the mechanisms through which this
+immutability is expressed and the substrate made auditable; the
+immutability itself is the moat.
 
-- A typed, versioned **precedence hierarchy** (Genesis > Safety >
-  Meaning > Emotion > Optimization) enforced as a first-class
-  consensus property, not a soft convention.
-- A **13-phase Φ traversal** that every state-changing transition
-  passes before admission. Domain-neutral phases; uniform discipline
-  across whatever the substrate hosts.
-- An **append-only causal lineage H** with deterministic supersession
-  semantics, not deletion.
-- A **Mfidel-grounded identity layer** that ties every authority to a
-  position in the 34×8 Ge'ez atomic matrix — see §5 for what that
-  does and does not mean.
-- **Constitutional ceilings** that bind governance proposals at
-  genesis-write-once and cannot be raised by any later governance
-  path.
+The genuine technical moat is one specific property:
 
-It is built to host **causally-anchored facts under governed
-authority**. Facts that benefit from this substrate include
-attestations of compliance, scientific replication records, regulated
-custody transfers, judicial proceedings, cultural-heritage provenance,
-and AI-agent reasoning traces. Whether any specific domain succeeds on
-the substrate depends on factors named openly in §8.
+> Constitutional ceilings are **genesis-write-once and not
+> modifiable by any governance path, including the governance path
+> itself.**
+
+No production-tier substrate I am aware of binds its own meta-
+governance at genesis with cryptographic finality. Cosmos governance
+can vote-raise its own parameters. Substrate runtime can be replaced
+by on-chain upgrade. Hyperledger Fabric channel admins can change
+channel policy. Tezos self-amends explicitly. SCCGUB cannot do any
+of these things to its constitutional ceilings; the ceilings sit
+below the governance layer, and governance cannot reach above
+itself. See PATCH_04.md §17 (ceilings spec) and `crates/sccgub-types/
+src/constitutional_ceilings.rs` (implementation). Audit pt3
+(`docs/THESIS_AUDIT_PT3.md`) walks every other claimed differentiator
+and finds them at parity with the modern alternative stack
+(Cosmos SDK + custom module + W3C VCs + DID + EAS + Fabric).
+
+**Supporting disciplines** (real but not the moat — the mechanisms
+through which immutability is expressed and audited):
+
+- **Uniform 13-phase Φ traversal** at consensus level (every
+  transition passes all 13 phases, no exceptions). The uniformity
+  is the discipline novelty; individual phases have alternative-
+  stack equivalents.
+- **Append-only causal lineage H** with deterministic supersession
+  via `canonical_successor` (Patch-07 §D.4).
+- **Mfidel-grounded identity** as semantic category (see §5). Pure
+  cultural-positioning differentiation; zero technical work. Real
+  for deployments where non-Western symbol-space matters.
+- **Three irreducible primitives** (ValueTransfer, Message,
+  Attestation) plus three standard-library templates. Table-stakes
+  for the niche, not the differentiator (see §3).
+
+### §1.1 Niche — narrow but sharp, not pinprick-narrow
+
+SCCGUB is built for **institutions whose legitimacy depends on
+inability to modify their own foundational rules.** Six concrete
+institutional targets:
+
+1. **Constitutional courts** and supreme courts whose institutional
+   guarantee is "the rules of judgment cannot be rewritten by the
+   judges."
+2. **Treaty enforcement bodies** whose legitimacy depends on
+   unchangeable cross-state commitments.
+3. **Indigenous data sovereignty councils** whose authority requires
+   cryptographic finality on community-owned attestation rules.
+4. **International standards bodies** whose foundational rule sets
+   must outlast the body itself.
+5. **Algorithmic accountability registries** under the EU AI Act and
+   analogous regimes — AI model provenance and training-data
+   attestation. Immutable meta-governance is exactly the property:
+   "this model's training-data attestation rules cannot be
+   retroactively rewritten by the model's operator."
+6. **Post-settlement legal archives** — court records, land
+   registries in jurisdictions with weak institutional trust,
+   academic publication records after retraction windows close.
+   The shape: decision-made, record-sealed, no party can change the
+   archive's own rules later.
+
+This is **narrow but sharp, not pinprick-narrow.** Each category
+contains many medium-scale registries, not a handful of global
+bodies. The addressable institutional surface is real and
+identifiable, while remaining true to the depth-in-niche framing.
+
+### §1.2 What SCCGUB is not
 
 SCCGUB is **not** a general-purpose L1, **not** a DeFi platform,
-**not** a "universal truth store," and **not** civilizational
-infrastructure. Earlier framings used these terms; this document
-retires them. See §10 for the explicit retirements.
+**not** a smart-contract execution environment, **not** a "universal
+truth store," **not** civilizational infrastructure, and **not** a
+"symbolic governance + attestation substrate" as the primary
+framing — that framing is retired by §10.2 in favor of the
+immutable-meta-governance lead above. The symbolic layer remains
+real and load-bearing for architecture; it is no longer the lead.
 
 ## §2 The kernel — what it is structurally
 
