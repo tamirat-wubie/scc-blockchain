@@ -1,7 +1,7 @@
 # SCCGUB Threat Model
 
-**Version:** 0.3.0
-**Last updated:** 2026-04-13
+**Version:** 0.4.0
+**Last updated:** 2026-04-18
 
 This document defines what the SCCGUB blockchain defends against, what it
 does not defend against, and the concrete security boundaries at each layer.
@@ -123,4 +123,69 @@ no unchecked overflow). Fixed-point precision: 18 decimal places via TensionValu
 - Zero unwrap/expect in consensus-critical production code
 - All `.len() as u32` casts guarded with `.min(u32::MAX as usize)`
 - All `+ 1` arithmetic in production code uses checked/saturating operations
-- 922 tests, CI green on Linux + Windows + security audit
+- 1320 Rust tests + 30 Python-port tests + 20 cross-language conformance runs, CI green on Linux + Windows + security audit (v0.8.1)
+
+Formal adversarial passes archived in `docs/audits/`:
+- **2026-04-18 DCA v0.5.0 Layers 2–3–4** — `docs/audits/2026-04-18-dca-v0.5.0-layers-2-3-4.md`. Cross-map of findings to remediation status in §9 below.
+
+---
+
+## 9. Residual Risks at the BFT Threshold
+
+The following risks are **explicitly accepted** as residuals at the 2/3+1-honesty assumption on which the BFT consensus model rests. Protocol-level remediation at the BFT threshold would contradict that assumption and is not planned. Operator-level mitigations are documented per-item.
+
+### 9.1 Quorum-collusion validator-set capture
+
+**Source:** 2026-04-18 DCA audit §G.4 + §H.3 (FRACTURE-L2-03). Tracking issue: #52.
+
+**Description:** A 2/3+1 quorum of colluding validators can:
+- Rotate any non-colluding validator's key to a key of the quorum's choosing via §18.6 `ValidatorSetChange::RotateKey` (satisfiable because §18.2 rule 7 only prohibits key *reuse*, not attacker-chosen fresh keys).
+- Slash any non-colluding validator via `EquivocationEvidence` constructed by the quorum (§22 admission requires only that signatures verify and the target was in active set — both trivially satisfiable for an innocent target).
+
+**Why accepted:** the attacker threshold matches the BFT safety-assumption threshold. A protocol defense *at* 2/3+1 would break the assumption that 2/3+1 is honest.
+
+**Operator mitigations:**
+- **Validator selection diligence.** Treat validator-set composition as a first-class governance decision; do not admit validators without independently verified identity and operational-security posture.
+- **Multi-sig validator keys.** Where practical, validators operate their signing key under an M-of-N threshold scheme internal to the validator's organization. Compromising one signer's credentials is insufficient.
+- **Off-chain social attestation.** Validator identity anchored to externally-verifiable commitments (stake, legal identity, reputation). Chain-level governance remains the authoritative on-chain source, but off-chain slashing-equivalent social mechanisms raise the cost of collusion.
+
+**Residual:** a 2/3+1 quorum that coordinates under adversarial intent can capture the validator set. No protocol defense exists; none is planned.
+
+### 9.2 Slashing as privilege attack
+
+**Source:** 2026-04-18 DCA audit §G.4, sub-item.
+
+**Description:** The same quorum-collusion posture that enables validator-set capture also enables weaponization of slashing: the colluding quorum constructs two conflicting votes under the target validator's key and admits them as `EquivocationEvidence`. Target is slashed; quorum retains control.
+
+**Why accepted:** same as 9.1 — the attack requires 2/3+1 collusion, at which point the BFT safety assumption is already broken.
+
+**Operator mitigations:**
+- Same as 9.1.
+- Evidence-monitoring tooling can alert non-colluding validators to emerging patterns (e.g., Remove events targeting validators outside the quorum), supporting off-chain coordination to remove the colluding quorum via governance before capture completes.
+
+**Residual:** weaponized slashing is structurally possible under quorum collusion. Off-chain monitoring is the only early-warning mechanism.
+
+### 9.3 Accepted-for-now vs. accepted-forever
+
+These residuals are accepted **under the current BFT model**. They are not accepted under a hypothetical future consensus model. Specifically:
+
+- Future work on **quorum-robust identity** (e.g., stake-collateralized validator registration, decentralized social recovery of captured validator-agents, proof-of-personhood layers) could narrow the quorum-collusion attack surface *below* the 2/3+1 threshold. Such work is not scoped to any current patch but is not foreclosed.
+- **Chain-forking recovery** under detected quorum capture is an operational-continuity mechanism outside the protocol. Operators facing confirmed quorum capture may coordinate an external fork from the last-known-honest state; this breaks on-chain consensus with the captured chain but preserves honest operator continuity.
+
+---
+
+## 10. Deferred compliance and recovery gaps (cross-reference)
+
+The following fractures from the 2026-04-18 DCA audit are **not accepted as residuals** — they are tracked for remediation but not addressed in the current release. Each has its own tracking issue:
+
+| Issue | Fracture | Layer | Triage disposition |
+|---|---|---|---|
+| #50 | Veto-timelock timing reconciliation | L2 | spec-patch candidate |
+| #51 | State growth operational tooling + fast-sync | L4 | operational workstream |
+| #53 | Regulatory impossibility lock-in | L3 | quarterly review (first review 2026-07-18) |
+| #54 | Evidence-submission incentive gap | L2 | design-required |
+| #55 | Ceiling-lowering asymmetric invariant | L2 | spec-patch candidate |
+| #56 | Non-validator key-recovery under compromise | L4 | design-required |
+| #57 | §13 amendment: DCA-before-merge discipline | governance | spec-patch candidate |
+
+Unlike §9 residuals, these are addressable within the current protocol paradigm. Deferral is scheduling, not acceptance.
