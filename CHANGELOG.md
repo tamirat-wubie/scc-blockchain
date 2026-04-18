@@ -2,6 +2,67 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.4] — Patch-07: wire §32 fork-choice into Chain::should_switch_to
+
+Closes audit item H.1′ (v0.6.3 audit): the live `Chain::should_switch_to`
+no longer uses the pre-Patch-06 implicit (finalized_height, total_height)
+rule; it now routes through `sccgub_consensus::fork_choice::ChainTip::score_cmp`,
+the §32 lexicographic ordering declared in PATCH_06.md.
+
+Before this PR: the declared fork-choice rule was dead code from a
+production standpoint. `select_canonical_tip` existed and was
+unit-tested, but the live import path used a different rule — honest
+nodes could select divergent tips under adversarial network ordering.
+G.11 in the v0.6.3 audit.
+
+After this PR: `should_switch_to` constructs a `ChainTip` from each
+chain and compares via `score_cmp`. The BFT-mode safety valve is
+retained (both chains in deterministic mode OR finality-tied reorgs
+refused) to preserve pre-Patch-06 behavior where the new rule would
+equivalently admit a reorg.
+
+### Design notes
+
+- `cumulative_voting_power` is approximated by block height — each
+  committed block represents ≥⅔ of active voting power, so height is
+  a faithful proxy for "cumulative signed work" without walking every
+  precommit set on every comparison. A dedicated per-block counter
+  folded into `block.header` is available as a follow-up if a tighter
+  accounting becomes necessary.
+- `is_safe_reorg` is **not** yet called — it needs a common-ancestor
+  height which `Chain` does not currently track. The BFT-mode tie
+  refusal serves as the belt-and-braces equivalent until common-
+  ancestor tracking lands.
+
+### New test
+
+`chain::tests::patch_06_fork_choice_uses_score_cmp_lexicographic_ordering`
+is a regression fence against the primary-component-dominates property:
+a chain with higher `finalized_depth` MUST beat a chain with higher
+`height` when the two disagree. This was not true under the pre-§32
+rule (it was, coincidentally, sometimes true for non-trivial cases —
+making the bug silent).
+
+### Release summary
+
+**1219 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1219 tests across 9 crates (up from 1217 in v0.6.3).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. All 6 pre-existing `test_fork_choice_*` tests pass unchanged:
+the §32 rewiring is behavior-equivalent on the scenarios they cover
+(finalized_depth tiebreak first, height tiebreak second, BFT-mode
+incumbency preserved). Hash tie-break is new but was reachable only
+via same-finalized-same-height-different-block_id which the old rule
+would have said "no switch" for — §32 says "switch to whichever has
+the greater block_id," a strictly-deterministic total order.
+
 ## [v0.6.3] — Patch-07 §A groundwork: multi-validator convergence test
 
 Patch-level release. Establishes the first multi-validator integration
