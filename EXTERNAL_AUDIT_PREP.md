@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
-**Version:** 0.7.2
+**Version:** 0.8.0
 **Date:** 2026-04-18
-**Repo:** 9 crates, 1293 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 10 crates, 1320 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`)
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees

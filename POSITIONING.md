@@ -728,6 +728,17 @@ remain operator responsibility outside this PR.
 
 ## §11 Ceiling Verification — The Moat's Mechanical Correctness
 
+> **Status (v0.8.0, 2026-04-18)**: verifier shipped per PATCH_08 §X.
+> `crates/sccgub-audit::verify_ceilings_unchanged_since_genesis` is
+> live with 27 unit tests + 10 conformance oracle cases.
+> INV-CEILINGS-WRITE-ONCE and INV-CEILINGS-NEVER-RAISED-IN-HISTORY
+> promoted from DECLARED-ONLY to HELD in `docs/INVARIANTS.md`.
+> Standalone CLI runnable as `sccgub-audit verify-ceilings
+> --chain-state <path>` with `--json` for machine-readable output.
+> Cross-language implementations and binary snapshot reader remain
+> deferred to Patch-09; public verification endpoint with ≥3
+> independent operators remains operator scope per §11 below.
+
 The §1 moat (immutable meta-governance) is **structurally meaningful
 only if it is externally auditable** by parties that do not trust
 the maintainer. An institution evaluating SCCGUB for a constitutional-
