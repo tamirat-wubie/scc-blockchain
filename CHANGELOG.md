@@ -45,9 +45,9 @@ making the bug silent).
 
 ### Release summary
 
-**1219 tests, 9 crates, persistent block log + snapshots, all CI green.**
+**1218 tests, 9 crates, persistent block log + snapshots, all CI green.**
 
-- 1219 tests across 9 crates (up from 1217 in v0.6.3).
+- 1218 tests across 9 crates (up from 1217 in v0.6.3).
 - 27 versioned REST endpoints with CORS.
 - 14 machine-readable ErrorCode variants.
 - OpenAPI contract for the 27 versioned API routes, refreshable from

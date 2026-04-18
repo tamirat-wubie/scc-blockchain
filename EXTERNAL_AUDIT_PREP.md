@@ -2,7 +2,7 @@
 
 **Version:** 0.6.4
 **Date:** 2026-04-18
-**Repo:** 9 crates, 1219 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 1218 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
