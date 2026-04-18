@@ -23,6 +23,19 @@ bearing for decisions.
 
 # Thesis Audit — Governance Kernel + Adapters / Universal Truth Store
 
+> **Cross-reference (added post-pt3):** Pt1's competitive analysis
+> (§F below) compared SCCGUB broadly against Cosmos SDK, Polkadot,
+> Fabric, Canton, and found various dimensional weaknesses in each.
+> Pt3 ([`docs/THESIS_AUDIT_PT3.md`](THESIS_AUDIT_PT3.md)) revealed
+> that on most dimensions these comparables match or exceed SCCGUB.
+> The one dimension where they do not is **ceiling immutability** —
+> and that dimension was not highlighted in this document. Pt1's
+> competitive analysis is **not wrong but it is incomplete**; the
+> real comparison is narrow, not broad. Readers should read pt3
+> alongside this document. Pt1's body is preserved unedited as
+> historical record; this cross-reference at the top is the
+> note-to-file the audit trail required.
+
 **Under**: Deterministic Causal Auditor discipline. Adversarial, not constructive.
 **Target**: the two thesis documents reproduced below in §A (verbatim).
 **Frame**: SCCGUB repo at `v0.6.5` (9 crates, 62,083 lines of Rust across
