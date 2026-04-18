@@ -4,7 +4,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Hardening-stage governed blockchain kernel - v0.7.2 (Tier-2 primitives + Patch-06/07 property tests). Protocol spec at [PROTOCOL.md](PROTOCOL.md) with amendments at [PATCH_04.md](PATCH_04.md) (§15–§19, v3), [PATCH_05.md](PATCH_05.md) (§20–§29, v4), and [PATCH_06.md](PATCH_06.md) (§30–§34, v5 — Layer 2 hardening: forgery-veto authorization, fee floor, fork-choice rule, pruning contract, live-upgrade protocol). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 1293 tests in the current workspace listing. New chains default to block version 2 (v3/v4/v5 are opt-in; see [PATCH_04.md §19](PATCH_04.md), [PATCH_05.md §28](PATCH_05.md), [PATCH_06.md §35](PATCH_06.md)). CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md). **Canonical product positioning, scope, and retired framings: [POSITIONING.md](POSITIONING.md).**
+**Status:** Hardening-stage governed blockchain kernel - v0.8.0 (Patch-08 ceiling-immutability verifier — `sccgub-audit` crate). Protocol spec at [PROTOCOL.md](PROTOCOL.md) with amendments at [PATCH_04.md](PATCH_04.md) (§15–§19, v3), [PATCH_05.md](PATCH_05.md) (§20–§29, v4), and [PATCH_06.md](PATCH_06.md) (§30–§34, v5 — Layer 2 hardening: forgery-veto authorization, fee floor, fork-choice rule, pruning contract, live-upgrade protocol). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 1320 tests in the current workspace listing. New chains default to block version 2 (v3/v4/v5 are opt-in; see [PATCH_04.md §19](PATCH_04.md), [PATCH_05.md §28](PATCH_05.md), [PATCH_06.md §35](PATCH_06.md)). CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md). **Canonical product positioning, scope, and retired framings: [POSITIONING.md](POSITIONING.md).**
 
 ## Where It Stands (Executive Summary)
 
@@ -45,7 +45,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **No state pruning:** RetentionClass types exist but no pruning implementation.
 
 
-## Architecture (9 crates)
+## Architecture (10 crates)
 
 | Layer | Crate | Description |
 |-------|-------|-------------|
@@ -58,6 +58,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 | 1 | `sccgub-types` | 25 modules: blocks, transitions, causal graph, events, economics, compliance, artifacts, attestations, lineage, rights, sessions, disputes |
 | 0 | `sccgub-crypto` | BLAKE3, Ed25519, Merkle proofs, Argon2id+ChaCha20-Poly1305 keystore, role keys |
 | - | `sccgub-network` | Peer protocol, 10 message types, peer registry + basic p2p runtime |
+| audit | `sccgub-audit` | Externally-runnable moat verifier — `verify_ceilings_unchanged_since_genesis(...)` + standalone CLI. Dependency-isolated by design (depends only on `sccgub-types`). PATCH_08 §X. |
 
 ## Key Properties
 
@@ -187,7 +188,7 @@ sccgub info               # Spec + invariants reference
 ## Quick Start
 
 ```bash
-cargo build                    # Build all 9 crates
+cargo build                    # Build all 10 crates
 cargo test                     # Run all tests
 cargo run -- init              # Initialize chain
 cargo run -- produce --txs 5   # Produce a block

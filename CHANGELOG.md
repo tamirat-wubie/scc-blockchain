@@ -2,6 +2,107 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.8.0] — Patch-08 §X — `sccgub-audit` ceiling-immutability verifier (moat-defining)
+
+Closes the load-bearing follow-up commitment from POSITIONING §11
+and PATCH_08.md §B. Ships the `sccgub-audit` crate — an externally-
+runnable verifier that promotes INV-CEILINGS-WRITE-ONCE and
+INV-CEILINGS-NEVER-RAISED-IN-HISTORY from DECLARED-ONLY to **HELD**.
+
+Until this release the §1 moat ("constitutional ceilings genesis-
+write-once and not modifiable by any governance path") was held by
+*absence of any write code path*. That is sufficient for the
+property to hold but not for it to be **demonstrably held to a third
+party**. v0.8.0 makes the property externally auditable: any third
+party with read access to the chain log can run the verifier and
+get a deterministic, pure-function answer without reading source
+code or trusting the maintainer.
+
+### New crate: `sccgub-audit`
+
+Per PATCH_08.md §C — dependency-isolated by design. Depends only on
+`sccgub-types` (and `serde`/`bincode`/`blake3`/`thiserror`/`clap`).
+**Does NOT depend** on `sccgub-state`, `sccgub-execution`,
+`sccgub-consensus`, `sccgub-governance`, `sccgub-network`,
+`sccgub-api`, or `sccgub-node`. The verifier exists to be checked
+by parties who do not trust the rest of the substrate; pulling in
+the substrate as a dependency would defeat that property.
+
+Library surface:
+
+- `verify_ceilings_unchanged_since_genesis(chain_state) -> Result<(), CeilingViolation>`
+- `ChainStateView` trait (full-node / snapshot / light-client modes)
+- `JsonChainStateFixture` — v1 input format (binary snapshot reader
+  deferred to Patch-09 per PATCH_08.md §C.4)
+- `CeilingFieldId` — exhaustive enum of every `ConstitutionalCeilings`
+  field (18 variants; future ceiling additions MUST add variants
+  in same PR or the verifier fails to compile, per PATCH_08.md §B.4)
+- `CeilingValue` — type-erased value carrier (U32/U64/I64/I128)
+- `CeilingViolation` — 4 variants per PATCH_08.md §B.3
+
+Two binaries:
+
+- `sccgub-audit verify-ceilings --chain-state <path> [--json]` —
+  exit code 0/1/2 distinguishes verified / violated / couldn't-run
+- `sccgub-audit-conformance` — internal cross-check binary that
+  verifies the verifier's output matches an independent oracle on
+  10 synthetic test cases (mutation-testing-in-spirit per
+  PATCH_08.md §D.3)
+
+### Test coverage per PATCH_08 §D
+
+27 unit tests + 10 conformance oracle cases:
+
+- Mandatory cases: empty history → Ok, every-field-preserved → Ok,
+  per-field-drift detected, short-circuit on first violation,
+  degenerate `activation_height = 0`, non-monotonic history →
+  HistoryStructurallyInvalid, GenesisCeilingsUnreadable propagation,
+  CeilingsUnreadableAtTransition propagation
+- Adversarial cases: pre-transition drift (subtler attack than
+  post-transition), encoding-portability via PartialEq comparison,
+  drift in middle of long history
+- Pure-function property: verifier output deterministic over input
+- Conformance oracle agreement on all 10 synthetic chain histories
+
+### INVARIANTS ledger
+
+Both Tier-0 ceiling-immutability invariants promoted to **HELD**.
+Ledger summary moves from 22:8 to **24:6** HELD:DECLARED-ONLY ratio.
+The §1 moat is no longer rhetoric — it is structurally verified
+by a pure-function externally-runnable verifier. POSITIONING §11
+commitment fulfilled.
+
+### Release summary
+
+**1320 tests, 10 crates, persistent block log + snapshots, all CI green.**
+
+- 1320 tests across 10 crates (up from 1293 in v0.7.2; the +27
+  are sccgub-audit unit tests).
+- 10th crate is `sccgub-audit` (audit-target tier, not a workspace
+  layer in the consensus sense — see Architecture table).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable
+  from Rust source in one command.
+
+### Breaking changes
+
+None. The `sccgub-audit` crate is purely additive — does not modify
+any existing chain rule, schema, or invariant. Existing chains can
+be audited by the new verifier without upgrade.
+
+### Follow-up actions surfaced (not in this PR)
+
+- **Patch-09** — cross-language implementation of the verifier
+  (Go / Python / TypeScript) per POSITIONING §11 and PATCH_08 §C.3
+- **Patch-09** — binary-snapshot reader for the CLI's `--chain-state`
+  flag (currently JSON fixture only) per PATCH_08 §C.4
+- **Operator scope** — public verification endpoint operated by ≥3
+  independent parties per POSITIONING §11
+- **Patch-N (PQC)** — ensure PQC migration is recognized by the
+  verifier as a non-ceiling-raising chain-version transition per
+  POSITIONING §8.6 and PATCH_08 §G
+
 ## [v0.7.2] — Patch-06 consensus property tests
 
 Patch-level release. Extends the property-test pattern from v0.7.1 to

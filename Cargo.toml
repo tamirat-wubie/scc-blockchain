@@ -10,10 +10,11 @@ members = [
     "crates/sccgub-network",
     "crates/sccgub-api",
     "crates/sccgub-node",
+    "crates/sccgub-audit",
 ]
 
 [workspace.package]
-version = "0.7.2"
+version = "0.8.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/tamirat-wubie/scc-blockchain"

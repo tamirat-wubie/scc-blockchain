@@ -1,0 +1,35 @@
+[package]
+name = "sccgub-audit"
+version.workspace = true
+edition.workspace = true
+description = "External moat-verifier for SCCGUB: verify_ceilings_unchanged_since_genesis. Per PATCH_08.md and POSITIONING §11. Dependency-isolated by design — only sccgub-types and sccgub-crypto plus minimal external deps."
+
+# Per PATCH_08.md §C.2 — dependency-isolation requirement.
+# This crate exists to be checked by parties who do not trust the
+# rest of the substrate; pulling in the substrate as a dependency
+# defeats that property. ONLY sccgub-types is permitted (and
+# sccgub-crypto for hash primitives if/when light-client mode lands).
+# MUST NOT depend on sccgub-state/-execution/-consensus/-governance/
+# -network/-api/-node.
+[dependencies]
+sccgub-types = { path = "../sccgub-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+blake3 = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+
+[lib]
+name = "sccgub_audit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sccgub-audit"
+path = "src/bin/sccgub_audit.rs"
+
+# Conformance harness — internal test binary that cross-checks the
+# verifier against an independent oracle. Per PATCH_08.md §D.3.
+[[bin]]
+name = "sccgub-audit-conformance"
+path = "src/bin/sccgub_audit_conformance.rs"
