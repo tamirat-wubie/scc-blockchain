@@ -1,0 +1,484 @@
+<!--
+Purpose: Authoritative product positioning for SCCGUB. Replaces the
+implicit, drifting positioning that earlier theses ("governance kernel
++ adapters", "universal truth store") proposed but did not commit to.
+Reconciles the architecture against the consolidated audit findings in
+docs/THESIS_AUDIT.md (PR #33) and docs/THESIS_AUDIT_PT2.md (PR #34).
+
+Governance scope: this document declares what SCCGUB is, what it is
+not, what is open, and what is non-goal. Subsequent patches MUST
+reference this document when their scope intersects positioning. A
+patch that contradicts this document requires a positioning amendment
+PR before the patch lands.
+
+Dependencies: PROTOCOL.md v2.0, PATCH_04.md, PATCH_05.md, PATCH_06.md,
+PATCH_07.md, docs/INVARIANTS.md, docs/THESIS_AUDIT.md,
+docs/THESIS_AUDIT_PT2.md, docs/FINANCE_EXTRACTION_PLAN.md,
+docs/PRUNING_RESOLUTION_DESIGN.md.
+
+Invariants of this document:
+  - Every contestable claim is anchored to an in-tree artifact (commit,
+    file, audit reference) or named explicitly as open.
+  - No marketing-register language. No "civilizational." No "universal."
+    No "no existing chain has."
+  - Open problems are named, not solved. Solved problems cite the work
+    that solved them.
+
+Date: 2026-04-18. Repo at v0.7.2, main @ b4c4daf.
+-->
+
+# SCCGUB — Positioning
+
+## §1 What SCCGUB is
+
+SCCGUB is **a symbolic governance + attestation substrate**. A
+permissioned-or-permissionless chain whose distinguishing properties
+are:
+
+- A typed, versioned **precedence hierarchy** (Genesis > Safety >
+  Meaning > Emotion > Optimization) enforced as a first-class
+  consensus property, not a soft convention.
+- A **13-phase Φ traversal** that every state-changing transition
+  passes before admission. Domain-neutral phases; uniform discipline
+  across whatever the substrate hosts.
+- An **append-only causal lineage H** with deterministic supersession
+  semantics, not deletion.
+- A **Mfidel-grounded identity layer** that ties every authority to a
+  position in the 34×8 Ge'ez atomic matrix — see §5 for what that
+  does and does not mean.
+- **Constitutional ceilings** that bind governance proposals at
+  genesis-write-once and cannot be raised by any later governance
+  path.
+
+It is built to host **causally-anchored facts under governed
+authority**. Facts that benefit from this substrate include
+attestations of compliance, scientific replication records, regulated
+custody transfers, judicial proceedings, cultural-heritage provenance,
+and AI-agent reasoning traces. Whether any specific domain succeeds on
+the substrate depends on factors named openly in §8.
+
+SCCGUB is **not** a general-purpose L1, **not** a DeFi platform,
+**not** a "universal truth store," and **not** civilizational
+infrastructure. Earlier framings used these terms; this document
+retires them. See §10 for the explicit retirements.
+
+## §2 The kernel — what it is structurally
+
+The kernel comprises:
+
+| Component | Code locus |
+|---|---|
+| USCL algebra `𝕊 := ⟨Ι, Λ, Σ, Γ, H⟩` | `sccgub-types::*` |
+| Φ_gov mutation gate (sole write path) | `sccgub-execution::phi` |
+| 13-phase Φ traversal | `sccgub-execution::phi` |
+| Ψ judgment kernel (proof-carrying verdicts) | `sccgub-execution::*` |
+| H append-only lineage | `sccgub-state::*` |
+| Precedence hierarchy | `sccgub-types::governance` |
+| BFT consensus (two-round, k-block finality) | `sccgub-consensus::*` |
+| Mfidel identity (34×8 atomic matrix) | `sccgub-types::mfidel` |
+| Canonical encoding (bincode + BLAKE3 + Ed25519) | `sccgub-crypto::*` |
+| Constitutional ceilings | `sccgub-types::constitutional_ceilings` |
+
+Counts as of `b4c4daf`: 9 crates, 62,083 lines of Rust across
+`crates/`, 1,293 tests, all CI green on Ubuntu + Windows + security
+audit.
+
+The kernel today **also owns finance-specific state** (`BalanceLedger`,
+`Treasury`, escrow state, asset registry, fee composition) that
+properly belongs in a domain adapter. Extraction is planned per
+[`docs/FINANCE_EXTRACTION_PLAN.md`](docs/FINANCE_EXTRACTION_PLAN.md).
+The plan is honest about its 6–9 month cost and its 5 hard
+prerequisites; until those prerequisites resolve, the kernel
+intentionally keeps finance in place rather than ship a half-extracted
+intermediate state.
+
+## §3 Tier-2 primitives — three irreducible, three templates
+
+The refined thesis proposed six universal Tier-2 primitives. The
+audit identified that three of the six structurally decompose into
+the other three. Patch-07 ([PATCH_07.md](PATCH_07.md)) shipped the
+3+3 split:
+
+**Irreducible kernel primitives:**
+
+- **`ValueTransfer`** — A→B transfer of an asset under
+  conservation. Existing as `SymbolicTransition` with kind `Transfer`.
+- **`Message`** — domain-tagged signed envelope, body capped at
+  `MAX_MESSAGE_BODY_BYTES = 1024` per INV-MESSAGE-RETENTION-PAID.
+  Larger payloads externalize via §4 discipline.
+- **`Attestation`** — signed claim by an authority. Today scoped to
+  artifacts (`ArtifactAttestation`); a generalized
+  domain-neutral variant is Patch-08 scope.
+
+**Standard-library templates compiled from primitives:**
+
+- **`EscrowCommitment`** — Message + ValueTransfer + bounded
+  predicate. Lives in `sccgub-types::primitives::escrow`. Decidability
+  bounds (`MAX_ESCROW_PREDICATE_STEPS = 10_000`,
+  `MAX_ESCROW_PREDICATE_READS = 256`) declared at construction per
+  INV-ESCROW-DECIDABILITY.
+- **`ReferenceLink`** — pointer between domains, typed by
+  `ReferenceKind`. Not a kernel primitive in the consensus-frozen
+  sense; adapters can vary the template.
+- **`SupersessionLink`** — first-valid-wins canonical successor
+  selection, deterministic across all validators per
+  INV-SUPERSESSION-UNIQUENESS.
+
+**Discipline**: a future primitive is admissible to the kernel only
+if it is genuinely irreducible (cannot be expressed as a typed
+payload over the existing three) AND is needed by at least three
+adapter categories. The discipline is documented; it is enforced by
+review, not by a Φ_gov predicate.
+
+## §4 Content-addressed off-chain discipline
+
+This is the structural commitment that closes four otherwise-separate
+audit fractures simultaneously: H.2 (GDPR vs append-only), H.8
+(Message-as-DoS), N3 (regulatory infeasibility of "H is sacred"), and
+the broader regulated-domain (HIPAA, financial PII) compatibility
+problem.
+
+**Rule**: any payload that is large (> ~1 KiB), sensitive (any PII or
+regulated content), or operationally bulky (datasets, scans, long
+documents) **MUST** be stored off-chain by the producing adapter and
+referenced on-chain only by its content hash plus metadata.
+
+Concretely:
+
+- The kernel `Message` body is hard-capped at
+  `MAX_MESSAGE_BODY_BYTES = 1024`. Anything larger is structurally
+  invalid as a `Message` and must be carried as a `ReferenceLink`
+  pointing to off-chain content.
+- Attestations carry `claims_hash` (existing `ArtifactAttestation`
+  pattern), not the claim body itself. The off-chain document is the
+  ground truth; the attestation cryptographically commits to it
+  without retaining it on-chain.
+- Adapters are responsible for the lifecycle of their off-chain
+  storage: durability, retention policy, encryption-at-rest,
+  jurisdiction, deletion under right-to-erasure. The kernel never
+  retains the payload.
+- A right-to-erasure event in a regulated domain is implemented by
+  the adapter destroying the off-chain content; the on-chain hash
+  remains, but no party can produce the pre-image without the data.
+  This is the standard regulator-acceptable pattern (see GDPR
+  Working Party Opinion 05/2014; analogous treatments in HIPAA, BSA).
+
+**Consequence for INV-9 (append-only H)**: H continues to retain the
+hash forever. The substrate's claim is not "every fact is preserved
+in full" but "every committed claim is preserved in cryptographic
+form, and the off-chain content lifecycle belongs to the adapter."
+This is a real weakening of the original "H is sacred" framing — and
+it is the only weakening compatible with the regulatory regimes
+SCCGUB needs to coexist with.
+
+## §5 Mfidel — semantic category, not unique identifier
+
+The thesis documents and earlier README implied that Mfidel-grounded
+identity is the substrate's unique-identification scheme. The audit
+flagged that the 34×8 = 272-position matrix cannot uniquely identify
+authorities at any meaningful scale. The audit is correct.
+
+**Position commit**: Mfidel position is a **semantic category** that
+binds an authority to a Ge'ez-grounded symbolic frame. It is not a
+unique identifier and does not pretend to be one.
+
+Identity uniqueness comes from the **Ed25519 public key**. The
+canonical identity is:
+
+```text
+identity_id = BLAKE3("sccgub-identity-v1" || public_key || mfidel_seal)
+```
+
+The `public_key` makes the identifier unique. The `mfidel_seal`
+contributes the semantic category. Both are bound into the canonical
+hash so neither can be silently changed; replacing the
+`public_key` requires `KeyRotation` per Patch-04 §18.
+
+**Scope boundary**: SCCGUB's identity primitives are not currently
+FIPS / NIST / eIDAS certified. Institutions and jurisdictions that
+require certified identity primitives cannot adopt SCCGUB without
+either (a) a parallel substrate using certified primitives or (b)
+SCCGUB's primitives gaining certification through the relevant
+standards process. Neither is proposed as a current work item; both
+are open downstream paths.
+
+This is a **deliberate scope boundary**, not a defect. It defines
+which deployments SCCGUB is and is not for. SCCGUB is for
+deployments that accept BLAKE3 + Ed25519 + Mfidel-grounded identity
+as appropriate primitives. For deployments that require certified
+identity, SCCGUB is not the right substrate today.
+
+## §6 No native token
+
+Earlier theses proposed a `MUL` native token with "zero governance
+weight." The audit identified MUL as the single most
+regulatorily-loaded decision in the architecture: native token
+marketed + listed + value-accruing-from-platform-adoption is a
+prima-facie security in the US per Ripple, an asset-referenced token
+under MiCA Art. 16-18 if pegged via bridges, and triggers
+money-transmission licensing under BSA the moment any operator
+custodies it.
+
+**Position commit**: SCCGUB has no native token in v1.0 and no
+planned native token thereafter.
+
+Transactions that require fees pay in **user-supplied fee currencies**
+selected at adapter integration time. The finance adapter declares
+which assets it accepts as fee currency; the kernel routes fee
+payment through the adapter's `apply` handler. Candidates include
+USDC, EURe, regional CBDCs once available, or domain-specific
+non-tradable credits issued by trusted authorities.
+
+**The native-token decision is reversible only against very high
+evidence**: a counsel-supported, jurisdiction-by-jurisdiction
+analysis showing the regulatory tripwires can be defused, AND a
+demonstrated funding pathway that does not depend on token issuance,
+AND an adapter requirement the user-supplied-currency model cannot
+serve. The burden is on any future MUL proposal to clear all three;
+the burden is not on this document to defend their absence.
+
+The design consequence: SCCGUB is positioned as **infrastructure**,
+not as a tradable asset. The closest reference point is Hyperledger
+Fabric or Ceramic, both of which are tokenless. The funding model
+follows from this — see §9.
+
+## §7 Ten invariants as prerequisites to adapter work
+
+Per audit recommendation, no new domain adapter shall be developed
+beyond the planned finance extraction until all ten audit-raised
+invariants are HELD per [`docs/INVARIANTS.md`](docs/INVARIANTS.md):
+
+**From PR #33 audit (Part 1):**
+
+1. INV-DOMAIN-ISOLATION — adapter X cannot write to adapter Y's
+   keyspace except via declared cross-domain refs.
+2. INV-ADAPTER-SCHEMA-STABILITY — once an adapter is referenced,
+   its schema cannot change in ways that invalidate existing
+   references.
+3. INV-SUPERSESSION-CLOSURE — references to superseded facts have a
+   declared resolution policy (frozen-pointer, propagate-supersession,
+   or reject-original).
+4. INV-ADAPTER-AUTHORITY-CONTAINMENT — authority granted in
+   adapter X does not implicitly carry to adapter Y.
+
+**From PR #34 audit (Part 2):**
+
+5. INV-MESSAGE-RETENTION-PAID — held at the type layer in v0.7.0.
+   See `MAX_MESSAGE_BODY_BYTES`. Promotion to consensus-layer-held
+   pending phase integration.
+6. INV-ESCROW-DECIDABILITY — held at the type layer in v0.7.0.
+   See `EscrowPredicateBounds`. Promotion pending phase integration.
+7. INV-REFERENCE-DISCOVERABILITY — partial at the type layer (size
+   cap, self-reference rejection); target-side discovery policy
+   awaits adapter runtime.
+8. INV-SUPERSESSION-UNIQUENESS — held at the type layer in v0.7.0
+   via `canonical_successor`. Promotion pending phase integration.
+9. INV-ASSET-REGISTRY-AUTHORITY — asset registration requires a
+   verifiable issuer credential whose revocation propagates.
+10. INV-CREDENTIAL-PROVENANCE — every authority credential declares
+    its issuer chain up to a genesis-registered root.
+
+The discipline: adapter proliferation that outpaces invariant
+enforcement is the failure mode the audits most warned about. The
+ten-invariant gate is the structural defense.
+
+## §8 Open problems — named, not solved
+
+These problems do not admit a code-only solution. Naming them is the
+only honest treatment.
+
+### §8.1 Capital (audit H.1) — CRITICAL, no resolution
+
+SCCGUB has no funding plan. The pace of v0.6.0 → v0.7.2 (eight
+releases in one calendar day) is not a sustainable engineering
+model — it is a Claude-Code-assisted burst. Maintaining a substrate
+of this scale under sustained development requires either:
+
+- A funded full-time team (no candidate funder identified), OR
+- A foundation with corporate-sponsor model (no analogous corporate
+  infrastructure stakeholder identified), OR
+- A long-arc volunteer maintainer model (compatible with the
+  technical work but incompatible with deployed-adopter timelines).
+
+The audit's observation that Linux Foundation, W3C, Apache, and
+Signal each had specific identifiable funding mechanisms — and
+SCCGUB has none of those mechanisms available — is the load-bearing
+gap. Resolution requires a non-engineering decision the project has
+not made.
+
+### §8.2 GDPR / right-to-erasure (audit H.2) — STRUCTURALLY ADDRESSED, deployment-conditional
+
+The §4 off-chain discipline is the structural answer: regulated
+content is destroyed at the off-chain layer; the on-chain hash
+remains but cannot be used to reconstruct the pre-image without the
+underlying data. This pattern is regulator-recognized and is the
+basis on which other content-addressed substrates operate at the
+EU/UK/CA boundary.
+
+EU deployment specifically requires per-jurisdiction counsel review
+of the content-addressing pattern as applied. SCCGUB is not yet
+authorized as deployable in EU jurisdictions; a deployment claiming
+GDPR compatibility must obtain its own counsel opinion. The
+substrate provides the mechanism; it does not provide the
+authorization.
+
+### §8.3 Credential-issuance body (audit H.6) — UNDECIDED
+
+§7's INV-CREDENTIAL-PROVENANCE requires authority credentials to
+chain up to a genesis-registered root. SCCGUB has not named the
+body that issues genesis-root credentials. Until this is named,
+"governance runs on credential-bound precedence" is design intent,
+not design.
+
+The body's name, bylaws, funding model, succession plan, and
+capture-resistance protocol are out of scope for any technical
+patch. They are organizational decisions. Naming them is required
+before adapter proliferation begins; naming them is not yet done.
+
+The interim discipline: until the body is named, every authority
+credential issued for testing or pilot purposes carries an explicit
+"not-genesis-root" tag, so production deployment cannot depend on
+unrooted credentials by accident.
+
+### §8.4 Chain-break accounting (audit H.4) — STRUCTURALLY ADDRESSED, costed
+
+PATCH_06 §34 specifies the live-upgrade protocol. PATCH_07 §B
+([`docs/PRUNING_RESOLUTION_DESIGN.md`](docs/PRUNING_RESOLUTION_DESIGN.md))
+specifies the activation-height pattern for breaking changes.
+[`docs/FINANCE_EXTRACTION_PLAN.md`](docs/FINANCE_EXTRACTION_PLAN.md)
+§6 specifies the migration mechanics for the finance extraction
+specifically.
+
+The mechanism is built; the cost is honestly priced (~3 months of
+focused work per chain-version bump). What remains open is the
+sequencing: how many bumps in what order over what calendar window.
+Per the strategic guidance accepted in this document: **one
+invariant per chain-version bump, sequential**, with two weeks
+minimum on testnet between bumps. That sequencing is the discipline,
+not a hard schedule.
+
+## §9 Resource narrative — code velocity vs institutional velocity
+
+These two velocities are categorically different. Conflating them is
+the failure mode that produced the rejected "12 months to v1.0"
+estimate.
+
+**Code velocity** in this repo is high: 138 tests added in a single
+session, 8 patch releases in one calendar day, 1155 → 1293 tests over
+the v0.6.0 → v0.7.2 arc. With Claude-Code-assisted development and
+disciplined patch scope, a code-complete v1.0 (Tier-2 primitives
+phase-integrated, finance adapter extracted, two reference adapters
+shipping) is **plausible in 6–12 months of part-time focused work**.
+
+**Institutional velocity** runs on a different clock:
+
+- Domain expert partnerships for adapters: 6–18 months per partnership,
+  cold start.
+- Regulatory counsel for any jurisdiction-specific deployment: 3–6
+  months typical, longer for novel patterns.
+- Foundation formation (if pursued): 18–36 months minimum for
+  multi-stakeholder international.
+- Pilot adopter conversations: 12–24 months B2B/B2G sales cycle on
+  top of trust-building.
+
+**The honest formulation**: v1.0-as-code in 12 months is plausible.
+v1.0-as-deployed-with-real-adopters is **3–5 years from this
+document's date**, not 12 months, and that is contingent on §8.1
+resolution.
+
+This document does not treat these timelines as predictions. It
+treats them as scope boundaries. A roadmap claiming faster
+deployed-adoption timelines without a corresponding §8.1 resolution
+is not credible against current evidence.
+
+## §10 Declined framings
+
+The following framings appeared in earlier theses or README versions
+and are formally retired by this document. Future contributions —
+including by automated assistants — that re-introduce these framings
+require positioning amendment first.
+
+| Retired framing | Why retired |
+|---|---|
+| "Universal truth store" | Conflates aspiration with product. The substrate hosts governed assertions; it does not arbitrate truth. The framing also invites adoption claims (5% of scientific preprints, 5% of civic records) that have no accretion plan. |
+| "Civilizational infrastructure" | Adoption outcome described as architectural property. Same accretion-plan problem. Also commits the project to a capital model (foundation-scale, multi-decade) that §8.1 does not have. |
+| "No existing chain has governed attestation + messaging + value as uniform kernel primitives" | Marketing claim, technically false (Ethereum + EAS, Cosmos SDK, Hyperledger Fabric, Ceramic all approximate this). The real differentiator is precedence-as-first-class + 13-phase Φ + Mfidel grounding, which is genuinely uncommon, narrower, and defensible. State that instead. |
+| "Six universal primitives" | Three of the six are compositions. Patch-07 shipped the 3+3 split. Future documents must use the corrected count. |
+| "Wealth and authority structurally separated" | Holds only if credential issuance is wealth-independent. Per §8.3, the credential issuer is not yet named, so the separation is design intent, not design. State as such. |
+| "Foundation-scale capital" (without naming a vehicle) | Named, not planned. Every reference to foundation funding must either name a candidate vehicle or be flagged as unresolved per §8.1. |
+| "Mfidel-grounded uniqueness" | The 272-position matrix does not provide uniqueness. Per §5, Mfidel is semantic category; uniqueness comes from the public key. Future references must use the §5 formulation. |
+
+## §11 Non-goals
+
+Explicit non-goals. Stated to prevent scope creep and to set
+expectations clearly.
+
+- **Not a general-purpose smart-contract platform.** The 13-phase Φ
+  and constitutional ceilings constrain what can run; arbitrary EVM
+  or WASM execution is not in scope. Adapters are the unit of
+  extension.
+- **Not a DeFi platform.** Finance is one adapter. The substrate is
+  not designed for high-frequency trading, AMM operation, or
+  derivatives. Adapter authors who build finance applications do so
+  with the substrate's discipline, not its specialization.
+- **Not a consumer crypto product.** No wallet UX work, no consumer
+  onboarding, no exchange integration as a project goal. These are
+  downstream products that may be built on the substrate by others.
+- **Not a Bitcoin/Ethereum/Solana competitor.** Different category.
+  Comparison to those is not the right reference class. The right
+  reference class is permissioned attestation substrates: Hyperledger
+  Fabric, Canton, Corda, Ceramic.
+- **Not a "blockchain for everything."** §3 discipline limits what
+  goes in the kernel. §7 discipline limits adapter proliferation.
+  Both are deliberate.
+- **Not a token launch.** Per §6.
+
+## §12 What this document does and does not do
+
+**This document does:**
+
+- Declare SCCGUB's structural commitments at v1.0.
+- Anchor every contestable claim to in-tree code, audits, or named
+  open problems.
+- Set scope boundaries (Mfidel jurisdictions, no-token economics,
+  10-invariant adapter gate).
+- Retire prior framings that conflict with the structural
+  commitments.
+
+**This document does not:**
+
+- Predict adoption.
+- Promise timelines beyond the §9 honest formulation.
+- Solve §8.1 (capital), §8.3 (credential body), or §8.2 (per-
+  jurisdiction GDPR authorization).
+- Authorize any specific adapter beyond finance extraction.
+- Endorse the "civilizational infrastructure" framing.
+
+## §13 Amendment process
+
+This document amends only by PR. A PR amending positioning must:
+
+1. Cite the structural change being committed.
+2. Identify which §1–§11 claims are affected.
+3. Identify which audits, patches, or invariants need parallel
+   amendment.
+4. Pass the same CI bar as code patches.
+5. Be reviewed against `docs/INVARIANTS.md` for consistency.
+
+A patch that changes runtime behavior in a way that contradicts this
+document **MUST** carry a positioning amendment in the same PR. CI
+or review will reject otherwise.
+
+## §14 Concise restatement
+
+SCCGUB is a symbolic governance + attestation substrate with three
+irreducible kernel primitives (ValueTransfer, Message, Attestation),
+content-addressed off-chain storage as the structural commitment for
+large or sensitive payloads, Mfidel-grounded semantic identity over
+Ed25519 unique identifiers, no native token, fees in user-supplied
+currencies, ten invariants gating adapter proliferation, and four
+named open problems that no code patch can close. The substrate is
+code-complete-plausible in 6–12 months of part-time focused work and
+deployment-credible in 3–5 years contingent on capital. It is not a
+universal truth store, not civilizational infrastructure, not a
+DeFi platform, not a token. It is what it is.
