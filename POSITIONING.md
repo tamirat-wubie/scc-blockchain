@@ -603,6 +603,31 @@ require positioning amendment first.
 | "Wealth and authority structurally separated" | Holds only if credential issuance is wealth-independent. Per §8.3, the credential issuer is not yet named, so the separation is design intent, not design. State as such. |
 | "Foundation-scale capital" (without naming a vehicle) | Named, not planned. Every reference to foundation funding must either name a candidate vehicle or be flagged as unresolved per §8.1. |
 | "Mfidel-grounded uniqueness" | The 272-position matrix does not provide uniqueness. Per §5, Mfidel is semantic category; uniqueness comes from the public key. Future references must use the §5 formulation. |
+| **"Symbolic governance as the primary moat"** | Audit pt3 (`docs/THESIS_AUDIT_PT3.md`) walked the symbolic layer (Φ + WHBinding + Mfidel + tension homeostasis) against Cosmos+VC+EAS+DID+Fabric and found parity or near-parity on every dimension except one. The genuine moat is **immutable meta-governance** (§1). The symbolic layer remains real and load-bearing for architecture; it moves from lead to supporting. See §10.2 for the substitute primary framing. |
+| **"Moat as portfolio of novel properties"** | The earlier framing implied SCCGUB's defensibility came from a portfolio of unique properties (Φ, WHBinding, Mfidel, tension, ceilings). Audit pt3 showed the moat is **one property** (immutable meta-governance), not a portfolio. Future framings must not enumerate "what makes SCCGUB different" as a multi-item list; the answer is one property, named explicitly. |
+
+### §10.2 Substitute primary framing (per Audit pt3)
+
+The retired "symbolic governance + attestation substrate" framing is
+replaced. Use **exactly** this language for README, status notes,
+external descriptions, and any public material:
+
+> **SCCGUB is a cryptographically-bound-constitutional-immutability
+> substrate for institutions whose legitimacy depends on inability
+> to modify their own foundations.**
+
+The earlier "symbolic governance + attestation substrate" formulation
+remains accurate as **internal architecture description** (§§3, 5)
+but is not the lead-with framing. The symbolic layer is the
+**mechanism** through which immutability is expressed and audited,
+not the moat itself.
+
+**Why this substitute is right**: it names the moat (immutable
+meta-governance), names the niche (institutions requiring foundation
+immutability per §1.1), and avoids both aspirational scope
+("universal," "civilizational") and decorative properties (Mfidel
+as primary, symbolic layer as primary). The framing is narrow,
+specific, and externally verifiable via §11's ceiling-verifier.
 
 ### §10.1 Retirement-scope cleanup checklist (precondition for merge)
 
