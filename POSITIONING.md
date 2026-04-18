@@ -339,45 +339,88 @@ not as a tradable asset. The closest reference point is Hyperledger
 Fabric or Ceramic, both of which are tokenless. The funding model
 follows from this — see §9.
 
-## §7 Ten invariants as prerequisites to adapter work
+## §7 Invariant gate — two-tier reorder per Audit pt3
 
-Per audit recommendation, no new domain adapter shall be developed
-beyond the planned finance extraction until all ten audit-raised
-invariants are HELD per [`docs/INVARIANTS.md`](docs/INVARIANTS.md):
+The invariant gate is **two-tier**, ordered. **Tier 0** must hold
+before Tier 1 invariants become load-bearing. If the ceilings aren't
+mechanically sound, the adapter gate is guarding nothing — there is
+no point preventing adapter sprawl over a moat that is itself porous.
+
+No new domain adapter shall be developed beyond the planned finance
+extraction until **both tiers** are HELD per
+[`docs/INVARIANTS.md`](docs/INVARIANTS.md). The reorder is a
+re-sequencing of existing invariants plus three new ceiling-related
+invariants that pt3 §I caveat made explicit.
+
+### §7.1 Tier 0 — Ceiling-immutability invariants (moat-defining, ordered first)
+
+These invariants hold the §1 moat. Without them, §1's
+"cryptographically-bound-constitutional-immutability" claim is
+rhetoric, not structure. They are subject to externally-auditable
+verification per §11.
+
+- **INV-CEILING-PRESERVATION (Patch-04 §17, HELD)** — every block
+  validator runs `ConstitutionalCeilings::validate(&params)` at
+  phase 10; any block whose `ConsensusParams` exceed any ceiling
+  field is rejected.
+- **INV-CEILINGS-WRITE-ONCE (currently UNDECLARED, target Patch-08)**
+  — `system/constitutional_ceilings` is set at genesis and **no
+  governance path can rewrite it.** Mechanical expression of the
+  §1 moat. Today's enforcement is by absence of any write code
+  path; promotion to HELD requires a declared invariant + the §11
+  verifier.
+- **INV-CEILINGS-NEVER-RAISED-IN-HISTORY (currently UNDECLARED,
+  target Patch-08)** — externally-auditable property: across every
+  `ChainVersionTransition` from genesis to tip, no ceiling field
+  ever went up. **This is what the §11 verifier checks.** External
+  parties verify this without trusting the maintainer.
+
+### §7.2 Tier 1 — Adapter-hygiene invariants (after the moat)
+
+These are the original ten audit-raised invariants. They prevent
+the adapter ecosystem from drifting after the moat is in place.
+Adapter work past finance extraction is gated on Tier 0 being HELD
+**plus** Tier 1 being HELD.
 
 **From PR #33 audit (Part 1):**
 
-1. INV-DOMAIN-ISOLATION — adapter X cannot write to adapter Y's
-   keyspace except via declared cross-domain refs.
-2. INV-ADAPTER-SCHEMA-STABILITY — once an adapter is referenced,
-   its schema cannot change in ways that invalidate existing
-   references.
-3. INV-SUPERSESSION-CLOSURE — references to superseded facts have a
-   declared resolution policy (frozen-pointer, propagate-supersession,
-   or reject-original).
-4. INV-ADAPTER-AUTHORITY-CONTAINMENT — authority granted in
-   adapter X does not implicitly carry to adapter Y.
+- INV-DOMAIN-ISOLATION — adapter X cannot write to adapter Y's
+  keyspace except via declared cross-domain refs.
+- INV-ADAPTER-SCHEMA-STABILITY — once an adapter is referenced,
+  its schema cannot change in ways that invalidate existing
+  references.
+- INV-SUPERSESSION-CLOSURE — references to superseded facts have a
+  declared resolution policy (frozen-pointer, propagate-supersession,
+  or reject-original).
+- INV-ADAPTER-AUTHORITY-CONTAINMENT — authority granted in
+  adapter X does not implicitly carry to adapter Y.
 
 **From PR #34 audit (Part 2):**
 
-5. INV-MESSAGE-RETENTION-PAID — held at the type layer in v0.7.0.
-   See `MAX_MESSAGE_BODY_BYTES`. Promotion to consensus-layer-held
-   pending phase integration.
-6. INV-ESCROW-DECIDABILITY — held at the type layer in v0.7.0.
-   See `EscrowPredicateBounds`. Promotion pending phase integration.
-7. INV-REFERENCE-DISCOVERABILITY — partial at the type layer (size
-   cap, self-reference rejection); target-side discovery policy
-   awaits adapter runtime.
-8. INV-SUPERSESSION-UNIQUENESS — held at the type layer in v0.7.0
-   via `canonical_successor`. Promotion pending phase integration.
-9. INV-ASSET-REGISTRY-AUTHORITY — asset registration requires a
-   verifiable issuer credential whose revocation propagates.
-10. INV-CREDENTIAL-PROVENANCE — every authority credential declares
-    its issuer chain up to a genesis-registered root.
+- INV-MESSAGE-RETENTION-PAID — held at the type layer in v0.7.0.
+  See `MAX_MESSAGE_BODY_BYTES`. Promotion to consensus-layer-held
+  pending phase integration.
+- INV-ESCROW-DECIDABILITY — held at the type layer in v0.7.0.
+  See `EscrowPredicateBounds`. Promotion pending phase integration.
+- INV-REFERENCE-DISCOVERABILITY — partial at the type layer (size
+  cap, self-reference rejection); target-side discovery policy
+  awaits adapter runtime.
+- INV-SUPERSESSION-UNIQUENESS — held at the type layer in v0.7.0
+  via `canonical_successor`. Promotion pending phase integration.
+- INV-ASSET-REGISTRY-AUTHORITY — asset registration requires a
+  verifiable issuer credential whose revocation propagates.
+- INV-CREDENTIAL-PROVENANCE — every authority credential declares
+  its issuer chain up to a genesis-registered root.
 
-The discipline: adapter proliferation that outpaces invariant
-enforcement is the failure mode the audits most warned about. The
-ten-invariant gate is the structural defense.
+### §7.3 Discipline rationale
+
+Adapter proliferation that outpaces invariant enforcement is the
+failure mode the audits most warned about. The two-tier gate is the
+structural defense: **Tier 0 secures the moat; Tier 1 secures the
+surface.** Neither tier is optional. A patch that proposes new
+adapter work while §7.1 is not HELD requires a positioning amendment
+under §14 to justify the deviation — explicitly explaining why the
+moat can credibly survive the deviation.
 
 ## §8 Open problems — named, not solved
 
