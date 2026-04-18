@@ -64,6 +64,22 @@ in PATCH_06.md §36.
 None. v2/v3/v4 chains replay unchanged. v5 features activate only on
 chains whose `header.version == 5`.
 
+### Release summary
+
+**1209 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1209 tests across 9 crates (up from 1155 in v0.5.0).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+- Five new Patch-06 invariants exercised by
+  `patch_06_conformance.rs` end-to-end + replay-determinism tests.
+- New modules: `sccgub-types::forgery_veto`, `sccgub-types::upgrade`,
+  `sccgub-state::pruning`, `sccgub-consensus::fork_choice`,
+  `sccgub-execution::forgery_veto`,
+  `sccgub-execution::chain_version_check`.
+
 ## [v0.5.0] — Patch-05: Fee Oracle Hardening, Mfidel VRF, Patch-04 Deferrals
 
 **Chain version introduced:** `header.version = 4`. v2 and v3 chains continue
