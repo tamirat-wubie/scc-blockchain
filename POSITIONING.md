@@ -146,6 +146,23 @@ intermediate state.
 
 ## §3 Tier-2 primitives — three irreducible, three templates
 
+**Frame correction (per Audit pt3)**: ValueTransfer + Message +
+Attestation are **table stakes for the niche, not the
+differentiator**. Most chains support equivalent operations: EAS
+provides typed attestations; EIP-712 provides typed signed messages;
+ERC-20 provides typed value transfer; Hyperledger Fabric provides
+all three within channels. Cosmos modules and Substrate pallets
+each implement equivalent primitives.
+
+**The uniqueness lives in how the ceilings governing the primitives
+are bound at genesis.** A future patch can change the
+`effective_fee` formula, but it cannot raise `min_effective_fee_floor`
+past its genesis value. A future governance proposal can RotatePower
+a validator, but it cannot raise `max_validator_set_size` past the
+genesis ceiling. The primitives are reproducible across substrates;
+the **immutability of the rules governing them is not** (see §11
+for the cryptographic verification of this property).
+
 The refined thesis proposed six universal Tier-2 primitives. The
 audit identified that three of the six structurally decompose into
 the other three. Patch-07 ([PATCH_07.md](PATCH_07.md)) shipped the
