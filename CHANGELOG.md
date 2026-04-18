@@ -2,6 +2,84 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.7.0] — Patch-07 §D Tier-2 universal primitives (audit-recommended scope)
+
+Implements the **reduced-commitment path** recommended by
+[docs/THESIS_AUDIT.md](docs/THESIS_AUDIT.md) and
+[docs/THESIS_AUDIT_PT2.md](docs/THESIS_AUDIT_PT2.md) rather than the full
+"six primitives" refined-thesis proposal. Three primitives remain
+structurally irreducible; three others land as composition templates
+with bounded semantics. No consensus/phase integration — these are
+declared types with unit-testable validation.
+
+### New: `sccgub-types::primitives` module
+
+Four primitive types, each with canonical bytes, domain separator,
+and `validate_structural()` method enforcing the declared invariant at
+construction:
+
+- **`Message`** — kernel-level communication envelope with hard caps:
+  `MAX_MESSAGE_BODY_BYTES = 1024`, `MAX_ROLE_NAME_BYTES = 64`,
+  `MAX_MESSAGE_CAUSAL_ANCHORS = 16`, anchors-must-be-unique. Closes
+  **INV-MESSAGE-RETENTION-PAID**. Larger payloads externalize via
+  content hash referenced through `ReferenceLink`.
+- **`EscrowCommitment`** — decidability-bounded escrow template.
+  `EscrowPredicateBounds { max_steps ≤ 10_000, max_reads ≤ 256 }`
+  fixed at creation; `timeout ∈ [2, 8_000_000]` blocks; three payload
+  variants (`Value`, `MessageRef`, `ActionRef`). Closes
+  **INV-ESCROW-DECIDABILITY**.
+- **`ReferenceLink`** — cross-domain reference with typed `kind`
+  (`DependsOn | Cites | Supersedes | Contradicts`),
+  `MAX_REFERENCE_KEY_BYTES = 128`, self-reference rejected. Closes
+  **INV-REFERENCE-DISCOVERABILITY** (partial — target-side policy is
+  deferred until `DomainAdapter` runtime exists).
+- **`SupersessionLink`** — first-valid-wins correction primitive.
+  `canonical_successor(links)` returns the link with minimum
+  `(height, link_id)` — deterministic across every honest node.
+  Closes **INV-SUPERSESSION-UNIQUENESS**.
+
+### Honest scope
+
+This patch does **NOT** ship:
+
+- The full "governance kernel + adapters" thesis.
+- A MUL token or AssetRegistry.
+- A `DomainAdapter` trait (intentionally deferred until first adapter
+  extraction validates the shape empirically).
+- Phase-level integration of any new primitive.
+- A generalized domain-neutral Attestation (existing
+  `ArtifactAttestation` remains artifact-specific; Patch-08 scope).
+- Namespace enforcement on the state keyspace.
+
+Rationale in [PATCH_07.md](PATCH_07.md) §A and §G.
+
+### New: `docs/INVARIANTS.md` consolidated ledger
+
+Single-file registry of every declared invariant across PROTOCOL.md v2.0
++ PATCH_04–PATCH_07, with enforcement locus (type/execution/consensus/
+state/doc-only) and status (HELD / UNIT-TESTED / STUBBED / DECLARED-ONLY).
+Current ratio: 22 HELD / 5 UNIT-TESTED / 1 STUBBED / 6 DECLARED-ONLY.
+Every DECLARED-ONLY entry is structural debt the substrate pays
+interest on until it becomes HELD.
+
+### Release summary
+
+**1268 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1268 tests across 9 crates (up from 1233 in v0.6.5).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+- 35 new Patch-07 unit tests: 11 on Message, 7 on EscrowCommitment,
+  6 on ReferenceLink, 8 on SupersessionLink + 3 primitive module
+  smoke tests.
+
+### Breaking changes
+
+None. Types land as non-consensus declarations; no existing invariant
+retracted; no state-root schema change; no OpenAPI surface change.
+
 ## [v0.6.5] — Patch-07: operator auth surface (H.3′ / A11)
 
 Closes audit item H.3′ from the v0.6.3 audit. PATCH_06.md §33.6 implied

@@ -21,6 +21,7 @@ pub mod key_rotation;
 pub mod lineage;
 pub mod mfidel;
 pub mod namespace;
+pub mod primitives;
 pub mod proof;
 pub mod receipt;
 pub mod rights;
