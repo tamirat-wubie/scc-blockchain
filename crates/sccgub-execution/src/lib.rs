@@ -3,6 +3,7 @@
 #![deny(clippy::iter_over_hash_type)]
 
 pub mod ceilings;
+pub mod chain_version_check;
 pub mod constraints;
 pub mod contract;
 pub mod cpog;
