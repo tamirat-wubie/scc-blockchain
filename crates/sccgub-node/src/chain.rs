@@ -848,7 +848,9 @@ impl Chain {
     /// Patch-06 §32 fork-choice rule: prefer the chain with the highest
     /// score, where
     ///
-    ///     score(tip) = (finalized_depth, cumulative_voting_power, tie_break_hash)
+    /// ```text
+    /// score(tip) = (finalized_depth, cumulative_voting_power, tie_break_hash)
+    /// ```
     ///
     /// compared lexicographically. Higher wins. The tie-break hash
     /// (tip `block_id` as a big-endian integer) guarantees a total order
