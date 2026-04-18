@@ -466,6 +466,44 @@ invariant per chain-version bump, sequential**, with two weeks
 minimum on testnet between bumps. That sequencing is the discipline,
 not a hard schedule.
 
+### §8.5 Regulatory Precedent Gap (Audit pt3 H.14) — TWO-SIDED OPEN
+
+**The barrier**: SCCGUB has zero production precedent for
+cryptographically-bound-constitutional-immutability substrates in
+any major regulated jurisdiction (EU, US, UK, Singapore). The
+modern alternative stack (Cosmos-based deployments, Hyperledger
+Fabric, EAS, W3C VCs) has years of established compliance patterns;
+SCCGUB's pilot adopters in regulated domains will be **establishing
+precedent, not following it.** Counsel review must reason about
+novel substrate properties rather than relying on existing
+compliance patterns. First adopters bear the cost of regulator
+education.
+
+**The upside**: whoever lands the first compliant deployment in a
+regulated jurisdiction **writes the precedent** for that regime.
+The institutional value of being the canonical reference deployment
+in (e.g.) EU AI Act algorithmic-accountability registries is
+asymmetric — every subsequent deployment in that category cites the
+first.
+
+**Deployment-readiness dependencies — none yet committed**:
+
+- **Counsel engagement**: not yet contracted. Counsel review for a
+  first-of-category substrate runs $200K–$500K per jurisdiction,
+  longer than the standard 3–6 months.
+- **Regulator dialogue**: not yet initiated. Regulators in EU/US/UK
+  have not seen SCCGUB's submission package because the submission
+  package does not exist yet.
+- **Pilot partner**: not yet identified. The pilot partner is the
+  institution that will operate the first deployment under counsel
+  guidance; without one named, regulator dialogue has no concrete
+  use case to anchor on.
+
+This is named as **two-sided open**, not one-sided risk. The
+substrate provides the property; the operator carries the precedent
+risk; the precedent value accrues asymmetrically to the first
+adopter that survives counsel review.
+
 ## §9 Resource narrative — code velocity vs institutional velocity
 
 These two velocities are categorically different. Conflating them is
