@@ -1,9 +1,10 @@
 <!--
 Purpose: Consolidated ledger of every invariant declared across the
 SCCGUB specification (PROTOCOL.md v2.0, PATCH_04, PATCH_05, PATCH_06,
-PATCH_07). Kept in one place so future patches can see the entire
-invariant surface at a glance and tell "declared" from "held at compile
-time" from "held in execution" from "held by convention."
+PATCH_07, plus POSITIONING.md §7.1 amendments). Kept in one place so
+future patches can see the entire invariant surface at a glance and
+tell "declared" from "held at compile time" from "held in execution"
+from "held by convention."
 
 This document is a ledger, not a design proposal. New invariants go
 into the relevant patch spec first; they are mirrored here with their
@@ -29,7 +30,15 @@ Convention:
 
 # SCCGUB Invariant Ledger
 
-Current as of **v0.7.0** (Patch-07 tier-2 primitives).
+Current as of **v0.7.2 + POSITIONING §7.1 amendment** (PR #43,
+2026-04-18). Tier-0 / Tier-1 distinction added per Audit pt3
+finding that the SCCGUB moat reduces to one property: constitutional
+ceilings genesis-write-once with no governance path to raise. The
+ledger now classifies invariants into the moat-defining tier (Tier
+0) and the adapter-hygiene tier (Tier 1). Pre-tier sections (Patch-04
+through Patch-07) preserve their original organization for
+historical readability; the Tier-0 / Tier-1 sections lower in the
+document expose the moat structure.
 
 ## Pre-Patch invariants (PROTOCOL.md v1.0–v2.0)
 
@@ -85,11 +94,42 @@ Current as of **v0.7.0** (Patch-07 tier-2 primitives).
 | INV-REFERENCE-DISCOVERABILITY | PATCH_07 §D.3 | type-layer (`ReferenceLink::validate_structural`, self-reference rejected, `MAX_REFERENCE_KEY_BYTES = 128`) | UNIT-TESTED (target-side policy deferred) |
 | INV-SUPERSESSION-UNIQUENESS | PATCH_07 §D.4 | type-layer (`canonical_successor`: earliest-height-then-lexicographic-link_id) | UNIT-TESTED |
 
-## Audit-raised invariants NOT yet declared in code
+## Tier-0 ceiling-immutability invariants (POSITIONING §7.1, moat-defining)
 
-These six invariants were raised by `docs/THESIS_AUDIT.md` +
-`docs/THESIS_AUDIT_PT2.md` but are NOT yet declared in any spec
-section. Listed here so future patches know the surface.
+Added per POSITIONING.md §7.1 (PR #43, post-Audit-pt3 amendment).
+These are the invariants that hold the §1 moat
+(cryptographically-bound-constitutional-immutability). Without them,
+§1's claim is rhetoric, not structure. They are subject to
+externally-auditable verification per POSITIONING §11.
+
+**These take precedence over Tier-1 adapter-hygiene invariants in the
+adapter-work gate**: no new domain adapter shall be developed past
+finance extraction until **all Tier-0 invariants are HELD**.
+
+| ID | Declared in | Enforcement | Status |
+|---|---|---|---|
+| INV-CEILING-PRESERVATION | PATCH_04 §17 + POSITIONING §7.1 | execution-layer (`ceilings.rs` phase 10) — every block validator runs `ConstitutionalCeilings::validate(&params)`; any block whose `ConsensusParams` exceed any ceiling field is rejected | HELD (already shipped Patch-04; promoted to Tier-0 by POSITIONING §7.1 reorder; previously listed under Patch-04 invariants above and is the same invariant, now classified as moat-defining) |
+| INV-CEILINGS-WRITE-ONCE | POSITIONING §7.1 (target Patch-08 §X) | state-layer (`system/constitutional_ceilings` set at genesis; **no governance path can rewrite it**) — today enforced by absence of any write code path; promotion to HELD requires declared invariant + the §11 verifier | DECLARED-ONLY (target Patch-08) |
+| INV-CEILINGS-NEVER-RAISED-IN-HISTORY | POSITIONING §7.1 (target Patch-08 §X) | execution-layer + audit-layer (`verify_ceilings_unchanged_since_genesis(...)` per POSITIONING §11) — externally-auditable property: across every `ChainVersionTransition` from genesis to tip, no ceiling field ever went up. **This is what the §11 verifier checks. External parties verify without trusting the maintainer.** | DECLARED-ONLY (target Patch-08; moat-defining per POSITIONING §11) |
+
+**Important note on INV-CEILING-PRESERVATION**: this invariant
+appears in **both** the Patch-04 invariants section above AND the
+Tier-0 section here. It is **the same invariant** — POSITIONING §7.1
+reclassified it as Tier-0 / moat-defining without changing its
+declaration site. The duplication is intentional in the ledger:
+readers looking at Patch-04 history see it where it shipped;
+readers looking at the moat structure see it where it functions.
+A future patch that consolidates the ledger should add a
+cross-reference rather than removing either entry.
+
+## Tier-1 adapter-hygiene invariants (POSITIONING §7.2, after the moat)
+
+Renamed from "Audit-raised invariants NOT yet declared in code" per
+POSITIONING.md §7.2. These six invariants are the original ones
+raised by `docs/THESIS_AUDIT.md` + `docs/THESIS_AUDIT_PT2.md`.
+**Adapter work past finance extraction is gated on Tier-0 HELD plus
+all six of these HELD.** Listed here so future patches know the
+surface.
 
 | ID | Source | Enforcement (proposed) | Status |
 |---|---|---|---|
@@ -102,12 +142,14 @@ section. Listed here so future patches know the surface.
 
 ## Summary counts
 
-- **HELD**: 22 invariants
+- **HELD**: 22 invariants (unchanged; INV-CEILING-PRESERVATION counted once despite appearing in both Patch-04 and Tier-0 tables)
 - **UNIT-TESTED** (not yet phase-integrated): 5 invariants
 - **STUBBED**: 1 invariant (INV-STATE-BOUNDED — pruning execution deferred to Patch-07 §B; PATCH_06 §33.4.1 explains why)
-- **DECLARED-ONLY**: 6 invariants (audit-raised; spec work pending)
+- **DECLARED-ONLY**: 8 invariants (6 Tier-1 audit-raised + 2 new Tier-0 ceiling-immutability targeting Patch-08)
 
-**Total declared surface**: 34 invariants across v2.0 + Patch-04–07.
+**Total declared surface**: 36 invariants across v2.0 + Patch-04–07
++ POSITIONING §7.1 amendment (was 34; the +2 are
+INV-CEILINGS-WRITE-ONCE and INV-CEILINGS-NEVER-RAISED-IN-HISTORY).
 
 ## Reading the ledger
 
@@ -121,7 +163,17 @@ section. Listed here so future patches know the surface.
 - **DECLARED-ONLY** invariants are spec prose only; no enforcement
   locus exists yet. They are on the roadmap but not yet real.
 
+**Tier-0 vs Tier-1 distinction** (POSITIONING §7.1/§7.2): Tier-0
+invariants must HOLD before Tier-1 invariants become load-bearing.
+If the ceilings aren't mechanically sound, the adapter gate is
+guarding nothing. Adapter work past finance extraction is gated on
+Tier-0 HELD plus Tier-1 HELD. Neither tier optional.
+
 The single most important number here is the ratio of HELD to
-DECLARED-ONLY: at v0.7.0 it is 22:6. Every DECLARED-ONLY entry is a
-structural debt the substrate will pay interest on until it becomes
-HELD.
+DECLARED-ONLY: at v0.7.x with POSITIONING amendments it is **22:8**.
+Every DECLARED-ONLY entry is a structural debt the substrate will
+pay interest on until it becomes HELD. The two new Tier-0 entries
+(INV-CEILINGS-WRITE-ONCE, INV-CEILINGS-NEVER-RAISED-IN-HISTORY) are
+moat-defining structural debt: until they are HELD, the §1 moat is
+**rhetoric, not structure**, and POSITIONING §11's verifier is the
+mechanical correctness guarantee that promotes them to HELD.
