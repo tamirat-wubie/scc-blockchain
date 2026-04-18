@@ -147,6 +147,15 @@ impl Default for ConsensusParams {
 }
 
 impl ConsensusParams {
+    /// Patch-06 §33.2: pruning depth derived from `confirmation_depth`.
+    /// A trie entry is prunable only if the youngest block that touched
+    /// it has finality depth `>= pruning_depth`. Derived rather than
+    /// added as a separate field to avoid yet another schema migration;
+    /// defaults to `confirmation_depth * 16 = 32` blocks.
+    pub fn pruning_depth(&self) -> u64 {
+        self.confirmation_depth.saturating_mul(16)
+    }
+
     /// Canonical key under which `ConsensusParams` is stored in the trie.
     /// The `system/` prefix is writable by no transition kind (per ontology table),
     /// so this entry can only be set at genesis.
