@@ -65,7 +65,7 @@ pub fn verify_block_version_alignment(
             break;
         }
     }
-    if active_version as u32 == block_version {
+    if active_version == block_version {
         ChainVersionCheck::Aligned
     } else {
         ChainVersionCheck::Misaligned(ChainVersionRejection::VersionOutOfAlignment {

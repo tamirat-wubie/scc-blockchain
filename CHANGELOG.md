@@ -2,6 +2,68 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.0] — Patch-06: Layer 2 hardening (auth, fee floor, fork-choice, pruning, live-upgrade)
+
+**Chain version introduced:** `header.version = 5`. v2–v4 chains continue
+to replay under their existing rules; no forced migration. `v5` adds the
+five Patch-06 invariants on top of PROTOCOL.md v2.0.
+
+**Spec:** [PATCH_06.md](PATCH_06.md) — amends PROTOCOL.md v2.0. Introduces
+§30–§34.
+
+### Closes the top-5 fractures from the v0.5.0 adversarial audit
+
+- **H.3 (CRITICAL) Forgery-proof authorization** → §30 introduces the
+  `ForgeryVeto` envelope as the only admission vehicle for §15.7 Stage 2
+  vetoes. A veto requires cryptographic malleability evidence AND ≥⅓
+  voting-power of active-set attestations. Closes the "any caller can
+  DoS a synthetic Remove" gap. INV-FORGERY-VETO-AUTHORIZED.
+- **H.4 Fee floor** → §31 adds `min_effective_fee_floor` to
+  `ConstitutionalCeilings`. Post-multiplier clamp in
+  `effective_fee_median_floored` prevents coordinated low-tension
+  blocks from collapsing the fee below spam-resistance threshold.
+  Default 0.01 fee units; no-op on healthy chains. Legacy cascade via
+  `LegacyConstitutionalCeilingsV1`. INV-FEE-FLOOR-ENFORCED.
+- **H.5 Fork-choice determinism** → §32 declares the lexicographic rule
+  `score(tip) = (finalized_depth, cumulative_voting_power,
+  tie_break_hash)` and a reorg-safety predicate that rejects any reorg
+  past `confirmation_depth` finalized blocks. Exercises
+  INV-FORK-CHOICE-DETERMINISM via order-independent selection.
+- **H.1 State pruning contract** → §33 declares
+  `identify_prunable_admission_history` (retains newest per
+  `agent_id`, marks superseded entries older than `pruning_depth =
+  confirmation_depth * 16` as prunable) and the `PruningReceipt` with
+  a `state_root_preserved()` invariant. Execution path
+  (archive-and-delete over `pruned_archive/*`) stubbed with
+  `PruningError::NotYetWired`; Patch-07 wires the redb-backed runtime.
+  INV-STATE-BOUNDED contract.
+- **H.2 Live-upgrade protocol** → §34 introduces `UpgradeProposal` with
+  activation-height pattern, `DEFAULT_MIN_UPGRADE_LEAD_TIME = 14_400`
+  blocks, adjacent-version and proposal_id-consistency checks, and
+  `ChainVersionTransition` appended to
+  `system/chain_version_history`. `verify_block_version_alignment`
+  enforces INV-UPGRADE-ATOMICITY at block-import. Binary-registry
+  integration deferred to Patch-07.
+
+### Patch-06 v5 invariants
+
+- INV-FORGERY-VETO-AUTHORIZED
+- INV-FEE-FLOOR-ENFORCED
+- INV-FORK-CHOICE-DETERMINISM
+- INV-STATE-BOUNDED
+- INV-UPGRADE-ATOMICITY
+
+### Conformance
+
+`crates/sccgub-node/tests/patch_06_conformance.rs` exercises all five
+systems end-to-end plus a replay-determinism test. Deferrals enumerated
+in PATCH_06.md §36.
+
+### Breaking changes
+
+None. v2/v3/v4 chains replay unchanged. v5 features activate only on
+chains whose `header.version == 5`.
+
 ## [v0.5.0] — Patch-05: Fee Oracle Hardening, Mfidel VRF, Patch-04 Deferrals
 
 **Chain version introduced:** `header.version = 4`. v2 and v3 chains continue
