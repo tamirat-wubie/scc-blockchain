@@ -12,6 +12,7 @@ pub mod balances;
 pub mod constitutional_ceilings_state;
 pub mod escrow;
 pub mod key_rotation_state;
+pub mod pruning;
 pub mod store;
 pub mod tension;
 pub mod tension_history;

@@ -3,10 +3,12 @@
 #![deny(clippy::iter_over_hash_type)]
 
 pub mod ceilings;
+pub mod chain_version_check;
 pub mod constraints;
 pub mod contract;
 pub mod cpog;
 pub mod evidence_admission;
+pub mod forgery_veto;
 pub mod gas;
 pub mod invariants;
 pub mod key_rotation_check;

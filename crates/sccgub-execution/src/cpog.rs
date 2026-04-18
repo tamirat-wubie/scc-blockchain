@@ -154,11 +154,28 @@ pub fn validate_cpog(
         let tension_budget = state.state.tension_field.budget.current_budget;
         let gas_price = if block.header.version >= sccgub_types::block::PATCH_05_BLOCK_VERSION {
             // v4: pull the last W tensions from state and median them.
+            // Patch-06 §31: if ceilings are committed at genesis, apply the
+            // post-multiplier floor (INV-FEE-FLOOR-ENFORCED). If ceilings
+            // are absent (pre-Patch-04 chains replayed under v5 code) the
+            // unfloored v4 value is returned — the floor is a Patch-06 rule
+            // that only binds chains that carry ConstitutionalCeilings.
             match sccgub_state::tension_history::tension_history_from_trie(state) {
                 Ok(history) => {
                     let w = state.consensus_params.median_tension_window as usize;
                     let window = sccgub_state::tension_history::window(&history, w);
-                    econ.effective_fee_median(&window, tension_budget, &state.consensus_params)
+                    match sccgub_state::constitutional_ceilings_state::constitutional_ceilings_from_trie(state) {
+                        Ok(Some(ceilings)) => econ.effective_fee_median_floored(
+                            &window,
+                            tension_budget,
+                            &state.consensus_params,
+                            &ceilings,
+                        ),
+                        _ => econ.effective_fee_median(
+                            &window,
+                            tension_budget,
+                            &state.consensus_params,
+                        ),
+                    }
                 }
                 Err(e) => {
                     errors.push(format!(

@@ -14,6 +14,7 @@ pub mod dispute;
 pub mod domain;
 pub mod economics;
 pub mod events;
+pub mod forgery_veto;
 pub mod future;
 pub mod governance;
 pub mod key_rotation;
@@ -29,6 +30,7 @@ pub mod tension;
 pub mod timestamp;
 pub mod transition;
 pub mod typed_params;
+pub mod upgrade;
 pub mod validator_set;
 
 /// 32-byte hash used throughout the system.

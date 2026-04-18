@@ -7,6 +7,7 @@
 
 pub mod equivocation;
 pub mod finality;
+pub mod fork_choice;
 pub mod law_sync;
 pub mod partition;
 pub mod protocol;

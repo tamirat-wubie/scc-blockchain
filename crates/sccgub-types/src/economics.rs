@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consensus_params::ConsensusParams;
+use crate::constitutional_ceilings::ConstitutionalCeilings;
 use crate::tension::TensionValue;
 
 /// Economic model per v2.0 spec Section 13.
@@ -110,6 +111,33 @@ impl EconomicState {
         let alpha = TensionValue(params.fee_tension_alpha);
         let multiplier = one + alpha.mul_fp(ratio);
         self.base_fee.mul_fp(multiplier)
+    }
+
+    /// Patch-06 §31.2: v5 fee composition with a post-multiplier floor.
+    ///
+    /// Computes `effective_fee_median(...)` then clamps the result to
+    /// `max(computed, ceilings.min_effective_fee_floor)`. Closes
+    /// INV-FEE-FLOOR-ENFORCED: no matter how coordinated low-tension
+    /// blocks drive the median down, the returned fee cannot fall below
+    /// the floor.
+    ///
+    /// Callers that do not have access to `ConstitutionalCeilings` (e.g.,
+    /// tests or pre-v5 replay paths) continue to call
+    /// `effective_fee_median` directly; no existing call site is broken.
+    pub fn effective_fee_median_floored(
+        &self,
+        prior_tensions: &[TensionValue],
+        tension_budget: TensionValue,
+        params: &ConsensusParams,
+        ceilings: &ConstitutionalCeilings,
+    ) -> TensionValue {
+        let computed = self.effective_fee_median(prior_tensions, tension_budget, params);
+        let floor = TensionValue(ceilings.min_effective_fee_floor);
+        if computed < floor {
+            floor
+        } else {
+            computed
+        }
     }
 }
 
@@ -370,6 +398,75 @@ mod tests {
         // window above is 100.
         assert_eq!(baseline_fee, attacked_high_fee);
         assert_eq!(baseline_fee, attacked_low_fee);
+    }
+
+    // ── Patch-06 §31 base-fee floor ────────────────────────────────────
+
+    #[test]
+    fn patch_06_floor_is_noop_when_computed_exceeds_floor() {
+        // Default ConstitutionalCeilings.min_effective_fee_floor = SCALE/100
+        // (= 0.01). Default EconomicState.base_fee = SCALE (= 1.0). With
+        // any non-degenerate window, computed_fee >= base_fee = 1.0 > 0.01,
+        // so the floor is a no-op.
+        let econ = EconomicState::default();
+        let params = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let window = vec![t(100), t(100), t(100), t(100), t(100)];
+        let unfloored = econ.effective_fee_median(&window, t(1000), &params);
+        let floored = econ.effective_fee_median_floored(&window, t(1000), &params, &ceilings);
+        assert_eq!(
+            unfloored, floored,
+            "default floor must not change healthy-chain fees"
+        );
+    }
+
+    #[test]
+    fn patch_06_floor_lifts_attacker_collapsed_fee() {
+        // Adversarial construction: base_fee near zero, ceiling floor at
+        // 0.01. Unfloored returns near-zero; floored returns the ceiling.
+        let near_zero = TensionValue(1); // 1 scale-unit = 1e-6 fee units
+        let econ = EconomicState {
+            base_fee: near_zero,
+            alpha: TensionValue(TensionValue::SCALE / 10),
+            fees_collected: TensionValue::ZERO,
+            rewards_distributed: TensionValue::ZERO,
+        };
+        let params = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let window = vec![t(0), t(0), t(0), t(0), t(0)];
+
+        let unfloored = econ.effective_fee_median(&window, t(1000), &params);
+        let floored = econ.effective_fee_median_floored(&window, t(1000), &params, &ceilings);
+
+        assert!(
+            unfloored < TensionValue(ceilings.min_effective_fee_floor),
+            "test precondition: unfloored must be below the floor"
+        );
+        assert_eq!(
+            floored,
+            TensionValue(ceilings.min_effective_fee_floor),
+            "INV-FEE-FLOOR-ENFORCED: floored fee must equal the floor"
+        );
+    }
+
+    #[test]
+    fn patch_06_floor_respects_configured_ceiling_value() {
+        // If an operator genesis-pins a floor higher than default, the
+        // floored fee reflects that value exactly.
+        let econ = EconomicState {
+            base_fee: TensionValue(1),
+            alpha: TensionValue(0),
+            fees_collected: TensionValue::ZERO,
+            rewards_distributed: TensionValue::ZERO,
+        };
+        let params = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings {
+            min_effective_fee_floor: TensionValue::SCALE / 2, // 0.5
+            ..ConstitutionalCeilings::default()
+        };
+        let window = vec![t(0), t(0), t(0), t(0), t(0)];
+        let floored = econ.effective_fee_median_floored(&window, t(1000), &params, &ceilings);
+        assert_eq!(floored, TensionValue(TensionValue::SCALE / 2));
     }
 
     #[test]
