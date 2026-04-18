@@ -683,7 +683,84 @@ record per the same principle. The cleanup precondition is therefore
 **satisfied** for in-tree files. External-surface action items
 remain operator responsibility outside this PR.
 
-## §11 Non-goals
+## §11 Ceiling Verification — The Moat's Mechanical Correctness
+
+The §1 moat (immutable meta-governance) is **structurally meaningful
+only if it is externally auditable** by parties that do not trust
+the maintainer. An institution evaluating SCCGUB for a constitutional-
+court use case must be able to verify cryptographically that the
+ceilings have not been raised since genesis, **without reading
+source code or trusting maintainer claims**.
+
+**The moat's existence depends on the ceiling mechanism's mechanical
+correctness.** If governance finds a path around the ceilings, if
+the encoding doesn't cover a parameter that should have been
+covered, if the genesis-commit rule has an edge case, if the
+canonical-encoding admits ambiguity — defensibility drops to LOW
+**everywhere, not just in the niche**. The moat is one property,
+and the property is one verifier.
+
+**Patch-08 scope elevated**: from "nice-to-have verification"
+(Audit pt3 H.15) to **moat-defining required deliverable**.
+Concretely, Patch-08 commits to ship:
+
+```text
+verify_ceilings_unchanged_since_genesis(chain_state) -> Result<(), CeilingViolation>
+```
+
+The function's contract:
+
+- **Input**: a chain identifier (genesis hash + chain-version-history
+  trie state).
+- **Output**: `Ok(())` if and only if every `ChainVersionTransition`
+  from genesis to current tip preserved every
+  `ConstitutionalCeilings` field at exactly its genesis value, OR
+  returns the specific
+  `(transition_height, ceiling_field, before_value, after_value)`
+  tuple of the first violation.
+- **Discipline**: pure function over chain history. Reproducible by
+  any party with read access to the chain log. No node operation
+  required.
+
+**Externally-auditable property as structural commitment**: the
+verifier must be runnable by **any third party** with access to
+the chain's genesis block and current state, without trusting the
+maintainer.
+
+**Crate isolation commitment**: the verifier ships in a separate
+audit-target crate (`sccgub-audit` or equivalent) with **minimal
+dependencies** so it can be:
+
+- Independently compiled by any reviewer in their own toolchain,
+  without pulling in the full SCCGUB dependency tree.
+- Cross-implemented by independent parties in alternative languages
+  (Go, Python, TypeScript) to prove the verifier semantics are
+  language-portable, not Rust-bound.
+- Run as a standalone CLI (`sccgub-audit verify-ceilings
+  --chain-state ./chain.snapshot`) by an external party without
+  operating a full node.
+
+**Suggested deployment-readiness target**: a public verification
+endpoint operated by **no fewer than three independent parties**
+(proves no single party can manipulate the verification result).
+
+**Consequences for adopters and patches**:
+
+- Until Patch-08 ships the verifier, any institutional pilot
+  conversation that depends on the §1 moat must include
+  "verifier ship date" as a deal-blocking dependency. The
+  substrate cannot honestly sell its moat without the verification
+  artifact.
+- Patch-08 §X (verifier) is consensus-critical infrastructure, not
+  auxiliary tooling. Test coverage requirement: **≥ 95%** on the
+  verifier path including every ceiling field, every
+  chain-version-transition variant, and every adversarial encoding
+  case.
+- Future patches that defer Patch-08 §X further require a
+  positioning amendment under §13 explaining why the moat can
+  credibly survive the deferral.
+
+## §12 Non-goals
 
 Explicit non-goals. Stated to prevent scope creep and to set
 expectations clearly.
@@ -708,7 +785,7 @@ expectations clearly.
   Both are deliberate.
 - **Not a token launch.** Per §6.
 
-## §12 What this document does and does not do
+## §13 What this document does and does not do
 
 **This document does:**
 
@@ -716,7 +793,7 @@ expectations clearly.
 - Anchor every contestable claim to in-tree code, audits, or named
   open problems.
 - Set scope boundaries (Mfidel jurisdictions, no-token economics,
-  10-invariant adapter gate).
+  invariant tier gate).
 - Retire prior framings that conflict with the structural
   commitments.
 
@@ -724,17 +801,20 @@ expectations clearly.
 
 - Predict adoption.
 - Promise timelines beyond the §9 honest formulation.
-- Solve §8.1 (capital), §8.3 (credential body), or §8.2 (per-
-  jurisdiction GDPR authorization).
+- Solve §8.1 (capital), §8.3 (credential body), §8.2 (per-
+  jurisdiction GDPR authorization), §8.5 (regulatory precedent gap),
+  or §8.6 (PQC migration plan).
 - Authorize any specific adapter beyond finance extraction.
 - Endorse the "civilizational infrastructure" framing.
+- Endorse "symbolic governance + attestation substrate" as the
+  primary framing (Audit pt3 retired this — see §10.2 substitute).
 
-## §13 Amendment process
+## §14 Amendment process
 
 This document amends only by PR. A PR amending positioning must:
 
 1. Cite the structural change being committed.
-2. Identify which §1–§11 claims are affected.
+2. Identify which §1–§13 claims are affected.
 3. Identify which audits, patches, or invariants need parallel
    amendment.
 4. Pass the same CI bar as code patches.
@@ -742,7 +822,7 @@ This document amends only by PR. A PR amending positioning must:
 
 A patch that changes runtime behavior in a way that contradicts this
 document **MUST** carry a positioning amendment in the **same PR**.
-**Review by maintainer against §10's retired-framings list and §1–§11
+**Review by maintainer against §10's retired-framings list and §1–§13
 structural commitments will reject otherwise.** CI does not currently
 mechanically enforce positioning consistency; mechanical enforcement
 (a CI script that parses `POSITIONING.md` retired-framings + structural
@@ -751,16 +831,30 @@ deferred to a future patch and explicitly scoped there. Until then,
 maintainer review is the adjudication mechanism, and "in same PR" is
 the procedural lock.
 
-## §14 Concise restatement
+## §15 Concise restatement
 
-SCCGUB is a symbolic governance + attestation substrate with three
-irreducible kernel primitives (ValueTransfer, Message, Attestation),
-content-addressed off-chain storage as the structural commitment for
-large or sensitive payloads, Mfidel-grounded semantic identity over
-Ed25519 unique identifiers, no native token, fees in user-supplied
-currencies, ten invariants gating adapter proliferation, and four
-named open problems that no code patch can close. The substrate is
-code-complete-plausible in 6–12 months of part-time focused work and
-deployment-credible in 3–5 years contingent on capital. It is not a
+SCCGUB is a **cryptographically-bound-constitutional-immutability
+substrate** for institutions whose legitimacy depends on inability
+to modify their own foundational rules — constitutional courts,
+treaty bodies, indigenous data sovereignty councils, international
+standards bodies, EU AI Act algorithmic accountability registries,
+post-settlement legal archives. The genuine technical moat is one
+property: **constitutional ceilings are genesis-write-once and not
+modifiable by any governance path, including the governance path
+itself.** That property is moat-defining only if the
+`verify_ceilings_unchanged_since_genesis(...)` verifier (§11) ships
+correctly. The supporting disciplines — three irreducible kernel
+primitives (ValueTransfer, Message, Attestation), content-addressed
+off-chain storage for large or sensitive payloads, Mfidel-grounded
+semantic identity over Ed25519 unique identifiers, no native token,
+fees in user-supplied currencies, two-tier invariant gate (§7) on
+adapter proliferation — are real but not the moat. **Six open
+problems** that no code patch can close: capital, GDPR
+jurisdiction, credential body, chain-break sequencing, regulatory
+precedent gap, PQC migration. The substrate is code-complete-
+plausible in 6–12 months of part-time focused work and
+deployment-credible in 3–5 years contingent on §8.1. It is not a
 universal truth store, not civilizational infrastructure, not a
-DeFi platform, not a token. It is what it is.
+DeFi platform, not a token, **not a "symbolic governance" substrate
+as the lead framing**. It is **infrastructure for institutions that
+cannot afford to be able to modify their own foundations.**
