@@ -14,6 +14,7 @@
 //!
 //! Exits 0 on full agreement, 1 on any disagreement.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sccgub_audit::{
@@ -24,6 +25,17 @@ use sccgub_types::constitutional_ceilings::ConstitutionalCeilings;
 use sccgub_types::upgrade::ChainVersionTransition;
 
 fn main() -> ExitCode {
+    // Optional first arg: --emit-fixtures <dir>
+    // Per PATCH_09 §E.1, the conformance binary can dump every test
+    // case as a JSON fixture + plain-text expected-output file. The
+    // resulting directory becomes the canonical conformance corpus
+    // every language port must satisfy.
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--emit-fixtures" {
+        let out_dir = PathBuf::from(&args[2]);
+        return emit_fixtures(&out_dir);
+    }
+
     let cases = generate_cases();
     let mut disagreements: Vec<String> = Vec::new();
     let mut total = 0;
@@ -81,6 +93,80 @@ enum OracleVerdict {
     Ok,
     Drift { height: u64, field: CeilingFieldId },
     Malformed,
+}
+
+/// Emit every conformance case as a JSON fixture + plain-text
+/// expected-output file per PATCH_09 §E.1/§E.2.
+///
+/// The `.expected` content is captured from the **actual Rust
+/// verifier output** in conformance-format mode rather than
+/// constructed from the OracleVerdict enum. This guarantees that
+/// the canonical `.expected` always matches what the Rust port
+/// produces — and the cross-language harness then verifies every
+/// other language port produces byte-identical output. Catches
+/// a richer set of disagreements than a hand-constructed expected
+/// would (e.g. before/after value mismatches across i128 boundary
+/// handling).
+fn emit_fixtures(out_dir: &std::path::Path) -> ExitCode {
+    if let Err(e) = std::fs::create_dir_all(out_dir) {
+        eprintln!("could not create {:?}: {}", out_dir, e);
+        return ExitCode::from(2);
+    }
+    let cases = generate_cases();
+    let total = cases.len();
+    for (name, fixture, _expected) in cases {
+        let json_path = out_dir.join(format!("{}.json", name));
+        let expected_path = out_dir.join(format!("{}.expected", name));
+        let json = match serde_json::to_string_pretty(&fixture) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("could not serialize {}: {}", name, e);
+                return ExitCode::from(2);
+            }
+        };
+        if let Err(e) = std::fs::write(&json_path, json) {
+            eprintln!("could not write {:?}: {}", json_path, e);
+            return ExitCode::from(2);
+        }
+        // Capture actual Rust verifier output in conformance format.
+        let expected_text = match verify_ceilings_unchanged_since_genesis(&fixture) {
+            Ok(()) => "ok\n".to_string(),
+            Err(CeilingViolation::FieldValueChanged {
+                transition_height,
+                ceiling_field,
+                before_value,
+                after_value,
+            }) => format!(
+                "violation:FieldValueChanged:transition_height={}:ceiling_field={}:before_value={}:after_value={}\n",
+                transition_height,
+                ceiling_field.as_str(),
+                before_value,
+                after_value,
+            ),
+            Err(CeilingViolation::CeilingsUnreadableAtTransition {
+                transition_height,
+                ..
+            }) => format!(
+                "violation:CeilingsUnreadableAtTransition:transition_height={}\n",
+                transition_height
+            ),
+            Err(CeilingViolation::HistoryStructurallyInvalid { .. }) => {
+                "violation:HistoryStructurallyInvalid\n".to_string()
+            }
+            Err(CeilingViolation::GenesisCeilingsUnreadable { .. }) => {
+                "violation:GenesisCeilingsUnreadable\n".to_string()
+            }
+        };
+        if let Err(e) = std::fs::write(&expected_path, expected_text) {
+            eprintln!("could not write {:?}: {}", expected_path, e);
+            return ExitCode::from(2);
+        }
+    }
+    println!(
+        "emitted {} conformance fixture(s) to {:?}",
+        total, out_dir
+    );
+    ExitCode::from(0)
 }
 
 fn t(activation: u64, to_v: u32) -> ChainVersionTransition {

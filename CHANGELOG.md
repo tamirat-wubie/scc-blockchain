@@ -2,6 +2,91 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.8.1] — Patch-09 §A.1 — Python port of the moat verifier (cross-language commitment, first language)
+
+Closes the first half of the PATCH_09.md cross-language verifier
+commitment. Ships `sccgub-audit-py`, a pure-stdlib Python 3.10+ port of
+`verify_ceilings_unchanged_since_genesis`, with a CLI binary and a
+cross-language conformance harness that enforces **byte-identical**
+agreement with the Rust reference implementation on every fixture.
+
+Until this release the Patch-08 moat verifier was a single-language
+artifact. A single implementation is a single trust surface; the
+ceiling-immutability claim is only as strong as the set of independent
+verifiers that can check it. v0.8.1 shifts the trust surface from "one
+Rust crate" to "any two independent implementations agree on every
+fixture in the conformance corpus." Go and TypeScript ports follow in
+Patches 09 §B and §C.
+
+### New crate: `sccgub-audit-py`
+
+Per PATCH_09.md §A.1 + §D:
+
+- Pure Python stdlib — **zero third-party runtime dependencies** (§D.3).
+- Python 3.10+ (type hints, `match`, `Protocol`).
+- Library surface mirrors the Rust crate exactly:
+  - `verify_ceilings_unchanged_since_genesis(chain) -> Optional[CeilingViolation]`
+  - `JsonChainStateFixture` + `ChainStateView` Protocol
+  - `CeilingFieldId` Enum (18 variants, canonical order)
+  - `CeilingViolation` dataclass variants + `violation_kind`
+- CLI: `sccgub-audit-py verify-ceilings --chain-state <path>` with
+  `--json` and `--conformance` output modes. Exit codes 0/1/2 per
+  PATCH_08 §C.4.
+- 30 unit tests via `unittest` (or `pytest`), mirroring every Rust
+  test case per PATCH_09 §F coverage requirement.
+
+### New binary: `sccgub-audit-conformance` `--emit-fixtures <dir>`
+
+Per PATCH_09.md §E.1. Emits the full conformance corpus (10 JSON
+fixtures + 10 plain-text `.expected` files) to a directory, capturing
+the **actual Rust verifier output** in `conformance` format as the
+canonical expected text. Every language port thereafter must produce
+byte-identical output or fail.
+
+### New script: `scripts/cross-language-conformance.py`
+
+Per PATCH_09.md §E. Runs every fixture through every language port
+(currently Rust + Python), asserts byte-identical agreement with
+`.expected`, and asserts cross-language agreement. A single
+disagreement is a hard failure (exit 1). Baseline today: 10 fixtures
+× 2 language ports = 20 runs, all pass.
+
+### Rust CLI addition
+
+`sccgub-audit verify-ceilings --conformance` now emits the richer
+PATCH_09 §E.2 expected-output format including `before_value` and
+`after_value` for `FieldValueChanged` violations. The flag was
+previously present but truncated those fields; v0.8.1 aligns the
+Rust CLI with the cross-language protocol specified in PATCH_09 §E.2.
+
+### Tests & conformance
+
+- Rust: workspace unchanged at 1320 tests; all pass.
+- Python: 30 new unit tests, all pass (unittest).
+- Cross-language: 10 fixtures × 2 ports = 20 conformance runs, all
+  produce byte-identical output.
+
+### POSITIONING / PATCH cross-references
+
+Addresses the PATCH_09.md §A.1 commitment directly. Does not yet
+close §B (Go) or §C (TypeScript) — those are separately-tagged.
+POSITIONING §11 "cross-language moat" is now partially HELD:
+single-language posture ended; full cross-language posture pending
+on remaining two ports.
+
+### Not addressed in this release
+
+- Go port (PATCH_09 §B) — deferred to v0.8.2 or later.
+- TypeScript port (PATCH_09 §C) — deferred.
+- Binary snapshot format (PATCH_09 §D binary-reading mode) — deferred
+  to a subsequent patch; JSON fixture format is the v1 CLI input.
+- None of the Layer 2/3/4 fractures surfaced by the v0.5.0 DCA audit
+  (merged separately as `docs/audits/2026-04-18-dca-v0.5.0-layers-2-3-4.md`).
+  Those are tracked as open issues and are explicitly out of scope for
+  v0.8.1. See the advisory note in the audit PR.
+
+---
+
 ## [v0.8.0] — Patch-08 §X — `sccgub-audit` ceiling-immutability verifier (moat-defining)
 
 Closes the load-bearing follow-up commitment from POSITIONING §11
