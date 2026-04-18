@@ -1001,7 +1001,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sccgub-api"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "axum",
  "hex",
@@ -1013,6 +1013,7 @@ dependencies = [
  "sccgub-types",
  "serde",
  "serde_json",
+ "subtle",
  "thiserror",
  "tokio",
  "tower",
@@ -1021,7 +1022,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-consensus"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "bincode",
  "blake3",
@@ -1037,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-crypto"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "argon2",
  "bincode",
@@ -1056,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-execution"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1071,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-governance"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "hex",
  "sccgub-crypto",
@@ -1083,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-network"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "hex",
  "sccgub-consensus",
@@ -1096,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-node"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "axum",
  "clap",
@@ -1122,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-state"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "bincode",
  "ed25519-dalek",
@@ -1137,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "sccgub-types"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "bincode",
  "blake3",

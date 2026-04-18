@@ -2,6 +2,61 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.5] — Patch-07: operator auth surface (H.3′ / A11)
+
+Closes audit item H.3′ from the v0.6.3 audit. PATCH_06.md §33.6 implied
+the existence of `sccgub-api::admin::*` endpoints "gated behind operator
+authentication," but no such mental model existed in code. v0.6.5
+establishes the contract before any admin endpoint arrives:
+
+### New: `sccgub-api::operator_auth`
+
+- `OperatorToken::{Disabled, Enabled(String)}` — default is `Disabled`.
+- `OperatorToken::from_env(Option<&str>)` — builds from env-sourced
+  secret; empty or missing → `Disabled`.
+- `OperatorToken::accepts` — constant-time compare using
+  `subtle::ConstantTimeEq`. Length-mismatch short-circuits to `false`
+  without exposing a length-only side channel (memory still touched).
+- `require_operator_auth` middleware — axum middleware that:
+  - 503s every request when token is `Disabled` (admin surface off).
+  - 401s on missing `Authorization: Bearer <secret>` header.
+  - 401s on mismatched bearer (constant-time compare).
+  - Passes only on exact match.
+
+### New: `/api/v1/admin/ping` placeholder route
+
+A deliberately minimal handler that responds `{"ok":true,
+"authenticated":"operator"}` when the auth layer accepts the request.
+Its only purpose is to prove the middleware works before any real
+admin endpoint (e.g., the §33.6 pruned-archive reader planned for
+Patch-07 §B) is wired.
+
+### `build_router_with_admin(state, token)`
+
+Public-routes-only `build_router(state)` preserved for backward
+compatibility; new `build_router_with_admin` mounts the admin sub-surface
+under `/api/v1/admin/*` with the middleware applied as `route_layer`
+(so it does NOT gate public routes — regression-fenced by a dedicated
+test).
+
+### Release summary
+
+**1233 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1233 tests across 9 crates (up from 1218 in v0.6.4).
+- 27 versioned REST endpoints with CORS (admin surface is additive and
+  not counted among the 27 public routes).
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. `build_router(state)` behavior unchanged (now delegates to
+`build_router_with_admin(state, OperatorToken::Disabled)`). Admin
+routes are 503 by default — no new attack surface without explicit
+operator opt-in.
+
 ## [v0.6.4] — Patch-07: wire §32 fork-choice into Chain::should_switch_to
 
 Closes audit item H.1′ (v0.6.3 audit): the live `Chain::should_switch_to`
