@@ -845,10 +845,25 @@ impl Chain {
     /// Fork choice: should we switch to a competing chain?
     #[allow(dead_code)] // Infrastructure for network fork resolution.
     ///
-    /// BFT fork choice rule: prefer the chain with:
-    /// 1. Higher finalized height (backed by safety certificates)
-    /// 2. If equal, higher total height
-    /// 3. If equal, reject (keep current chain — incumbency advantage)
+    /// Patch-06 §32 fork-choice rule: prefer the chain with the highest
+    /// score, where
+    ///
+    /// ```text
+    /// score(tip) = (finalized_depth, cumulative_voting_power, tie_break_hash)
+    /// ```
+    ///
+    /// compared lexicographically. Higher wins. The tie-break hash
+    /// (tip `block_id` as a big-endian integer) guarantees a total order
+    /// so two honest nodes on the same candidate set always agree on the
+    /// winner (INV-FORK-CHOICE-DETERMINISM).
+    ///
+    /// BFT-mode safety: if either chain is in non-deterministic BFT
+    /// finality mode and finalized depths are tied, we keep the current
+    /// chain. This preserves the pre-Patch-06 incumbency rule as a
+    /// belt-and-braces guard against reorg over finalized blocks. A
+    /// future commit will replace this with
+    /// `sccgub_consensus::fork_choice::is_safe_reorg` once common-
+    /// ancestor height is tracked at the Chain level.
     ///
     /// Returns true if `other` should replace the current chain.
     pub fn should_switch_to(&self, other: &Chain) -> bool {
@@ -856,26 +871,56 @@ impl Chain {
         if other.chain_id != self.chain_id {
             return false;
         }
-        let self_finalized = self.finality.finalized_height;
-        let other_finalized = other.finality.finalized_height;
-        if other_finalized > self_finalized {
-            return true;
-        }
-        if other_finalized < self_finalized {
-            return false;
-        }
-        if !matches!(
+
+        // BFT-mode safety valve: both chains in deterministic finality
+        // mode, otherwise we defer to the §32 score but skip on ties.
+        let both_deterministic = matches!(
             self.state.state.governance_state.finality_mode,
             FinalityMode::Deterministic
-        ) || !matches!(
+        ) && matches!(
             other.state.state.governance_state.finality_mode,
             FinalityMode::Deterministic
-        ) {
-            // In BFT mode, never switch chains once finality is tied.
-            return false;
+        );
+
+        // Build §32 tips. `cumulative_voting_power` is approximated by
+        // block height — each committed block represents ≥ ⅔ of active
+        // voting power under BFT finality, so height is a faithful
+        // proxy for "cumulative signed work" without walking every
+        // precommit set. When a more precise accounting is needed, this
+        // becomes a per-block counter commit-folded into block.header.
+        let self_tip = sccgub_consensus::fork_choice::ChainTip {
+            block_id: self
+                .blocks
+                .last()
+                .map(|b| b.header.block_id)
+                .unwrap_or(sccgub_types::ZERO_HASH),
+            height: self.height(),
+            finalized_depth: self.finality.finalized_height,
+            cumulative_voting_power: self.height(),
+        };
+        let other_tip = sccgub_consensus::fork_choice::ChainTip {
+            block_id: other
+                .blocks
+                .last()
+                .map(|b| b.header.block_id)
+                .unwrap_or(sccgub_types::ZERO_HASH),
+            height: other.height(),
+            finalized_depth: other.finality.finalized_height,
+            cumulative_voting_power: other.height(),
+        };
+
+        use std::cmp::Ordering;
+        match other_tip.score_cmp(&self_tip) {
+            Ordering::Greater => {
+                // §32.3 safety: in BFT mode never reorg once finality is
+                // tied, preserving the pre-Patch-06 incumbency rule.
+                if !both_deterministic && self_tip.finalized_depth == other_tip.finalized_depth {
+                    return false;
+                }
+                true
+            }
+            Ordering::Equal | Ordering::Less => false,
         }
-        // Equal finalized height — prefer higher total height.
-        other.height() > self.height()
     }
 
     pub fn import_block(&mut self, block: Block) -> Result<(), String> {
@@ -4278,6 +4323,38 @@ mod tests {
         assert!(
             !chain_b.should_switch_to(&chain_a),
             "Equal finality, lower total height: should not switch"
+        );
+    }
+
+    #[test]
+    fn patch_06_fork_choice_uses_score_cmp_lexicographic_ordering() {
+        // INV-FORK-CHOICE-DETERMINISM regression fence. Confirm that
+        // Chain::should_switch_to routes through the §32
+        // (finalized_depth, cumulative_voting_power, tie_break_hash)
+        // ordering. Higher finalized_depth wins regardless of height,
+        // matching the lexicographic rule (primary component dominates).
+        let mut chain_a = Chain::init();
+        chain_a.governance_limits.max_consecutive_proposals = 100;
+        let mut chain_b = chain_a.clone();
+
+        // chain_a: more blocks (bigger cumulative "work") but lower finalized depth.
+        for _ in 0..10 {
+            chain_a.produce_block().unwrap();
+        }
+        chain_a.finality.finalized_height = 2;
+
+        // chain_b: fewer blocks but higher finalized depth. Per §32's
+        // primary-component ordering, chain_b outscores chain_a — deep
+        // finality beats raw block count.
+        chain_b.finality.finalized_height = 5;
+
+        assert!(
+            chain_a.should_switch_to(&chain_b),
+            "§32 primary component: higher finalized_depth must win over higher height"
+        );
+        assert!(
+            !chain_b.should_switch_to(&chain_a),
+            "§32 primary component: lower finalized_depth must lose"
         );
     }
 
