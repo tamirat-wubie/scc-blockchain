@@ -2,6 +2,56 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.3] — Patch-07 §A groundwork: multi-validator convergence test
+
+Patch-level release. Establishes the first multi-validator integration
+test, closing one of the §36 deferrals from Patch-06 with a narrow
+replay-determinism slice that exercises the full Patch-06 state
+surface across three independent validators.
+
+### New: `tests/multi_validator_convergence.rs`
+
+Three validators drive an identical deterministic sequence of mutations
+across:
+
+- Constitutional-ceilings commit (§17)
+- Validator-set commit (§15)
+- Tension-history appends (§20)
+- Admission-history appends (§27)
+- Chain-version transition (§34)
+
+After the sequence, all three validators MUST agree on `state_root()`
+and on every projection (admission history, tension history, ceilings,
+chain-version history). Three tests:
+
+1. `multi_validator_state_roots_converge_on_patch_06_surface`
+2. `multi_validator_patch_06_projections_match`
+3. `multi_validator_repeated_runs_stable`
+
+### Why this matters
+
+The v0.5.0 and v0.6.0 audits both flagged the absence of multi-validator
+integration. A full BFT harness is large and coupled to network
+plumbing; this PR takes the narrower "replay determinism across N
+independent validators" slice that is sufficient to regress-guard the
+Patch-06 invariants. Any future change that introduces nondeterminism
+(HashMap iteration, wall-clock read, non-canonical serialization) will
+cause the state roots to diverge here.
+
+### Release summary
+
+**1217 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1217 tests across 9 crates (up from 1214 in v0.6.2).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. Test-only addition.
+
 ## [v0.6.2] — Patch-06.2: §33 state-root-preservation caveat + warming-window floor coverage
 
 Patch-level release. Documentation and coverage; no behavior change.
