@@ -2,6 +2,56 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.2] — Patch-06.2: §33 state-root-preservation caveat + warming-window floor coverage
+
+Patch-level release. Documentation and coverage; no behavior change.
+
+### PATCH_06.md §33.4.1 addendum
+
+Post-release review identified that the original §33.4 invariant
+`post_root == pre_root` could not hold for in-trie namespaces —
+specifically `system/validator_set_change_history`, whose serialized
+value IS folded into the state root. Pruning those entries changes the
+root, so admission-history pruning breaks cross-node state-root equality.
+
+§33.4.1 (new subsection) documents this honestly:
+
+- `post_root == pre_root` holds ONLY for outside-root namespaces
+  (`block_receipts/*`, `snapshots/*`, `pruned_archive/*`).
+- In-trie namespace pruning is intentionally stubbed
+  (`PruningError::NotYetWired`) until Patch-07 §B defines a two-surface
+  trie / deterministic-combiner accounting that preserves the
+  cross-node invariant.
+- Identification predicates remain consensus-neutral; no node has
+  actually pruned anything.
+
+`PruningReceipt::state_root_preserved` docstring updated to reflect the
+narrower contract.
+
+### Coverage: warming-window floor (§31)
+
+New test `patch_06_floor_lifts_warming_window_fee` verifies that
+`effective_fee_median_floored` applies the floor even when
+`prior_tensions` is empty (the warming-window path that returns
+`base_fee`). Closes a subtle INV-FEE-FLOOR-ENFORCED coverage gap — a
+chain with no tension history is exactly the state an attacker would
+engineer for fee bypass.
+
+### Release summary
+
+**1214 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1214 tests across 9 crates (up from 1213 in v0.6.1).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. No behavior changes in any runtime code path. Spec addendum is
+additive.
+
 ## [v0.6.1] — Patch-06.1: INV-UPGRADE-ATOMICITY enforcement integration
 
 Patch-level release. No new chain version; v5 rules unchanged.

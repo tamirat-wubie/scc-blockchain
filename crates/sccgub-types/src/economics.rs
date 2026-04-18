@@ -450,6 +450,33 @@ mod tests {
     }
 
     #[test]
+    fn patch_06_floor_lifts_warming_window_fee() {
+        // Warming-window path: prior_tensions is empty. Without the floor
+        // the returned value is self.base_fee (verified by the
+        // patch_05_effective_fee_median_warming_window_uses_base_fee
+        // test). With an adversarial base_fee below the floor, the
+        // floored variant must still lift to the floor. This closes a
+        // subtle INV-FEE-FLOOR-ENFORCED coverage gap — a freshly-reset
+        // chain with no tension history is the exact condition an
+        // attacker would engineer for fee bypass.
+        let near_zero = TensionValue(1);
+        let econ = EconomicState {
+            base_fee: near_zero,
+            alpha: TensionValue(TensionValue::SCALE / 10),
+            fees_collected: TensionValue::ZERO,
+            rewards_distributed: TensionValue::ZERO,
+        };
+        let params = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let floored = econ.effective_fee_median_floored(&[], t(1000), &params, &ceilings);
+        assert_eq!(
+            floored,
+            TensionValue(ceilings.min_effective_fee_floor),
+            "warming window (empty prior_tensions) must still respect floor"
+        );
+    }
+
+    #[test]
     fn patch_06_floor_respects_configured_ceiling_value() {
         // If an operator genesis-pins a floor higher than default, the
         // floored fee reflects that value exactly.
