@@ -774,7 +774,31 @@ impl Chain {
         if block.header.chain_id != self.chain_id {
             return Err("Chain ID mismatch".into());
         }
-        if block.header.version != self.block_version {
+        // Patch-06 §34.6: INV-UPGRADE-ATOMICITY. If the chain has
+        // committed ChainVersionTransition records (i.e., one or more
+        // UpgradeProposals have activated), the block's declared version
+        // must match the version active at its height per the
+        // transition history. For pre-upgrade chains the history is
+        // empty and this collapses to the single-version check below.
+        let transitions =
+            sccgub_state::chain_version_history_state::chain_version_history_from_trie(&self.state)
+                .unwrap_or_default();
+        if !transitions.is_empty() {
+            use sccgub_execution::chain_version_check::{
+                verify_block_version_alignment, ChainVersionCheck,
+            };
+            match verify_block_version_alignment(
+                block.header.height,
+                block.header.version,
+                self.block_version,
+                &transitions,
+            ) {
+                ChainVersionCheck::Aligned => {}
+                ChainVersionCheck::Misaligned(rej) => {
+                    return Err(format!("Block version out of alignment: {}", rej));
+                }
+            }
+        } else if block.header.version != self.block_version {
             return Err("Block version mismatch".into());
         }
         if !self.validator_set.is_empty() {

@@ -2,6 +2,48 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.6.1] — Patch-06.1: INV-UPGRADE-ATOMICITY enforcement integration
+
+Patch-level release. No new chain version; v5 rules unchanged.
+
+### Wires INV-UPGRADE-ATOMICITY from "declared" to "enforced on every block"
+
+Patch-06 §34 shipped the `verify_block_version_alignment` predicate
+plus `UpgradeProposal` / `ChainVersionTransition` wire types, but the
+block-import path did not yet consult the transition history — every
+block was validated against a single `self.block_version` field. v0.6.1
+closes the integration:
+
+- **sccgub-state::chain_version_history_state** — new module with
+  `chain_version_history_from_trie` reader and
+  `append_chain_version_transition` writer. Trie key is
+  `system/chain_version_history` (Patch-06 §34.4). 4 unit tests
+  covering empty state, append+read, replay determinism, and
+  end-to-end alignment-predicate round trip.
+- **sccgub-node::chain::validate_candidate_block_for_round** — when
+  `system/chain_version_history` contains transitions, the block's
+  declared version is now checked via
+  `sccgub_execution::chain_version_check::verify_block_version_alignment`
+  against the active rule at its height. Pre-upgrade chains (empty
+  history) retain the existing single-version check unchanged.
+
+### Release summary
+
+**1213 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1213 tests across 9 crates (up from 1209 in v0.6.0).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. Chains without admitted UpgradeProposals see zero behavior
+change. Chains that admit an UpgradeProposal and append a
+ChainVersionTransition now have INV-UPGRADE-ATOMICITY enforced at
+block-import rather than only at unit-test-level predicate calls.
+
 ## [v0.6.0] — Patch-06: Layer 2 hardening (auth, fee floor, fork-choice, pruning, live-upgrade)
 
 **Chain version introduced:** `header.version = 5`. v2–v4 chains continue

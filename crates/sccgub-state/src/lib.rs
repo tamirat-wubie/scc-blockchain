@@ -9,6 +9,7 @@
 pub mod apply;
 pub mod assets;
 pub mod balances;
+pub mod chain_version_history_state;
 pub mod constitutional_ceilings_state;
 pub mod escrow;
 pub mod key_rotation_state;
