@@ -23,7 +23,9 @@ use sccgub_governance::patch_04::{
 };
 use sccgub_state::constitutional_ceilings_state::constitutional_ceilings_from_trie;
 use sccgub_state::key_rotation_state::key_rotation_registry_from_trie;
-use sccgub_state::validator_set_state::{pending_changes_from_trie, validator_set_from_trie};
+use sccgub_state::validator_set_state::{
+    pending_changes_from_trie, validator_set_change_history_from_trie, validator_set_from_trie,
+};
 use sccgub_types::constitutional_ceilings::ConstitutionalCeilings;
 use sccgub_types::key_rotation::KeyRotation;
 use sccgub_types::validator_set::{
@@ -70,6 +72,25 @@ pub struct ValidatorSetChangeHistoryEntry {
 pub struct ValidatorSetHistoryResponse {
     pub pending_count: usize,
     pub pending_changes: Vec<ValidatorSetChangeHistoryEntry>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ValidatorHistoryAllParams {
+    /// Skip entries strictly preceding this change_id (hex). Typical
+    /// pagination: caller supplies the last change_id from the previous
+    /// page; the server returns entries starting immediately after.
+    /// Omitted → start from the beginning of admission history.
+    pub after_change_id: Option<String>,
+    /// Maximum entries to return. Server-side cap at 500.
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidatorHistoryAllResponse {
+    pub total_count: usize,
+    pub returned_count: usize,
+    pub next_cursor: Option<String>,
+    pub entries: Vec<ValidatorSetChangeHistoryEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -176,6 +197,93 @@ pub async fn get_validator_history(
     let resp = ValidatorSetHistoryResponse {
         pending_count: entries.len(),
         pending_changes: entries,
+    };
+    (StatusCode::OK, axum::Json(ApiResponse::ok(resp)))
+}
+
+/// `GET /api/v1/validators/history/all` — Patch-05 §27 full admission
+/// history projection.
+///
+/// Cursor-based pagination: supply `after_change_id` (hex) to skip
+/// entries strictly preceding that change; omit for page 1. `limit`
+/// caps the response at min(requested, 500). Returns `next_cursor`
+/// (the last entry's `change_id`) when more entries exist beyond the
+/// page, else `None`.
+pub async fn get_validator_history_all(
+    state: axum::extract::State<SharedState>,
+    params: axum::extract::Query<ValidatorHistoryAllParams>,
+) -> (
+    StatusCode,
+    axum::Json<ApiResponse<ValidatorHistoryAllResponse>>,
+) {
+    const HARD_CAP: usize = 500;
+    let app = state.read().await;
+    let history = match validator_set_change_history_from_trie(&app.state) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(ApiResponse::err(
+                    ErrorCode::InternalError,
+                    format!("validator_set_change_history decode failed: {}", e),
+                )),
+            );
+        }
+    };
+    let total_count = history.len();
+    let limit = params.0.limit.unwrap_or(HARD_CAP).min(HARD_CAP);
+
+    // Resolve cursor to a starting index.
+    let start_idx = if let Some(cursor) = params.0.after_change_id.as_deref() {
+        match hex::decode(cursor) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut cid = [0u8; 32];
+                cid.copy_from_slice(&bytes);
+                // Return the position AFTER the cursor change_id, so the
+                // client's next-page cursor naturally points past the
+                // last-returned entry.
+                match history.iter().position(|c| c.change_id == cid) {
+                    Some(i) => i + 1,
+                    None => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            axum::Json(ApiResponse::err(
+                                ErrorCode::InvalidRequest,
+                                "after_change_id not found in history",
+                            )),
+                        );
+                    }
+                }
+            }
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(ApiResponse::err(
+                        ErrorCode::InvalidHex,
+                        "after_change_id must be 32-byte hex",
+                    )),
+                );
+            }
+        }
+    } else {
+        0
+    };
+
+    let page_end = (start_idx + limit).min(total_count);
+    let page: Vec<ValidatorSetChangeHistoryEntry> = history[start_idx..page_end]
+        .iter()
+        .map(describe_change)
+        .collect();
+    let next_cursor = if page_end < total_count {
+        page.last().map(|e| e.change_id.clone())
+    } else {
+        None
+    };
+    let resp = ValidatorHistoryAllResponse {
+        total_count,
+        returned_count: page.len(),
+        next_cursor,
+        entries: page,
     };
     (StatusCode::OK, axum::Json(ApiResponse::ok(resp)))
 }

@@ -8,6 +8,7 @@ serde = { workspace = true }
 sccgub-types = { path = "../sccgub-types" }
 sccgub-crypto = { path = "../sccgub-crypto" }
 sccgub-state = { path = "../sccgub-state" }
+sccgub-consensus = { path = "../sccgub-consensus" }
 thiserror = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }

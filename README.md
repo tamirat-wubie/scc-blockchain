@@ -4,7 +4,7 @@
 
 A Rust implementation of the SCCGUB v2.1 specification: a deterministic causal chain of governed symbolic transformations with proof-carrying blocks, Mfidel-grounded identity, and Phi-squared-enforced invariants.
 
-**Status:** Hardening-stage governed blockchain kernel - v0.4.0 (Patch-04). Protocol spec at [PROTOCOL.md](PROTOCOL.md); pending v0.4.0 amendment at [PATCH_04.md](PATCH_04.md) introducing v3 validator set management (§15), view-change protocol (§16), constitutional ceilings (§17), identity-preserving key rotation (§18). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 1078 tests in the current workspace listing. New chains default to block version 2 (v3 is opt-in; see [PATCH_04.md §19](PATCH_04.md)). CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
+**Status:** Hardening-stage governed blockchain kernel - v0.5.0 (Patch-05). Protocol spec at [PROTOCOL.md](PROTOCOL.md) with amendments at [PATCH_04.md](PATCH_04.md) (§15–§19, v3) and [PATCH_05.md](PATCH_05.md) (§20–§29, v4 — fee oracle hardening, Mfidel VRF, all seven Patch-04 deferrals). Single-node reference runtime with optional p2p alpha, persistent block log, encrypted validator keystore, genesis-embedded consensus params, periodic snapshots, and 1155 tests in the current workspace listing. New chains default to block version 2 (v3 and v4 are opt-in; see [PATCH_04.md §19](PATCH_04.md) and [PATCH_05.md §28](PATCH_05.md)). CI is green on Ubuntu, Windows, and the security audit job. Canonical status note: [docs/STATUS.md](docs/STATUS.md).
 
 ## Where It Stands (Executive Summary)
 
@@ -15,7 +15,7 @@ A Rust blockchain that enforces rules through code, not just trust. Every transi
 - Genesis -> submit tx -> produce blocks -> import/replay with full verification.
 - Deterministic validation: every rejection has a reason (receipts).
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
-- REST API with 26 versioned endpoints for state, blocks, receipts, governance, finality, and v3 validator-set/ceilings/key-rotation views.
+- REST API with 27 versioned endpoints for state, blocks, receipts, governance, finality, v3 validator-set/ceilings/key-rotation views, and v4 full admission-history projection.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
 - Hardening posture: 922 tests, CI green on Ubuntu + Windows + security audit.
 
@@ -50,7 +50,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 | Layer | Crate | Description |
 |-------|-------|-------------|
 | 7 | `sccgub-node` | 26 CLI commands, chain lifecycle, mempool, block log + snapshots, observability |
-| 6 | `sccgub-api` | REST API (26 versioned endpoints), CORS, structured error codes, versioned routes |
+| 6 | `sccgub-api` | REST API (27 versioned endpoints), CORS, structured error codes, versioned routes |
 | 5 | `sccgub-governance` | Norms, precedence, proposals with timelocks, anti-concentration, symbolic intelligence agent policy |
 | 4 | `sccgub-consensus` | Two-round BFT voting, bounded finality, slashing, partition recovery, safety proofs |
 | 3 | `sccgub-execution` | 13-phase Phi traversal (all real), CPoG, gas metering, runtime invariant monitor |
@@ -85,7 +85,7 @@ The validation kernel is hardened and truthful; the next work is making it distr
 - **Artifacts:** External artifact governance layer (provenance, attestations, lineage, rights, sessions, disputes)
 - **Safety:** Signed quorum certificates, equivocation evidence store, runtime invariant monitor
 
-## REST API (26 versioned endpoints)
+## REST API (27 versioned endpoints)
 
 ```
 GET  /api/v1/status                  Chain summary (height, finality, tension, governance)
@@ -109,6 +109,7 @@ GET  /api/v1/tx/{tx_id}              Transaction detail by hex ID
 GET  /api/v1/receipt/{tx_id}         Receipt with verdict + resource usage
 GET  /api/v1/validators              (Patch-04 §15) Active validator set + power + quorum
 GET  /api/v1/validators/history      (Patch-04 §15.4) Pending ValidatorSetChange queue
+GET  /api/v1/validators/history/all  (Patch-05 §27) Full admitted-history projection (cursor-paginated)
 GET  /api/v1/ceilings                (Patch-04 §17) Constitutional ceilings (v3 genesis-bound limits)
 POST /api/v1/tx/submit               Submit signed transaction (hex-encoded)
 POST /api/v1/tx/key-rotation         (Patch-04 §18) Submit signed KeyRotation (JSON)
@@ -265,6 +266,11 @@ pwsh ./scripts/ci-local.ps1
 | **INV-CEILING-PRESERVATION** (Patch-04 §17) | `execution/ceilings.rs`, `governance/patch_04.rs` | `patch_04_phase_10_rejects_ceiling_violation`, `patch_04_governance_rejects_ceiling_raise` | Block or proposal exceeding ceiling rejected |
 | **INV-KEY-ROTATION** (Patch-04 §18) | `state/key_rotation_state.rs`, `execution/key_rotation_check.rs` (phase 8) | `patch_04_superseded_key_rejected`, `patch_04_key_rotation_*` | Tx signed under superseded key rejected |
 | **INV-VIEW-CHANGE-LIVENESS** (Patch-04 §16) | `consensus/view_change.rs` | `patch_04_round_advancement_*`, `patch_04_leader_*` | Rounds advance under partition; leader folds `prior_block_hash` |
+| **INV-FEE-ORACLE-BOUNDED** (Patch-05 §20) | `types/economics.rs`, `state/tension_history.rs`, `execution/cpog.rs` | `patch_05_fee_bounded_between_min_and_max`, `patch_05_single_block_cannot_move_median_on_odd_window` | Gas price bounded between window min and max; single-validator manipulation cannot move odd-window median |
+| **INV-SEAL-NO-GRIND** (Patch-05 §21) | `types/mfidel.rs` (`from_height_v4`), `execution/phi.rs` (phase 11) | `patch_05_seal_v4_includes_prior_hash`, `patch_05_seal_v4_differs_from_height_only` | v4 AgentRegistration seal must match `from_height_v4(H, parent_id)` |
+| **INV-SLASHING-LIVENESS** (Patch-05 §22) | `execution/evidence_admission.rs` (phase 12) | `patch_05_slashing_liveness_enforced`, `patch_05_two_evidence_one_paired_one_unpaired_rejected` | Every admitted EquivocationEvidence produces a matching synthetic Remove |
+| **INV-TYPED-PARAM-CEILING** (Patch-05 §25) | `governance/patch_04.rs::validate_typed_param_proposal` | `patch_05_typed_param_rejects_ceiling_violation`, `patch_05_typed_param_rejects_fee_alpha_over_ceiling` | Typed ConsensusParam proposals ceiling-checked at submission |
+| **INV-HISTORY-COMPLETENESS** (Patch-05 §27) | `state/validator_set_state.rs` (admission path) | `patch_05_history_appends_at_admission`, `patch_05_history_records_admission_order`, `patch_05_history_replay_determinism` | Every admitted ValidatorSetChange appears in `system/validator_set_change_history` |
 
 ## Security Model
 

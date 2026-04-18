@@ -86,6 +86,24 @@ pub struct ConsensusParams {
     pub max_validator_set_size: u32,
     /// Default maximum `ValidatorSetChange` events per block.
     pub max_validator_set_changes_per_block_param: u32,
+
+    // ── v4 additions (Patch-05) ────────────────────────────────────────
+    // v3 chains deserialize via `LegacyConsensusParamsV3` and receive
+    // the defaults declared in `Default` below.
+    /// Patch-05 §20.1: window size for median-over-window fee oracle.
+    /// Must be odd (so the median is a single sample, not an averaged
+    /// pair — keeps the oracle response less vulnerable to a single
+    /// manipulator). Default 7 blocks.
+    pub median_tension_window: u32,
+    /// Patch-05 §20.1: tension multiplier α, fixed-point (raw i128).
+    /// Default `SCALE/2 = 0.5`.
+    pub fee_tension_alpha: i128,
+    /// Patch-05 §24: confirmation depth (`k`) used to derive
+    /// §15.5 activation_delay. Default 2.
+    pub confirmation_depth: u64,
+    /// Patch-05 §29: maximum `EquivocationEvidence` records per block.
+    /// Default 4.
+    pub max_equivocation_evidence_per_block_param: u32,
 }
 
 impl Default for ConsensusParams {
@@ -119,6 +137,11 @@ impl Default for ConsensusParams {
             max_active_proposals: 128,
             max_validator_set_size: 64,
             max_validator_set_changes_per_block_param: 4,
+            // v4 (Patch-05) defaults — see PATCH_05.md §20.1, §24, §29.
+            median_tension_window: 7,
+            fee_tension_alpha: crate::tension::TensionValue::SCALE / 2, // 0.5
+            confirmation_depth: 2,
+            max_equivocation_evidence_per_block_param: 4,
         }
     }
 }
@@ -137,12 +160,17 @@ impl ConsensusParams {
     /// Deserialize from canonical bincode read out of the trie.
     /// Runs bounds validation after deserialization (defense-in-depth).
     ///
-    /// Fallback cascade: current struct → `LegacyConsensusParamsV2` (v0.3.0
-    /// schema, no v3 fields) → `LegacyConsensusParamsV1` (pre-v0.3.0 schema).
-    /// Fallback paths inject defaults for any fields missing in the older
-    /// encoding, so v2 chains continue to replay under Patch-04 code.
+    /// Fallback cascade: current struct → `LegacyConsensusParamsV3`
+    /// (Patch-04 / v0.4.0 schema, no v4 fields) → `LegacyConsensusParamsV2`
+    /// (v0.3.0 schema, no v3 fields) → `LegacyConsensusParamsV1`
+    /// (pre-v0.3.0 schema). Fallback paths inject defaults for any
+    /// fields missing in the older encoding, so v2 and v3 chains
+    /// continue to replay under Patch-05 code.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
         let params: Self = bincode::deserialize(bytes)
+            .or_else(|_| {
+                bincode::deserialize::<LegacyConsensusParamsV3>(bytes).map(ConsensusParams::from)
+            })
             .or_else(|_| {
                 bincode::deserialize::<LegacyConsensusParamsV2>(bytes).map(ConsensusParams::from)
             })
@@ -275,6 +303,29 @@ impl ConsensusParams {
         if self.max_validator_set_changes_per_block_param == 0 {
             return Err("max_validator_set_changes_per_block_param must be > 0".into());
         }
+
+        // ── Patch-05 v4 additions ─────────────────────────────────────
+        if self.median_tension_window == 0 {
+            return Err("median_tension_window must be > 0".into());
+        }
+        if self.median_tension_window.is_multiple_of(2) {
+            return Err(format!(
+                "median_tension_window {} must be odd (single-sample median)",
+                self.median_tension_window
+            ));
+        }
+        if self.fee_tension_alpha < 0 {
+            return Err(format!(
+                "fee_tension_alpha {} must be non-negative",
+                self.fee_tension_alpha
+            ));
+        }
+        if self.confirmation_depth == 0 {
+            return Err("confirmation_depth must be > 0".into());
+        }
+        if self.max_equivocation_evidence_per_block_param == 0 {
+            return Err("max_equivocation_evidence_per_block_param must be > 0".into());
+        }
         Ok(())
     }
 }
@@ -332,6 +383,12 @@ impl From<LegacyConsensusParamsV1> for ConsensusParams {
             max_validator_set_size: defaults.max_validator_set_size,
             max_validator_set_changes_per_block_param: defaults
                 .max_validator_set_changes_per_block_param,
+            // v4 fields get Patch-05 defaults.
+            median_tension_window: defaults.median_tension_window,
+            fee_tension_alpha: defaults.fee_tension_alpha,
+            confirmation_depth: defaults.confirmation_depth,
+            max_equivocation_evidence_per_block_param: defaults
+                .max_equivocation_evidence_per_block_param,
         }
     }
 }
@@ -395,6 +452,86 @@ impl From<LegacyConsensusParamsV2> for ConsensusParams {
             max_validator_set_size: defaults.max_validator_set_size,
             max_validator_set_changes_per_block_param: defaults
                 .max_validator_set_changes_per_block_param,
+            median_tension_window: defaults.median_tension_window,
+            fee_tension_alpha: defaults.fee_tension_alpha,
+            confirmation_depth: defaults.confirmation_depth,
+            max_equivocation_evidence_per_block_param: defaults
+                .max_equivocation_evidence_per_block_param,
+        }
+    }
+}
+
+/// v0.4.0 schema of `ConsensusParams` (pre-Patch-05). Retained as a
+/// deserialization fallback so v3 chains replay under Patch-05 code
+/// without re-encoding the genesis `consensus_params` payload. The four
+/// v4 fields are filled with `ConsensusParams::default()` values on
+/// migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConsensusParamsV3 {
+    max_proof_depth: u32,
+    max_constraint_propagation_depth: u32,
+    max_constraint_propagation_steps: u64,
+    max_activated_symbols: u32,
+    max_scan_per_symbol: u64,
+    max_constraints_per_symbol: u64,
+    default_max_steps: u64,
+    default_tx_gas_limit: u64,
+    default_block_gas_limit: u64,
+    gas_tx_base: u64,
+    gas_compute_step: u64,
+    gas_state_read: u64,
+    gas_state_write: u64,
+    gas_sig_verify: u64,
+    gas_hash_op: u64,
+    gas_proof_byte: u64,
+    gas_payload_byte: u64,
+    max_symbol_address_len: u32,
+    max_state_entry_size: u32,
+    max_tension_swing: i64,
+    view_change_base_timeout_ms: u32,
+    view_change_max_timeout_ms: u32,
+    max_block_bytes: u32,
+    max_active_proposals: u32,
+    max_validator_set_size: u32,
+    max_validator_set_changes_per_block_param: u32,
+}
+
+impl From<LegacyConsensusParamsV3> for ConsensusParams {
+    fn from(value: LegacyConsensusParamsV3) -> Self {
+        let defaults = Self::default();
+        Self {
+            max_proof_depth: value.max_proof_depth,
+            max_constraint_propagation_depth: value.max_constraint_propagation_depth,
+            max_constraint_propagation_steps: value.max_constraint_propagation_steps,
+            max_activated_symbols: value.max_activated_symbols,
+            max_scan_per_symbol: value.max_scan_per_symbol,
+            max_constraints_per_symbol: value.max_constraints_per_symbol,
+            default_max_steps: value.default_max_steps,
+            default_tx_gas_limit: value.default_tx_gas_limit,
+            default_block_gas_limit: value.default_block_gas_limit,
+            gas_tx_base: value.gas_tx_base,
+            gas_compute_step: value.gas_compute_step,
+            gas_state_read: value.gas_state_read,
+            gas_state_write: value.gas_state_write,
+            gas_sig_verify: value.gas_sig_verify,
+            gas_hash_op: value.gas_hash_op,
+            gas_proof_byte: value.gas_proof_byte,
+            gas_payload_byte: value.gas_payload_byte,
+            max_symbol_address_len: value.max_symbol_address_len,
+            max_state_entry_size: value.max_state_entry_size,
+            max_tension_swing: value.max_tension_swing,
+            view_change_base_timeout_ms: value.view_change_base_timeout_ms,
+            view_change_max_timeout_ms: value.view_change_max_timeout_ms,
+            max_block_bytes: value.max_block_bytes,
+            max_active_proposals: value.max_active_proposals,
+            max_validator_set_size: value.max_validator_set_size,
+            max_validator_set_changes_per_block_param: value
+                .max_validator_set_changes_per_block_param,
+            median_tension_window: defaults.median_tension_window,
+            fee_tension_alpha: defaults.fee_tension_alpha,
+            confirmation_depth: defaults.confirmation_depth,
+            max_equivocation_evidence_per_block_param: defaults
+                .max_equivocation_evidence_per_block_param,
         }
     }
 }
@@ -433,6 +570,11 @@ mod tests {
         assert_eq!(p.max_active_proposals, 128);
         assert_eq!(p.max_validator_set_size, 64);
         assert_eq!(p.max_validator_set_changes_per_block_param, 4);
+        // v4 (Patch-05) defaults.
+        assert_eq!(p.median_tension_window, 7);
+        assert_eq!(p.fee_tension_alpha, crate::tension::TensionValue::SCALE / 2);
+        assert_eq!(p.confirmation_depth, 2);
+        assert_eq!(p.max_equivocation_evidence_per_block_param, 4);
     }
 
     #[test]
@@ -728,5 +870,133 @@ mod tests {
         let back = ConsensusParams::from_canonical_bytes(&bytes).unwrap();
         assert_eq!(back.view_change_base_timeout_ms, 2_500);
         assert_eq!(back.max_active_proposals, 200);
+    }
+
+    // ── Patch-05 v4 field coverage ───────────────────────────────────
+
+    #[test]
+    fn patch_05_even_median_window_rejected() {
+        let p = ConsensusParams {
+            median_tension_window: 8,
+            ..Default::default()
+        };
+        let err = p.validate().expect_err("even window must reject");
+        assert!(
+            err.contains("odd"),
+            "error should name the oddness rule: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn patch_05_zero_median_window_rejected() {
+        let p = ConsensusParams {
+            median_tension_window: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_05_odd_median_window_accepted() {
+        for w in [1u32, 3, 5, 7, 9, 15, 31] {
+            let p = ConsensusParams {
+                median_tension_window: w,
+                ..Default::default()
+            };
+            p.validate()
+                .unwrap_or_else(|e| panic!("w={} rejected: {}", w, e));
+        }
+    }
+
+    #[test]
+    fn patch_05_negative_fee_alpha_rejected() {
+        let p = ConsensusParams {
+            fee_tension_alpha: -1,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_05_zero_confirmation_depth_rejected() {
+        let p = ConsensusParams {
+            confirmation_depth: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_05_zero_equivocation_evidence_cap_rejected() {
+        let p = ConsensusParams {
+            max_equivocation_evidence_per_block_param: 0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn patch_05_legacy_v3_deserializes_with_v4_defaults() {
+        // v0.4.0 genesis consensus_params payload. V3 schema has no v4
+        // fields; fallback must inject defaults.
+        let v3 = LegacyConsensusParamsV3 {
+            max_proof_depth: 256,
+            max_constraint_propagation_depth: 32,
+            max_constraint_propagation_steps: 10_000,
+            max_activated_symbols: 16,
+            max_scan_per_symbol: 1000,
+            max_constraints_per_symbol: 64,
+            default_max_steps: 10_000,
+            default_tx_gas_limit: 1_000_000,
+            default_block_gas_limit: 50_000_000,
+            gas_tx_base: 1_000,
+            gas_compute_step: 10,
+            gas_state_read: 100,
+            gas_state_write: 500,
+            gas_sig_verify: 3_000,
+            gas_hash_op: 50,
+            gas_proof_byte: 5,
+            gas_payload_byte: 2,
+            max_symbol_address_len: 4096,
+            max_state_entry_size: 1_048_576,
+            max_tension_swing: 2_000_000,
+            view_change_base_timeout_ms: 1_000,
+            view_change_max_timeout_ms: 60_000,
+            max_block_bytes: 2_097_152,
+            max_active_proposals: 128,
+            max_validator_set_size: 64,
+            max_validator_set_changes_per_block_param: 4,
+        };
+        let bytes = bincode::serialize(&v3).unwrap();
+        let parsed = ConsensusParams::from_canonical_bytes(&bytes)
+            .expect("V3 legacy bytes must decode into v4 ConsensusParams");
+        let defaults = ConsensusParams::default();
+        // v4 fields come from defaults.
+        assert_eq!(parsed.median_tension_window, defaults.median_tension_window);
+        assert_eq!(parsed.fee_tension_alpha, defaults.fee_tension_alpha);
+        assert_eq!(parsed.confirmation_depth, defaults.confirmation_depth);
+        // v3 fields preserved.
+        assert_eq!(parsed.max_validator_set_size, 64);
+    }
+
+    #[test]
+    fn patch_05_current_bytes_preserve_v4_fields() {
+        let p = ConsensusParams {
+            median_tension_window: 11,
+            fee_tension_alpha: crate::tension::TensionValue::SCALE / 4, // 0.25
+            confirmation_depth: 6,
+            max_equivocation_evidence_per_block_param: 12,
+            ..Default::default()
+        };
+        let bytes = p.to_canonical_bytes();
+        let back = ConsensusParams::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(back.median_tension_window, 11);
+        assert_eq!(
+            back.fee_tension_alpha,
+            crate::tension::TensionValue::SCALE / 4
+        );
+        assert_eq!(back.confirmation_depth, 6);
+        assert_eq!(back.max_equivocation_evidence_per_block_param, 12);
     }
 }

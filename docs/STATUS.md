@@ -15,9 +15,9 @@ traversal and produce a causal receipt that proves what changed and why.
 - Genesis, transaction submission, block production, import, and replay with full verification.
 - Deterministic validation: every rejection has a reason (receipts).
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
-- REST API with 26 versioned endpoints for state, blocks, receipts, governance, finality, and v3 validator-set/ceilings/key-rotation views.
+- REST API with 27 versioned endpoints for state, blocks, receipts, governance, finality, v3 validator-set/ceilings/key-rotation views, and v4 full admission-history projection.
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 1078 tests, CI green on Ubuntu + Windows + security audit.
+- Hardening posture: 1155 tests, CI green on Ubuntu + Windows + security audit.
 - Minimal p2p networking: peer registry, hello/heartbeat, block sync, tx gossip, vote propagation, and per-peer
   limits (no hardened peer discovery or deeper DoS protection).
 - Persistence: block log and periodic snapshots; state is replay-authoritative by default on restart, with optional redb-backed startup-authoritative mode.

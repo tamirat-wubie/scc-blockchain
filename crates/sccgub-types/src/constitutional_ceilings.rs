@@ -54,6 +54,22 @@ pub struct ConstitutionalCeilings {
     // ── Validator set (§15) ───────────────────────────────────────────
     pub max_validator_set_size_ceiling: u32,
     pub max_validator_set_changes_per_block: u32,
+
+    // ── v4 additions (Patch-05 §29) ───────────────────────────────────
+    /// Upper bound on `fee_tension_alpha`. Default `SCALE` (= 1.0).
+    /// Above unit, a single high-tension window can more than double the
+    /// base fee — an economic capture vector even with median smoothing.
+    pub max_fee_tension_alpha_ceiling: i128,
+    /// Upper bound on `median_tension_window`. Default 64 blocks.
+    /// Caps governance-driven stalling of the fee signal.
+    pub max_median_tension_window_ceiling: u32,
+    /// Upper bound on `confirmation_depth`. Default 8.
+    /// Since §15.5 `activation_delay` scales with `k`, an arbitrarily
+    /// large `confirmation_depth` would freeze validator-set changes.
+    pub max_confirmation_depth_ceiling: u64,
+    /// Upper bound on `max_equivocation_evidence_per_block_param`.
+    /// Default 16. Caps slashing-admission DoS surface.
+    pub max_equivocation_evidence_per_block: u32,
 }
 
 impl Default for ConstitutionalCeilings {
@@ -87,6 +103,15 @@ impl Default for ConstitutionalCeilings {
             max_validator_set_size_ceiling: 128,
             // Up to 8 validator-set changes per block
             max_validator_set_changes_per_block: 8,
+            // Patch-05 §29 v4 additions
+            // Fee alpha: ×2 over default (0.5), capped at 1.0
+            max_fee_tension_alpha_ceiling: crate::tension::TensionValue::SCALE,
+            // Median window: ×~9 over default (7), capped at 64
+            max_median_tension_window_ceiling: 64,
+            // Confirmation depth: ×4 over default (2), capped at 8
+            max_confirmation_depth_ceiling: 8,
+            // Equivocation evidence per block: ×4 over default (4), capped at 16
+            max_equivocation_evidence_per_block: 16,
         }
     }
 }
@@ -124,6 +149,19 @@ pub enum CeilingViolation {
          max_validator_set_changes_per_block {ceiling}"
     )]
     MaxValidatorSetChangesPerBlock { value: u32, ceiling: u32 },
+
+    // ── v4 additions (Patch-05 §29) ───────────────────────────────────
+    #[error("fee_tension_alpha {value} exceeds max_fee_tension_alpha_ceiling {ceiling}")]
+    MaxFeeTensionAlpha { value: i128, ceiling: i128 },
+    #[error("median_tension_window {value} exceeds max_median_tension_window_ceiling {ceiling}")]
+    MaxMedianTensionWindow { value: u32, ceiling: u32 },
+    #[error("confirmation_depth {value} exceeds max_confirmation_depth_ceiling {ceiling}")]
+    MaxConfirmationDepth { value: u64, ceiling: u64 },
+    #[error(
+        "max_equivocation_evidence_per_block_param {value} exceeds \
+         max_equivocation_evidence_per_block {ceiling}"
+    )]
+    MaxEquivocationEvidencePerBlock { value: u32, ceiling: u32 },
 }
 
 impl ConstitutionalCeilings {
@@ -223,6 +261,33 @@ impl ConstitutionalCeilings {
             return Err(CeilingViolation::MaxValidatorSetChangesPerBlock {
                 value: params.max_validator_set_changes_per_block_param,
                 ceiling: self.max_validator_set_changes_per_block,
+            });
+        }
+        // v4 additions (Patch-05 §29).
+        if params.fee_tension_alpha > self.max_fee_tension_alpha_ceiling {
+            return Err(CeilingViolation::MaxFeeTensionAlpha {
+                value: params.fee_tension_alpha,
+                ceiling: self.max_fee_tension_alpha_ceiling,
+            });
+        }
+        if params.median_tension_window > self.max_median_tension_window_ceiling {
+            return Err(CeilingViolation::MaxMedianTensionWindow {
+                value: params.median_tension_window,
+                ceiling: self.max_median_tension_window_ceiling,
+            });
+        }
+        if params.confirmation_depth > self.max_confirmation_depth_ceiling {
+            return Err(CeilingViolation::MaxConfirmationDepth {
+                value: params.confirmation_depth,
+                ceiling: self.max_confirmation_depth_ceiling,
+            });
+        }
+        if params.max_equivocation_evidence_per_block_param
+            > self.max_equivocation_evidence_per_block
+        {
+            return Err(CeilingViolation::MaxEquivocationEvidencePerBlock {
+                value: params.max_equivocation_evidence_per_block_param,
+                ceiling: self.max_equivocation_evidence_per_block,
             });
         }
         Ok(())
@@ -430,6 +495,92 @@ mod tests {
             c.validate(&p),
             Err(CeilingViolation::MaxValidatorSetChangesPerBlock { .. })
         ));
+    }
+
+    // ── Patch-05 v4 ceiling coverage ─────────────────────────────────
+
+    #[test]
+    fn patch_05_default_params_below_all_v4_ceilings() {
+        let ceilings = ConstitutionalCeilings::default();
+        let params = ConsensusParams::default();
+        ceilings
+            .validate(&params)
+            .expect("default ConsensusParams must satisfy default v4 ConstitutionalCeilings");
+    }
+
+    #[test]
+    fn patch_05_reject_fee_alpha_over_ceiling() {
+        let c = ConstitutionalCeilings::default();
+        let p = ConsensusParams {
+            fee_tension_alpha: c.max_fee_tension_alpha_ceiling + 1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            c.validate(&p),
+            Err(CeilingViolation::MaxFeeTensionAlpha { .. })
+        ));
+    }
+
+    #[test]
+    fn patch_05_reject_median_window_over_ceiling() {
+        let c = ConstitutionalCeilings::default();
+        // 65 is odd AND above the ceiling of 64. If 65 were above ceiling
+        // BUT even, we'd hit the oddness check first in ConsensusParams::validate;
+        // ceiling check runs in ConstitutionalCeilings::validate so this test
+        // exercises only the ceiling path with an odd value above the cap.
+        let over_ceiling = c.max_median_tension_window_ceiling + 1;
+        // Ensure oddness to stay out of the oddness-error path.
+        let window = if over_ceiling.is_multiple_of(2) {
+            over_ceiling + 1
+        } else {
+            over_ceiling
+        };
+        let p = ConsensusParams {
+            median_tension_window: window,
+            ..Default::default()
+        };
+        assert!(matches!(
+            c.validate(&p),
+            Err(CeilingViolation::MaxMedianTensionWindow { .. })
+        ));
+    }
+
+    #[test]
+    fn patch_05_reject_confirmation_depth_over_ceiling() {
+        let c = ConstitutionalCeilings::default();
+        let p = ConsensusParams {
+            confirmation_depth: c.max_confirmation_depth_ceiling + 1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            c.validate(&p),
+            Err(CeilingViolation::MaxConfirmationDepth { .. })
+        ));
+    }
+
+    #[test]
+    fn patch_05_reject_equivocation_evidence_per_block_over_ceiling() {
+        let c = ConstitutionalCeilings::default();
+        let p = ConsensusParams {
+            max_equivocation_evidence_per_block_param: c.max_equivocation_evidence_per_block + 1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            c.validate(&p),
+            Err(CeilingViolation::MaxEquivocationEvidencePerBlock { .. })
+        ));
+    }
+
+    #[test]
+    fn patch_05_v4_ceiling_values_match_spec_29() {
+        let c = ConstitutionalCeilings::default();
+        assert_eq!(
+            c.max_fee_tension_alpha_ceiling,
+            crate::tension::TensionValue::SCALE
+        );
+        assert_eq!(c.max_median_tension_window_ceiling, 64);
+        assert_eq!(c.max_confirmation_depth_ceiling, 8);
+        assert_eq!(c.max_equivocation_evidence_per_block, 16);
     }
 
     #[test]

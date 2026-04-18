@@ -28,6 +28,7 @@ pub mod state;
 pub mod tension;
 pub mod timestamp;
 pub mod transition;
+pub mod typed_params;
 pub mod validator_set;
 
 /// 32-byte hash used throughout the system.

@@ -23,6 +23,9 @@ use sccgub_types::consensus_params::ConsensusParams;
 use sccgub_types::constitutional_ceilings::{CeilingViolation, ConstitutionalCeilings};
 use sccgub_types::governance::PrecedenceLevel;
 use sccgub_types::key_rotation::KeyRotation;
+use sccgub_types::typed_params::{
+    apply_typed_param, ConsensusParamField, ConsensusParamValue, TypedParamApplyError,
+};
 use sccgub_types::validator_set::{ValidatorSetChange, ValidatorSetChangeKind};
 
 // ── §17.8 ceiling enforcement ─────────────────────────────────────
@@ -157,6 +160,53 @@ pub enum KeyRotationSubmissionRejection {
     OldSignatureLength { len: usize },
     #[error("signature_by_new_key must be 64 bytes (Ed25519); got {len}")]
     NewSignatureLength { len: usize },
+}
+
+// ── §25 typed ModifyConsensusParam submission ─────────────────────
+
+/// Rejection reasons for a typed `ModifyConsensusParam` submission.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TypedParamProposalRejection {
+    #[error("typed value does not match field type: {0}")]
+    TypeMismatch(#[from] TypedParamApplyError),
+    #[error(transparent)]
+    CeilingViolation(#[from] CeilingViolation),
+    #[error("activation_height {activation} < current_height {current} + 1")]
+    ActivationInPast { activation: u64, current: u64 },
+}
+
+/// Validate a typed `ModifyConsensusParam` proposal at submission time.
+///
+/// Steps per §25:
+/// 1. Apply the `(field, new_value)` pair to the current chain
+///    `ConsensusParams` to produce the hypothetical post-activation
+///    params.
+/// 2. Validate the hypothetical params against the chain's current
+///    `ConstitutionalCeilings` via §17.4 (`ceilings.validate`).
+/// 3. `activation_height` must be strictly in the future (> current_height).
+///
+/// INV-TYPED-PARAM-CEILING first half: ceiling violation at submission
+/// time rejects before the proposal enters the registry. The activation-
+/// time second half is enforced by the applier when the timelock
+/// expires and re-runs `ceilings.validate` against the hypothetical
+/// params under the ceilings as-of activation.
+pub fn validate_typed_param_proposal(
+    current: &ConsensusParams,
+    ceilings: &ConstitutionalCeilings,
+    field: ConsensusParamField,
+    new_value: ConsensusParamValue,
+    activation_height: u64,
+    current_height: u64,
+) -> Result<(), TypedParamProposalRejection> {
+    if activation_height <= current_height {
+        return Err(TypedParamProposalRejection::ActivationInPast {
+            activation: activation_height,
+            current: current_height,
+        });
+    }
+    let hypothetical = apply_typed_param(current, field, new_value)?;
+    ceilings.validate(&hypothetical)?;
+    Ok(())
 }
 
 /// Structural submission-time validation for a `KeyRotation`.
@@ -383,5 +433,122 @@ mod tests {
     fn patch_04_key_rotation_submission_happy_path() {
         let r = make_rotation([1; 32], [2; 32]);
         validate_key_rotation_submission(&r).unwrap();
+    }
+
+    // ── Patch-05 §25 typed ModifyConsensusParam tests ─────────────────
+
+    #[test]
+    fn patch_05_typed_param_accepts_within_ceiling() {
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        // Propose raising max_proof_depth to 300 (default 256, ceiling 512).
+        validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::MaxProofDepth,
+            ConsensusParamValue::U32(300),
+            100,
+            50,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn patch_05_typed_param_rejects_ceiling_violation() {
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        // Propose max_proof_depth above ceiling (512) → ceiling rejection.
+        let err = validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::MaxProofDepth,
+            ConsensusParamValue::U32(1000),
+            100,
+            50,
+        );
+        assert!(matches!(
+            err,
+            Err(TypedParamProposalRejection::CeilingViolation(
+                CeilingViolation::MaxProofDepth { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn patch_05_typed_param_rejects_type_mismatch() {
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        // max_proof_depth is u32; supplying U64 must fail BEFORE ceiling check.
+        let err = validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::MaxProofDepth,
+            ConsensusParamValue::U64(300),
+            100,
+            50,
+        );
+        assert!(matches!(
+            err,
+            Err(TypedParamProposalRejection::TypeMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn patch_05_typed_param_rejects_past_activation_height() {
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let err = validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::MaxProofDepth,
+            ConsensusParamValue::U32(300),
+            50, // activation
+            50, // current — equal, not strictly in future
+        );
+        assert!(matches!(
+            err,
+            Err(TypedParamProposalRejection::ActivationInPast { .. })
+        ));
+    }
+
+    #[test]
+    fn patch_05_typed_param_rejects_fee_alpha_over_ceiling() {
+        // Economic capture attempt: propose α = 2.0 (ceiling is 1.0 · SCALE).
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let err = validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::FeeTensionAlpha,
+            ConsensusParamValue::I128(2 * sccgub_types::tension::TensionValue::SCALE),
+            1000,
+            500,
+        );
+        assert!(matches!(
+            err,
+            Err(TypedParamProposalRejection::CeilingViolation(
+                CeilingViolation::MaxFeeTensionAlpha { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn patch_05_typed_param_rejects_confirmation_depth_over_ceiling() {
+        let current = ConsensusParams::default();
+        let ceilings = ConstitutionalCeilings::default();
+        let err = validate_typed_param_proposal(
+            &current,
+            &ceilings,
+            ConsensusParamField::ConfirmationDepth,
+            ConsensusParamValue::U64(100), // ceiling is 8
+            1000,
+            500,
+        );
+        assert!(matches!(
+            err,
+            Err(TypedParamProposalRejection::CeilingViolation(
+                CeilingViolation::MaxConfirmationDepth { .. }
+            ))
+        ));
     }
 }

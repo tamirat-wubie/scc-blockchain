@@ -1,7 +1,12 @@
+// Patch-05 §23: iteration-order determinism discipline extended to the
+// execution crate. See sccgub-state/src/lib.rs for the rationale.
+#![deny(clippy::iter_over_hash_type)]
+
 pub mod ceilings;
 pub mod constraints;
 pub mod contract;
 pub mod cpog;
+pub mod evidence_admission;
 pub mod gas;
 pub mod invariants;
 pub mod key_rotation_check;

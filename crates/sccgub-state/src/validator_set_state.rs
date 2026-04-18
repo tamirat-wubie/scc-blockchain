@@ -31,6 +31,13 @@ use crate::world::ManagedWorldState;
 /// deferred activations do not mutate the active-set projection early.
 pub const PENDING_VALIDATOR_SET_CHANGES_TRIE_KEY: &[u8] = b"system/pending_validator_set_changes";
 
+/// Patch-05 §27: append-only history of every `ValidatorSetChange`
+/// ever admitted to the chain. Admission order (oldest first). Written
+/// alongside the pending queue at admission; never pruned.
+/// INV-HISTORY-COMPLETENESS — `append_admission_to_history` MUST be
+/// called for every admitted change.
+pub const VALIDATOR_SET_CHANGE_HISTORY_TRIE_KEY: &[u8] = b"system/validator_set_change_history";
+
 /// Write the current `ValidatorSet` to the canonical trie key.
 /// Used at genesis to seed `system/validator_set`, and by
 /// `advance_validator_set_to_height` to commit post-activation state.
@@ -77,6 +84,52 @@ fn commit_pending_changes(state: &mut ManagedWorldState, pending: &[ValidatorSet
     });
 }
 
+/// Patch-05 §27: read the append-only admission history.
+/// Returns `Ok(Vec::new())` when the key is not yet committed (pre-v4
+/// chains, or v4 chains with no admitted changes yet).
+pub fn validator_set_change_history_from_trie(
+    state: &ManagedWorldState,
+) -> Result<Vec<ValidatorSetChange>, String> {
+    match state.get(&VALIDATOR_SET_CHANGE_HISTORY_TRIE_KEY.to_vec()) {
+        Some(bytes) => bincode::deserialize(bytes)
+            .map_err(|e| format!("validator_set_change_history deserialize: {}", e)),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn commit_history(state: &mut ManagedWorldState, history: &[ValidatorSetChange]) {
+    let bytes = bincode::serialize(history)
+        .expect("Vec<ValidatorSetChange> history serialization is infallible");
+    state.apply_delta(&StateDelta {
+        writes: vec![StateWrite {
+            address: VALIDATOR_SET_CHANGE_HISTORY_TRIE_KEY.to_vec(),
+            value: bytes,
+        }],
+        deletes: vec![],
+    });
+}
+
+/// Append an admitted `ValidatorSetChange` to the permanent history.
+/// Called by `apply_validator_set_change_admission` after the pending
+/// queue is updated; also called internally for evidence-sourced
+/// synthetic events to keep the history complete.
+fn append_admission_to_history(
+    state: &mut ManagedWorldState,
+    change: &ValidatorSetChange,
+) -> Result<(), ValidatorSetStateError> {
+    let mut history =
+        validator_set_change_history_from_trie(state).map_err(ValidatorSetStateError::Storage)?;
+    // Idempotency: skip if already present (should not happen in the
+    // admission path since pending-queue dedupe catches first, but
+    // the history is append-only and a no-op on duplicate is safer
+    // than appending twice).
+    if !history.iter().any(|c| c.change_id == change.change_id) {
+        history.push(change.clone());
+        commit_history(state, &history);
+    }
+    Ok(())
+}
+
 /// Admit a validated `ValidatorSetChange` into the pending queue.
 ///
 /// This is a pure state transition: the caller (execution layer) is
@@ -99,9 +152,12 @@ pub fn apply_validator_set_change_admission(
     if pending.iter().any(|c| c.change_id == change.change_id) {
         return Err(ValidatorSetStateError::DuplicateChangeId);
     }
-    pending.push(change);
+    pending.push(change.clone());
     pending.sort_by_key(|c| (c.kind.effective_height(), c.change_id));
     commit_pending_changes(state, &pending);
+    // Patch-05 §27 INV-HISTORY-COMPLETENESS: every admitted change is
+    // also recorded in the permanent history tape.
+    append_admission_to_history(state, &change)?;
     Ok(())
 }
 
@@ -600,5 +656,142 @@ mod tests {
         assert_eq!(pending_changes_from_trie(&state).unwrap().len(), 1);
         advance_validator_set_to_height(&mut state, 100).unwrap();
         assert!(pending_changes_from_trie(&state).unwrap().is_empty());
+    }
+
+    // ── Patch-05 §27 admission-history projection ─────────────────────
+
+    #[test]
+    fn patch_05_history_trie_key_in_system_namespace() {
+        assert!(VALIDATOR_SET_CHANGE_HISTORY_TRIE_KEY.starts_with(b"system/"));
+    }
+
+    #[test]
+    fn patch_05_history_empty_on_fresh_state() {
+        let state = ManagedWorldState::new();
+        let history = validator_set_change_history_from_trie(&state).unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn patch_05_history_appends_at_admission() {
+        let mut state = seed_state_with_set(vec![record(1, 10, 30, 0)]);
+        let kind = ValidatorSetChangeKind::Remove {
+            agent_id: [1; 32],
+            reason: RemovalReason::Voluntary,
+            effective_height: 20,
+        };
+        let change = signed_change(kind, 5);
+        apply_validator_set_change_admission(&mut state, change.clone()).unwrap();
+        let history = validator_set_change_history_from_trie(&state).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].change_id, change.change_id);
+    }
+
+    #[test]
+    fn patch_05_history_is_append_only_across_heights() {
+        // Even after an admitted change activates, the history entry
+        // stays — this is the admitted-AND-activated projection, not
+        // the pending queue.
+        let mut state = seed_state_with_set(vec![record(1, 10, 30, 0)]);
+        let kind = ValidatorSetChangeKind::RotatePower {
+            agent_id: [1; 32],
+            new_voting_power: 50,
+            effective_height: 5,
+        };
+        let change = signed_change(kind, 2);
+        apply_validator_set_change_admission(&mut state, change.clone()).unwrap();
+        advance_validator_set_to_height(&mut state, 5).unwrap();
+
+        // Pending queue now empty (change activated and drained).
+        assert!(pending_changes_from_trie(&state).unwrap().is_empty());
+        // History still has the record.
+        let history = validator_set_change_history_from_trie(&state).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].change_id, change.change_id);
+    }
+
+    #[test]
+    fn patch_05_history_records_admission_order() {
+        // Three changes admitted at different heights; history preserves
+        // admission order (not effective-height order).
+        let mut state = seed_state_with_set(vec![record(1, 10, 30, 0)]);
+        let c1 = signed_change(
+            ValidatorSetChangeKind::RotatePower {
+                agent_id: [1; 32],
+                new_voting_power: 20,
+                effective_height: 100,
+            },
+            5,
+        );
+        let c2 = signed_change(
+            ValidatorSetChangeKind::RotatePower {
+                agent_id: [1; 32],
+                new_voting_power: 30,
+                effective_height: 10, // earlier effective height, but admitted AFTER c1
+            },
+            6,
+        );
+        let c3 = signed_change(
+            ValidatorSetChangeKind::RotatePower {
+                agent_id: [1; 32],
+                new_voting_power: 40,
+                effective_height: 50,
+            },
+            7,
+        );
+        apply_validator_set_change_admission(&mut state, c1.clone()).unwrap();
+        apply_validator_set_change_admission(&mut state, c2.clone()).unwrap();
+        apply_validator_set_change_admission(&mut state, c3.clone()).unwrap();
+        let history = validator_set_change_history_from_trie(&state).unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0].change_id, c1.change_id);
+        assert_eq!(history[1].change_id, c2.change_id);
+        assert_eq!(history[2].change_id, c3.change_id);
+    }
+
+    #[test]
+    fn patch_05_history_rejects_duplicate_admission_idempotent() {
+        // Duplicate admission fails at the pending-queue dedupe BEFORE
+        // touching the history. History length stays at 1.
+        let mut state = seed_state_with_set(vec![record(1, 10, 30, 0)]);
+        let kind = ValidatorSetChangeKind::RotatePower {
+            agent_id: [1; 32],
+            new_voting_power: 50,
+            effective_height: 10,
+        };
+        let change = signed_change(kind, 2);
+        apply_validator_set_change_admission(&mut state, change.clone()).unwrap();
+        let err = apply_validator_set_change_admission(&mut state, change);
+        assert!(matches!(
+            err,
+            Err(ValidatorSetStateError::DuplicateChangeId)
+        ));
+        let history = validator_set_change_history_from_trie(&state).unwrap();
+        assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn patch_05_history_replay_determinism() {
+        // Two independent runs admitting the same sequence produce
+        // bit-identical history AND state roots.
+        fn run() -> (Vec<ValidatorSetChange>, sccgub_types::Hash) {
+            let mut state = seed_state_with_set(vec![record(0, 0, 10, 0)]);
+            for i in 1u8..=10 {
+                let kind = ValidatorSetChangeKind::Add(record(i, 100u8 + i, 5, i as u64));
+                apply_validator_set_change_admission(
+                    &mut state,
+                    signed_change(kind, (i as u64).saturating_sub(1)),
+                )
+                .unwrap();
+            }
+            let history = validator_set_change_history_from_trie(&state).unwrap();
+            let root = state.state_root();
+            (history, root)
+        }
+        let (h_a, r_a) = run();
+        let (h_b, r_b) = run();
+        assert_eq!(h_a, h_b, "history diverges across replays");
+        assert_eq!(r_a, r_b, "state_root diverges across replays");
+        assert_eq!(h_a.len(), 10);
     }
 }

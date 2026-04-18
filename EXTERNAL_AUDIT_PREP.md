@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
-**Version:** 0.4.0
+**Version:** 0.5.0
 **Date:** 2026-04-17
-**Repo:** 9 crates, 1078 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 1155 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
@@ -50,7 +50,7 @@ sccgub-execution   13-phase Phi traversal, CPoG validation, SCCE constraint engi
 sccgub-consensus   Two-round BFT protocol, safety certificates, equivocation detection
 sccgub-governance  Precedence enforcement, norm registry, validator selection, proposals
 sccgub-network     P2P message types, peer registry, basic runtime hooks
-sccgub-api         REST API router + handlers, structured errors, 26 versioned endpoints
+sccgub-api         REST API router + handlers, structured errors, 27 versioned endpoints
                    OpenAPI contract: `crates/sccgub-api/openapi.yaml` (refreshable from Rust source in one command)
 sccgub-node        CLI binary: genesis, block production, chain lifecycle, mempool, block log, snapshots
 ```

@@ -203,9 +203,11 @@ pub fn validate_transition(
     }
 
     // 3. Verify Ed25519 signature against actor's public key.
+    // Patch-05 §26: verify_strict rejects non-canonical signatures so
+    // malleability-based replay / framing is prevented at tx admission.
     if tx.signature.len() >= 64 {
         let tx_data = canonical_tx_bytes(tx);
-        if !sccgub_crypto::signature::verify(&tx.actor.public_key, &tx_data, &tx.signature) {
+        if !sccgub_crypto::signature::verify_strict(&tx.actor.public_key, &tx_data, &tx.signature) {
             errors.push("Ed25519 signature verification failed".into());
         }
     }
