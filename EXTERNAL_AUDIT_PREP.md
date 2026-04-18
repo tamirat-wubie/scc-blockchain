@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
-**Version:** 0.7.1
+**Version:** 0.7.2
 **Date:** 2026-04-18
-**Repo:** 9 crates, 1283 tests, hardening-stage reference runtime with optional p2p alpha
+**Repo:** 9 crates, 1293 tests, hardening-stage reference runtime with optional p2p alpha
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
