@@ -553,6 +553,45 @@ paths:
                     type: boolean
                   data:
                     type: object
+  /api/v1/validators/history/all:
+    get:
+      operationId: getValidatorHistoryAll
+      summary: Full admitted-and-activated history (Patch-05 §27)
+      parameters:
+        - name: after_change_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^[0-9a-fA-F]{64}$"
+          description: |
+            Cursor — hex change_id from the previous page. Server returns
+            entries strictly after this one. Omit for page 1.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Admission-history page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        "400":
+          description: Invalid cursor or query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorApiResponse"
   /api/v1/ceilings:
     get:
       operationId: getCeilings
