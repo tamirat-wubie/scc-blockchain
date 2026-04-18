@@ -504,6 +504,55 @@ substrate provides the property; the operator carries the precedent
 risk; the precedent value accrues asymmetrically to the first
 adopter that survives counsel review.
 
+### §8.6 Post-Quantum Cryptography Migration (Audit pt3 G.4) — OPEN
+
+Ed25519 is not post-quantum. **NIST PQC standardization deadline is
+2030.** Every Ed25519 signature accumulated between now and PQC
+activation becomes a forgery liability under a quantum-capable
+adversary. SCCGUB's "designed for centuries" framing is structurally
+incompatible with "signatures valid for ~4 more years" unless a
+re-signing or hash-anchoring strategy is in place **before 2029**.
+
+This problem is **parity-level with the alternative stack** —
+Cosmos, Substrate, Ethereum, Fabric all face the same Ed25519 /
+secp256k1 PQC migration cost. SCCGUB has no special exposure
+relative to peers.
+
+But SCCGUB has one **migration-harder property** unique to the
+immutable-meta-governance niche: **you cannot retroactively rewrite
+signature semantics under a new scheme if the constitutional
+ceiling forbids it.** A naive PQC migration that changes signature
+verification semantics (which it must) collides with the moat. The
+mitigation pattern is hash-anchoring: rather than re-signing
+accumulated H, anchor a Merkle root of all pre-PQC signatures into
+a single PQC-signed checkpoint. This preserves the moat while
+making the historical signatures verifiable under the new scheme.
+Whether this satisfies the §11 ceiling-verifier semantics is a
+spec question Patch-N must resolve.
+
+**Open work** (Patch-N where N is TBD, but **before 2029**):
+
+- **Candidate primitive selection**: NIST PQC finalists are
+  Dilithium (signature), Falcon (signature), SPHINCS+ (signature).
+  Choice is not yet made.
+- **Activation-height window**: lead time relative to NIST 2030
+  deadline must follow PATCH_06 §34 live-upgrade discipline plus
+  an explicit re-signing budget. Conservative target: PQC
+  activation by 2028, leaving 2 years of buffer.
+- **Re-signing procedure for accumulated H**: the hash-anchoring
+  pattern above is the proposed default; alternatives are
+  (a) bulk re-signing under PQC (proportional in cost to history
+  length), (b) accept-with-warning beyond declared cutoff (trust
+  erosion). Spec must declare which is chosen.
+- **Compatibility with §11 ceiling-verifier**: the PQC migration
+  itself must NOT be a path that raises any ceiling. Verifier
+  must explicitly recognize the PQC activation as a non-ceiling-
+  raising chain-version transition.
+
+The work is not optional; the deadline is fixed; the planning has
+not started. Patch-N scope must commit by end of 2026 to avoid
+last-minute compression.
+
 ## §9 Resource narrative — code velocity vs institutional velocity
 
 These two velocities are categorically different. Conflating them is
