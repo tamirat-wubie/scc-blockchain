@@ -557,7 +557,10 @@ mod tests {
             };
             let path = &after_quote[..path_end];
 
-            if path.starts_with("/api/v1/") {
+            if path.starts_with("/api/v1/") && !path.starts_with("/api/v1/admin/") {
+                // Admin routes (Patch-07 §C) are operator-gated and not
+                // part of the public versioned surface counted against
+                // the OpenAPI contract.
                 paths.push(path.to_string());
             }
         }
