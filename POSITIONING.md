@@ -130,6 +130,22 @@ payload over the existing three) AND is needed by at least three
 adapter categories. The discipline is documented; it is enforced by
 review, not by a Φ_gov predicate.
 
+**Crate placement and consensus-layer-zero-knowledge property**: the
+standard-library templates live outside the consensus encoding
+surface. They will be hosted in a separate `sccgub-templates` crate
+(or, transitionally, under the `sccgub-types::primitives` submodule
+explicitly tagged `#[doc(hidden = "non-consensus")]`) — kernel
+consensus code MUST NOT import templates by type. Template additions,
+removals, or shape changes never require a chain-version bump,
+because by the time a transaction composed from a template reaches
+consensus, the template has already decomposed into the three
+irreducible primitives and the kernel cannot tell whether the
+composition came from a template or from hand-written primitive
+calls. The kernel's consensus-layer view of templates is exactly:
+zero. Any future contributor who proposes "registering" or
+"versioning" a template at the protocol level is contradicting this
+property and triggers a §13 amendment.
+
 ## §4 Content-addressed off-chain discipline
 
 This is the structural commitment that closes four otherwise-separate
@@ -170,6 +186,18 @@ form, and the off-chain content lifecycle belongs to the adapter."
 This is a real weakening of the original "H is sacred" framing — and
 it is the only weakening compatible with the regulatory regimes
 SCCGUB needs to coexist with.
+
+**Hash scheme commitment**: content addressing uses **32-byte BLAKE3**
+over the off-chain payload as the on-chain commitment. Full
+content-addressing scheme (CID, multihash, IPFS compatibility) is
+deferred to Patch-08 §C; the **32-byte hash width is pinned now** and
+cannot change without a chain-version bump. Any adapter producing
+on-chain hash commitments **MUST** use this same BLAKE3-32 scheme
+during the interim period; adapter-specific hash schemes (SHA-256,
+Keccak-256, etc.) are not permitted before Patch-08 §C ratifies a
+multi-scheme container, because allowing per-adapter schemes now
+breaks cross-domain `ReferenceLink` semantics the moment two
+adapters disagree on hash construction.
 
 ## §5 Mfidel — semantic category, not unique identifier
 
@@ -306,6 +334,18 @@ SCCGUB has none of those mechanisms available — is the load-bearing
 gap. Resolution requires a non-engineering decision the project has
 not made.
 
+**Decision window (added to prevent open-ended drift)**: if no §8.1
+resolution is committed by **2026-12-31**, the project formally adopts
+**long-arc volunteer maintainer scope**, the §9 deployed-adopter
+timeline extends to **5–10 years** rather than 3–5, and §9's
+institutional-velocity narrative is updated to match. Re-evaluation
+occurs annually thereafter and **is documented as an amendment to
+this section**; if no amendment is filed in a given calendar year,
+the volunteer-scope commitment **holds by default** for the
+following year. This forces the question into a fixed surface rather
+than letting "if we just keep going, funding will appear" run
+indefinitely.
+
 ### §8.2 GDPR / right-to-erasure (audit H.2) — STRUCTURALLY ADDRESSED, deployment-conditional
 
 The §4 off-chain discipline is the structural answer: regulated
@@ -408,6 +448,60 @@ require positioning amendment first.
 | "Foundation-scale capital" (without naming a vehicle) | Named, not planned. Every reference to foundation funding must either name a candidate vehicle or be flagged as unresolved per §8.1. |
 | "Mfidel-grounded uniqueness" | The 272-position matrix does not provide uniqueness. Per §5, Mfidel is semantic category; uniqueness comes from the public key. Future references must use the §5 formulation. |
 
+### §10.1 Retirement-scope cleanup checklist (precondition for merge)
+
+Retired framings retire **where they appear**, not only in this
+document. Before this PR (POSITIONING.md merge) lands, the following
+in-tree files MUST be reviewed and any retired-framings language
+either removed, rewritten in compatible terms, or explicitly
+contextualized as historical:
+
+- [x] `README.md` — review status banner, headline framing,
+  conformance-matrix prose
+- [x] `docs/STATUS.md` — review capability framing
+- [x] `EXTERNAL_AUDIT_PREP.md` — review summary line, scope
+  paragraphs
+- [x] `PROTOCOL.md` — check for aspirational language predating the
+  audits; spec language as such is preserved, marketing prose is not
+- [x] `PATCH_04.md`, `PATCH_05.md`, `PATCH_06.md`, `PATCH_07.md` —
+  check for inherited framings; any "civilizational" / "universal" /
+  "no existing chain has" style language gets cleaned
+- [x] `CHANGELOG.md` — check release notes for marketing prose;
+  release-note bullets stay factual
+
+External surfaces (GitHub repo description, any external website,
+docs.* domains if they exist, social-post copy) are tracked as
+**separate action items in this PR's body**, not blocking merge —
+they cannot be edited atomically with the in-tree files and require
+operator action outside the repo.
+
+The cleanup is a **precondition** for POSITIONING.md merge. A merge
+without the cleanup is structurally inconsistent — the document
+declares retirements while contradictions sit one directory away.
+
+**Acronym carve-out**: the project's literal name expansion —
+"Symbolic Causal Chain General Universal Blockchain" — is preserved
+as historical naming in `README.md`, `EXTERNAL_AUDIT_PREP.md`, and
+similar legal/identity surfaces. The phrase "General Universal" in
+the acronym is not a current framing claim; it is the name the
+project shipped under. It does not need to be edited and contributors
+should not interpret the §10 retirements as requiring a project
+rename. The retirements concern **marketing / aspirational prose
+language**, not identifier strings or acronym expansions.
+
+**Cleanup pass result for this PR (verified 2026-04-18 against main
+@ b4c4daf)**: scan of the listed files for the seven retired
+framings produced zero hits in `README.md`, `docs/STATUS.md`,
+`EXTERNAL_AUDIT_PREP.md`, `PROTOCOL.md`, `PATCH_04.md`,
+`PATCH_05.md`, `PATCH_06.md`, `CHANGELOG.md`. `PATCH_07.md` contains
+"No 'civilizational infrastructure' public framing" — itself a
+retirement declaration, retained. The audit documents
+(`docs/THESIS_AUDIT.md`, `docs/THESIS_AUDIT_PT2.md`) contain the
+framings as audit-record references and are preserved as historical
+record per the same principle. The cleanup precondition is therefore
+**satisfied** for in-tree files. External-surface action items
+remain operator responsibility outside this PR.
+
 ## §11 Non-goals
 
 Explicit non-goals. Stated to prevent scope creep and to set
@@ -466,8 +560,15 @@ This document amends only by PR. A PR amending positioning must:
 5. Be reviewed against `docs/INVARIANTS.md` for consistency.
 
 A patch that changes runtime behavior in a way that contradicts this
-document **MUST** carry a positioning amendment in the same PR. CI
-or review will reject otherwise.
+document **MUST** carry a positioning amendment in the **same PR**.
+**Review by maintainer against §10's retired-framings list and §1–§11
+structural commitments will reject otherwise.** CI does not currently
+mechanically enforce positioning consistency; mechanical enforcement
+(a CI script that parses `POSITIONING.md` retired-framings + structural
+commitments and rejects PRs that introduce contradicting language) is
+deferred to a future patch and explicitly scoped there. Until then,
+maintainer review is the adjudication mechanism, and "in same PR" is
+the procedural lock.
 
 ## §14 Concise restatement
 
