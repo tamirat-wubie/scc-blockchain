@@ -68,8 +68,16 @@ pub struct PruningReceipt {
 }
 
 impl PruningReceipt {
-    /// INV-STATE-BOUNDED structural check: the state root MUST NOT change
-    /// as a result of pruning (archive is outside the root domain).
+    /// INV-STATE-BOUNDED structural check for outside-root namespaces
+    /// (`block_receipts/*`, `snapshots/*`): the state root MUST NOT
+    /// change as a result of pruning those namespaces because they are
+    /// already excluded from `ManagedWorldState::state_root`.
+    ///
+    /// This predicate is **not** meaningful for in-trie namespaces such
+    /// as `system/validator_set_change_history`, whose pruning
+    /// necessarily changes the state root (see PATCH_06.md §33.4.1
+    /// addendum). Patch-07 §B will introduce a separate accounting for
+    /// those namespaces.
     pub fn state_root_preserved(&self) -> bool {
         self.pre_root == self.post_root
     }

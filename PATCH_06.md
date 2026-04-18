@@ -277,11 +277,45 @@ pub struct PruningReceipt {
 }
 ```
 
-`post_root == pre_root` is the structural invariant — pruning is a no-op
-at the state-root level because the pruned entries were already outside the
-root computation domain (they are retained separately in a
-`pruned_archive/*` namespace on-disk but excluded from
-`ManagedWorldState::state_root` via an explicit filter).
+`post_root == pre_root` is the structural invariant for namespaces that
+live **outside** the state-root computation domain — specifically,
+`block_receipts/*` (in-memory / node-local), `snapshots/*` (node-local
+on-disk), and any entries written under the reserved `pruned_archive/*`
+prefix once §33.6 is wired.
+
+### §33.4.1 Post-release addendum (v0.6.2+)
+
+The original §33.4 wording implied `post_root == pre_root` holds for
+**every** prunable namespace. Post-release review (v0.6.2, 2026-04-18)
+identified that `system/validator_set_change_history` is an in-trie
+namespace whose value IS folded into the state root. Pruning entries
+from this namespace necessarily changes the serialized value at that
+key, and therefore changes the state root. The invariant `post_root ==
+pre_root` CANNOT hold for in-trie admission-history pruning.
+
+Two consequences:
+
+1. **INV-STATE-BOUNDED applies** to `system/validator_set_change_history`
+   only as a **non-replay-deterministic node-local compaction**. Nodes
+   that have pruned admission history have a different state root than
+   nodes that have not. This breaks cross-node `state_root` comparison,
+   which is consensus-critical.
+
+2. **True replay-deterministic admission-history pruning** requires a
+   separate accounting: either (a) a two-surface trie (live + archive,
+   both folded into the root via a deterministic combiner), or (b) a
+   protocol rule that all honest nodes prune at identical heights, or
+   (c) excluding admission history from the state root entirely (which
+   weakens INV-HISTORY-COMPLETENESS enforcement).
+
+Patch-07 §B will resolve this. Until then, Patch-06 §33's execution
+path is intentionally stubbed (`PruningError::NotYetWired`), and the
+identification predicates remain consensus-neutral (they only enumerate
+what *could* be pruned; no node has actually pruned anything).
+
+For the namespaces that ARE outside the root domain —
+`block_receipts/*` and `snapshots/*` — `post_root == pre_root` does
+hold, and those are candidates for first-wave execution in Patch-07.
 
 ### §33.5 Invariant
 
