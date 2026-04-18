@@ -1,11 +1,13 @@
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::handlers::{self, SharedState};
+use crate::operator_auth::{require_operator_auth, OperatorToken};
 use crate::patch_04;
 
 /// Build the API router with all endpoints.
@@ -55,6 +57,37 @@ use crate::patch_04;
 ///
 /// Legacy (unversioned) lookup routes preserved for backward compatibility.
 pub fn build_router(state: SharedState) -> Router {
+    build_router_with_admin(state, OperatorToken::Disabled)
+}
+
+/// Build the router with an admin sub-surface gated by operator auth.
+///
+/// `token`:
+///   - `OperatorToken::Disabled` (default): every `/api/v1/admin/*`
+///     route returns `503 Service Unavailable`, matching
+///     `build_router` behavior.
+///   - `OperatorToken::Enabled(secret)`: `/api/v1/admin/*` routes
+///     require `Authorization: Bearer <secret>`; 401 on missing or
+///     mismatched header (constant-time compare in `operator_auth`).
+///
+/// Closes audit item H.3′ (v0.6.3 audit A11): the operator auth
+/// mental model now exists in code before the §33.6 pruned-archive
+/// reader or any other admin endpoint is wired, so future author
+/// decisions about admin endpoints happen against a concrete auth
+/// contract rather than an inferred one.
+pub fn build_router_with_admin(state: SharedState, token: OperatorToken) -> Router {
+    let admin = Router::new()
+        .route("/api/v1/admin/ping", get(handlers::admin_ping))
+        .route_layer(middleware::from_fn_with_state(
+            token.clone(),
+            require_operator_auth,
+        ))
+        .with_state(token);
+
+    public_router(state).merge(admin)
+}
+
+fn public_router(state: SharedState) -> Router {
     Router::new()
         // Versioned routes (preferred).
         .route("/api/v1/status", get(handlers::get_status))
@@ -613,6 +646,107 @@ mod tests {
             .await
             .expect("response body must be readable");
         serde_json::from_slice(&bytes).expect("response body must be valid JSON")
+    }
+
+    #[tokio::test]
+    async fn patch_07_admin_ping_503s_when_token_disabled() {
+        // Default `build_router` supplies OperatorToken::Disabled, so
+        // the admin surface MUST be unreachable. 503 is the declared
+        // response per operator_auth::require_operator_auth.
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn patch_07_admin_ping_401s_without_bearer_header() {
+        let app = build_router_with_admin(
+            test_state(),
+            crate::operator_auth::OperatorToken::Enabled("secret".to_string()),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn patch_07_admin_ping_401s_with_wrong_token() {
+        let app = build_router_with_admin(
+            test_state(),
+            crate::operator_auth::OperatorToken::Enabled("secret".to_string()),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/ping")
+                    .header("Authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn patch_07_admin_ping_200s_with_correct_token() {
+        let app = build_router_with_admin(
+            test_state(),
+            crate::operator_auth::OperatorToken::Enabled("secret".to_string()),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/ping")
+                    .header("Authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = response_json(resp).await;
+        assert_eq!(json.get("ok"), Some(&Value::Bool(true)));
+        assert_eq!(
+            json.get("authenticated"),
+            Some(&Value::String("operator".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_07_public_routes_unaffected_by_admin_layer() {
+        // The admin layer must NOT gate /api/status or any other
+        // public route. This is the regression fence against an
+        // accidental global-middleware wiring.
+        let app = build_router_with_admin(
+            test_state(),
+            crate::operator_auth::OperatorToken::Enabled("secret".to_string()),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

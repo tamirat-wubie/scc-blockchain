@@ -1394,6 +1394,20 @@ pub async fn get_slashing_evidence_for_validator(
     )
 }
 
+/// GET /api/v1/admin/ping — operator-authenticated liveness probe.
+///
+/// Reaches this handler only when `require_operator_auth` middleware
+/// has accepted the `Authorization: Bearer <secret>` header. A
+/// deliberately minimal handler: its only job is to confirm the auth
+/// layer works. Patch-07 §B will add the §33.6 pruned-archive reader
+/// under the same auth umbrella.
+pub async fn admin_ping() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "authenticated": "operator",
+    }))
+}
+
 pub async fn get_health(
     state: axum::extract::State<SharedState>,
 ) -> axum::Json<ApiResponse<HealthResponse>> {
