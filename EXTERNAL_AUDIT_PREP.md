@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
-**Version:** 0.8.0
+**Version:** 0.8.1
 **Date:** 2026-04-18
-**Repo:** 10 crates, 1320 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`)
+**Repo:** 10 crates, 1320 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`) + first cross-language port of that verifier (`sccgub-audit-py`, PATCH_09.md §A.1) producing byte-identical output with 30 Python unit tests + 20 cross-language conformance runs.
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees

@@ -1,0 +1,50 @@
+# Python port of sccgub-audit per PATCH_09.md §D.
+#
+# Dependency policy (PATCH_09.md §D.3): pure standard library only.
+# No third-party runtime dependencies. The verifier exists to be
+# checked by parties who do not trust the rest of the substrate;
+# pip-installed third-party Python packages re-introduce the
+# trust-the-supply-chain problem the dependency isolation was
+# designed to avoid.
+#
+# pytest is an OPTIONAL test convenience. The test suite is also
+# runnable via `python -m unittest discover` per §D.3.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sccgub-audit-py"
+version = "0.8.1"
+description = "Python port of the SCCGUB ceiling-immutability verifier (Patch-09 §A)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SCCGUB maintainers" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+]
+# Pure stdlib runtime — no dependencies.
+dependencies = []
+
+[project.scripts]
+# Per §D.5: -py suffix avoids name collision with the Rust binary
+# in operator environments where both are installed.
+sccgub-audit-py = "sccgub_audit.cli:main"
+
+[project.optional-dependencies]
+# pytest is optional; tests are also unittest-compatible.
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sccgub_audit*"]
