@@ -2,6 +2,69 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.7.1] — Patch-07 primitive property tests
+
+Patch-level release. Adds property-based test coverage for the four
+v0.7.0 Tier-2 primitives. Catches edge cases hand-written tests miss
+without changing any runtime behaviour.
+
+### New: `crates/sccgub-node/tests/patch_07_primitive_properties.rs`
+
+15 property tests using the deterministic xorshift PRNG pattern
+already in `tests/property_test.rs` — no new dependency. Sweeps
+random inputs against:
+
+- **INV-MESSAGE-RETENTION-PAID**:
+  - `prop_message_cap_is_monotone_rejection_boundary` — every body
+    size from 0 to MAX+15 either accepted or rejected on the right
+    side of the cap; transition is exactly at MAX.
+  - `prop_message_id_is_deterministic_over_content` — 50 random
+    messages; id stable across signature mutation.
+  - `prop_message_id_changes_on_any_canonical_field_change` — body,
+    domain, nonce, subject mutations each independently change id.
+  - `prop_message_signing_bytes_prefix_stable` — 30 random sizes;
+    signing bytes always start with domain separator.
+
+- **INV-ESCROW-DECIDABILITY**:
+  - `prop_escrow_step_ceiling_boundary_enforced` — sweep ±32 around
+    MAX_ESCROW_PREDICATE_STEPS; rejection at the right side.
+  - `prop_escrow_read_ceiling_boundary_enforced` — same for reads.
+  - `prop_escrow_id_is_deterministic_over_content` — 30 random
+    escrows; recomputed id always matches.
+  - `prop_escrow_non_positive_amount_always_rejected` — covers -1M,
+    -1, 0.
+
+- **INV-REFERENCE-DISCOVERABILITY**:
+  - `prop_reference_self_detection_across_all_key_sizes` — self-
+    reference caught at key sizes 0, 1, 16, 32, 64, 128.
+  - `prop_reference_different_target_never_self_reference` — 50
+    random non-self references all validate.
+  - `prop_reference_all_kinds_validate` — every ReferenceKind
+    variant accepts.
+
+- **INV-SUPERSESSION-UNIQUENESS**:
+  - `prop_supersession_canonical_successor_order_invariant` — 30
+    random sets; canonical successor unchanged under permutation.
+  - `prop_supersession_canonical_successor_is_minimum_key` — 30
+    random sets; winner has lex-minimum (height, link_id).
+  - `prop_supersession_self_always_rejected` — 20 random hashes.
+  - `prop_supersession_duplicate_links_idempotent_for_canonical` —
+    duplicate inputs yield same canonical successor.
+
+### Release summary
+
+**1283 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1283 tests across 9 crates (up from 1268 in v0.7.0).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. Test-only addition.
+
 ## [v0.7.0] — Patch-07 §D Tier-2 universal primitives (audit-recommended scope)
 
 Implements the **reduced-commitment path** recommended by
