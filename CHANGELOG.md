@@ -2,6 +2,116 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.5.0] — Patch-05: Fee Oracle Hardening, Mfidel VRF, Patch-04 Deferrals
+
+**Chain version introduced:** `header.version = 4`. v2 and v3 chains continue
+to replay under their existing rules; no forced migration.
+
+**Spec:** [PATCH_05.md](PATCH_05.md) — amends PROTOCOL.md v1.0 + PATCH_04.md.
+On v0.5.0 tag, the three documents merge into PROTOCOL.md v2.0 (consolidated).
+
+### Closes the last two structural fractures from the external audit
+
+- **F5 — `T_prior` fee-oracle manipulability** → §20 replaces
+  `gas_price = base_fee · (1 + α · T_prior / T_budget)` with a
+  median-over-window oracle. Single-validator manipulation cannot move
+  the median on odd windows; α and W gain constitutional ceilings.
+- **F6 — Mfidel-seal grinding** → §21 folds `prior_block_hash` into
+  registration seal derivation. A registrant cannot pre-compute the
+  grid cell they will receive; wasted attempts cost registration gas.
+
+### Closes all seven Patch-04 deferrals
+
+- Evidence-sourced synthetic `Remove` admission wired into block
+  builder (§22, INV-SLASHING-LIVENESS).
+- `#![deny(clippy::iter_over_hash_type)]` extended to `sccgub-state`
+  and `sccgub-execution` (§23).
+- `confirmation_depth` moved from hardcoded `k=2` to `ConsensusParams`;
+  §15.5 `activation_delay` consults the live field (§24).
+- Typed `ProposalKind::ModifyConsensusParam` with closed
+  `ConsensusParamField` + typed `ConsensusParamValue` enums (§25,
+  INV-TYPED-PARAM-CEILING).
+- `verify_strict` migration across consensus/execution/governance
+  signature-verification paths (§26). Only `check_forgery_proof`
+  retains intentional non-strict `verify` calls (demonstrates
+  malleability by construction).
+- Admitted-and-activated `ValidatorSetChange` history projection at
+  `system/validator_set_change_history` + `GET /api/v1/validators/history/all`
+  with cursor pagination (§27, INV-HISTORY-COMPLETENESS).
+- PROTOCOL v2.0 consolidation (this release).
+
+### New on-chain system entries
+
+- `system/tension_history` — ring buffer of last `W ≤ 64` block
+  tensions. Populated at v4 block commit; consumed by the median-fee
+  oracle.
+- `system/validator_set_change_history` — append-only admission tape;
+  never pruned.
+
+### New invariants
+
+| ID | Enforcement |
+|---|---|
+| INV-FEE-ORACLE-BOUNDED (§20.5) | Fee-price bounded between window min and max |
+| INV-SEAL-NO-GRIND (§21.4) | Phase 11 registration-seal match |
+| INV-SLASHING-LIVENESS (§22.4) | Phase 12 evidence → synthetic Remove pairing |
+| INV-TYPED-PARAM-CEILING (§25.4) | Governance submission |
+| INV-HISTORY-COMPLETENESS (§27.4) | State-apply admission path |
+
+### Per-crate changes
+
+- **sccgub-types**: `ConsensusParams` +4 v4 fields, `ConstitutionalCeilings`
+  +4 v4 ceilings, `EconomicState::effective_fee_median`,
+  `MfidelAtomicSeal::from_height_v4`, `LegacyConsensusParamsV3` fallback,
+  `BlockBody.equivocation_evidence: Option<_>`, `typed_params` module,
+  `PATCH_05_BLOCK_VERSION = 4`.
+- **sccgub-state**: new `tension_history` module, new
+  `system/validator_set_change_history` trie entry + accessors,
+  `#![deny(clippy::iter_over_hash_type)]` at crate root.
+- **sccgub-execution**: new `evidence_admission` module, phase 11 v4
+  seal check, phase 12 evidence branch + `max_equivocation_evidence_per_block`
+  cap, CPoG check #12 now proposer-sourced-only, fee oracle wired
+  (v4 → median, v1–v3 → legacy), `#![deny]` at crate root.
+- **sccgub-consensus**: `verify_strict` migration across protocol +
+  safety modules; intentional `verify` in `check_forgery_proof` retained.
+- **sccgub-governance**: `validate_typed_param_proposal` for §25
+  submission-time ceiling validation.
+- **sccgub-api**: new `GET /api/v1/validators/history/all` with cursor
+  pagination. OpenAPI artifact regenerated.
+
+### Migration notes (v3 → v4)
+
+Same §19.5 discipline: no in-place v3 → v4 upgrade on the same chain.
+v4 chains are created by constructing a new genesis that forks state
+from a v3 snapshot. v4 genesis requires `ConsensusParams` with the
+four new fields and `ConstitutionalCeilings` with the four new
+ceilings; every `(param, ceiling)` pair must be in bounds.
+
+### Release summary
+
+**1155 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1155 tests across 9 crates (up from 1078 in v0.4.0).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+Workspace clippy clean under
+`cargo clippy --workspace --all-targets -- -D warnings`.
+
+### Deferred to v0.6.x and beyond
+
+- Formal finality proof (TLA+ / Ivy) for two-round BFT + view-change.
+- State pruning.
+- PII-exclusion rule for payloads (regulatory).
+- Snapshot / fast-sync trust model.
+- External price-oracle attestation (§20.3 reservation).
+- Multi-validator production hardening + adversarial testnet.
+- SOC 2 / regulatory certification.
+
+---
+
 ## [v0.4.0] — Patch-04: Validator Set, Constitutional Ceilings, View-Change, Key Rotation
 
 **Chain version introduced:** `header.version = 3`. v2 chains continue to replay

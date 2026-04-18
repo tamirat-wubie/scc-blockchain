@@ -1,8 +1,15 @@
-# SCCGUB Protocol Specification v1.0
+# SCCGUB Protocol Specification v2.0
 
 **Status: FROZEN** — Changes require a governance proposal with constitutional timelock (200 blocks).
 
 This document defines the consensus-critical rules. Any conforming implementation must produce identical state roots given identical inputs.
+
+**Canonical spec layout:**
+- §1–§14 of this document — v1/v2/v3/v4 common rules (canonical encoding, cryptography, identity, transactions, blocks, consensus, finality, state, fees, Φ traversal, CPoG, governance, replay, conservation laws).
+- [PATCH_04.md](PATCH_04.md) §15–§19 — **v3 additions:** validator-set management, view-change protocol, constitutional ceilings, identity-preserving key rotation, v3 migration.
+- [PATCH_05.md](PATCH_05.md) §20–§29 — **v4 additions:** fee oracle hardening, Mfidel seal VRF, evidence-sourced slashing admission, dynamic `confirmation_depth`, typed `ModifyConsensusParam`, `verify_strict` migration, admitted-history projection, v4 migration, expanded ceilings.
+
+Chain version selects which rule set applies: v1/v2 use only §1–§14; v3 adds §15–§19; v4 adds §20–§29. All versions continue to replay under their admission-time rules (§19.3 / §28.3 no-silent-upgrade discipline).
 
 ---
 
