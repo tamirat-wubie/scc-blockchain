@@ -2,6 +2,59 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.7.2] — Patch-06 consensus property tests
+
+Patch-level release. Extends the property-test pattern from v0.7.1 to
+the two pure-function Patch-06 consensus invariants:
+INV-FORK-CHOICE-DETERMINISM and INV-UPGRADE-ATOMICITY.
+
+### New: `crates/sccgub-node/tests/patch_06_consensus_properties.rs`
+
+10 property tests using the same deterministic xorshift PRNG pattern.
+
+**INV-FORK-CHOICE-DETERMINISM (§32)**:
+- `prop_fork_choice_select_is_order_independent_random` — 40 random
+  candidate sets of 2-7 tips; winner block_id identical across forward,
+  reverse, and shuffled orderings.
+- `prop_fork_choice_winner_is_score_maximum` — 40 random sets;
+  winner.score_cmp(other) >= Equal for every other input.
+- `prop_fork_choice_score_cmp_is_antisymmetric` — 200 random pairs;
+  cmp(A,B) == reverse(cmp(B,A)).
+- `prop_fork_choice_score_cmp_is_transitive` — 150 random triples;
+  A≥B and B≥C ⇒ A≥C.
+- `prop_fork_choice_score_cmp_reflexive` — 50 random tips;
+  cmp(A,A) == Equal.
+- `prop_fork_choice_finalized_depth_dominates` — 80 paired tips;
+  strictly-higher finalized_depth always beats lower regardless of
+  height/power/hash.
+
+**INV-UPGRADE-ATOMICITY (§34.6)**:
+- `prop_upgrade_atomicity_active_version_monotone_in_height` — 30
+  random transition sequences (1-4 transitions); active version
+  monotonically non-decreasing across heights.
+- `prop_upgrade_atomicity_genesis_version_pre_activation` — pre-
+  earliest-activation only genesis aligns; post-latest only final
+  to_version aligns.
+- `prop_upgrade_atomicity_exactly_one_version_aligned_per_height` —
+  at any tested height, exactly one of versions 0..30 is Aligned.
+- `prop_upgrade_atomicity_empty_history_uses_genesis_version` — no
+  transitions ⇒ genesis_version is the only aligned version at every
+  height.
+
+### Release summary
+
+**1293 tests, 9 crates, persistent block log + snapshots, all CI green.**
+
+- 1293 tests across 9 crates (up from 1283 in v0.7.1).
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### Breaking changes
+
+None. Test-only addition.
+
 ## [v0.7.1] — Patch-07 primitive property tests
 
 Patch-level release. Adds property-based test coverage for the four
