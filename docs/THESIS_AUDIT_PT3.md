@@ -452,6 +452,84 @@ Per §13 process, this audit triggers the following amendments:
   but ranks the wrong property first. Amendment per recommendations
   §1 above.
 
+### Cross-reference: pt1's competitive framing was incomplete
+
+PR #33 §F listed Cosmos SDK + CometBFT, Substrate / Polkadot,
+Solana, Aptos / Sui (Move), Ethereum L2s, Ceramic / ComposeDB,
+Arweave, IPFS-based stacks, Holochain, Solid, W3C VC + DIDs, Git /
+Forgejo / Radicle, and Hyperledger Fabric / Besu / Canton as
+comparables. For each it itemised what each competitor solves
+better and where SCCGUB is weaker.
+
+What pt1 did not do — and what this audit corrects — is name the
+**single dimension on which SCCGUB is structurally uncopyable** by
+any of those comparables: immutable meta-governance bound at
+genesis. On that dimension, every comparable in pt1's table
+**fails** for the simple reason that none of them were designed
+with the property in mind.
+
+The pt1 competitive analysis is therefore **not wrong but
+incomplete**: it compared SCCGUB and the comparables broadly when
+the structurally-meaningful comparison is narrow. This note-to-file
+preserves that finding in the audit trail without amending pt1
+directly. Future readers should read pt1 §F as "here is the broad
+comparison surface" and pt3 §C as "here is the narrow comparison
+surface that actually defines the niche."
+
+### Cross-reference: niche size, two additions accepted from review
+
+The user review of this audit added two niche categories that
+strengthen the niche-defensibility argument without contradicting
+any finding:
+
+1. **Algorithmic accountability registries** — AI model provenance
+   and training-data attestation under the EU AI Act and similar
+   regimes. Immutable meta-governance is exactly the property:
+   "this model's training-data attestation rules cannot be
+   retroactively rewritten by the model's operator."
+2. **Post-settlement legal archives** — court records, land
+   registries in jurisdictions with weak institutional trust,
+   academic publication records after retraction windows close.
+   "Decision-made, record-sealed, no-one-can-change-the-archive's-
+   own-rules-later" use cases.
+
+These broaden the addressable institutional surface from "handful
+of global bodies" to "many medium-scale registries" while remaining
+true to the depth-in-niche framing. POSITIONING.md §1 amendment
+should incorporate both.
+
+### Cross-reference: Patch-08 dependency is moat-defining
+
+This audit's H.15 recommended a `verify_ceilings_unchanged_since_genesis(...)`
+function. The user review correctly noted that this is **not a
+nice-to-have** but a **moat-defining structural commitment**: if
+ceiling immutability is the moat, ceiling immutability must be
+**externally auditable by anyone** — an institution considering
+SCCGUB for a constitutional-court use case must be able to
+cryptographically verify the property without trusting the
+maintainer.
+
+A consequence: the survival estimate of this audit's §I assumes
+Patch-08 ships the verifier correctly. If the verifier ships with
+an exploit path (encoding gaps, governance work-around, genesis-
+commit edge case), the moat collapses and defensibility drops to
+LOW everywhere. **Mechanical correctness of the verifier is
+load-bearing on the entire Future A defensibility claim.** Future
+patches must treat Patch-08's verifier as consensus-critical
+infrastructure, not auxiliary tooling.
+
+### Cross-reference: depth-in-niche is not a permanent ceiling
+
+The user review correctly noted that "depth-in-niche, not breadth-
+across-domains" is the near-term shape but not the permanent shape.
+Linux Foundation started with Linux and now hosts hundreds of
+projects; depth-in-niche compounds into breadth-in-adjacent-niches
+**if the first deployment proves the immutability property
+matters**. The survival-estimate language should be softened to
+"breadth-across-domains is a downstream consequence of depth-in-
+niche, not a near-term goal." Future POSITIONING.md amendments
+should reflect this.
+
 ## What this audit does not do
 
 - Does not refute Future A. The moat exists; it is narrower than
