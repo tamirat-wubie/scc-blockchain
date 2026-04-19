@@ -57,3 +57,41 @@ jobs:
         env:
           CARGO_TARGET_DIR: target-windows-${{ github.run_id }}-test
         run: cargo test
+
+  # PATCH_09 §A.1: cross-language verifier — Python port test matrix.
+  # Pure stdlib; runs against every supported Python version (3.10+ per
+  # pyproject.toml classifiers) to catch version-specific regressions
+  # (match-statement edge cases, Protocol behavior changes, etc.).
+  python-port:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run sccgub-audit-py unit tests
+        working-directory: crates/sccgub-audit-py
+        run: python -m unittest discover -s tests -v
+
+  # PATCH_09 §C semantic baseline + §E conformance harness.
+  # Asserts byte-identical verifier output between every shipped
+  # language port (currently Rust + Python). A single disagreement
+  # is a hard failure per §C.
+  cross-language-conformance:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build sccgub-audit binaries
+        run: cargo build -p sccgub-audit --bin sccgub-audit --bin sccgub-audit-conformance
+      - name: Run cross-language conformance harness
+        run: python scripts/cross-language-conformance.py
