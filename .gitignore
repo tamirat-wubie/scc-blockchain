@@ -2,6 +2,8 @@
 /target-windows-*
 /.codex-*
 /.claude/settings.local.json
+/.claude/scheduled_tasks.lock
+/.claude/*.lock
 *.swp
 *.swo
 .DS_Store
@@ -17,3 +19,8 @@ __pycache__/
 .ruff_cache/
 build/
 dist/
+
+# Node / TypeScript (sccgub-audit-ts)
+node_modules/
+*.tsbuildinfo
+.npm

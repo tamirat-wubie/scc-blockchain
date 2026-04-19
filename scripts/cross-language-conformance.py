@@ -14,10 +14,10 @@ a hard failure (exit 1) that fails CI.
 Currently checks:
     - Rust port (cargo run -p sccgub-audit -- verify-ceilings ...)
     - Python port (python -m sccgub_audit.cli verify-ceilings ...)
+    - TypeScript port (node crates/sccgub-audit-ts/dist/cli.js verify-ceilings ...)
 
 Future patches add:
     - Go port (Patch-09 §B)
-    - TypeScript port (Patch-09 §C)
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "crates" / "sccgub-audit" / "conformance-fixtures"
 PY_PACKAGE_DIR = REPO_ROOT / "crates" / "sccgub-audit-py"
+TS_PACKAGE_DIR = REPO_ROOT / "crates" / "sccgub-audit-ts"
+TS_CLI_DIST = TS_PACKAGE_DIR / "dist" / "cli.js"
 
 
 def run_rust_verifier(fixture_path: Path) -> tuple[int, str]:
@@ -80,6 +82,37 @@ def run_python_verifier(fixture_path: Path) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def run_typescript_verifier(fixture_path: Path) -> tuple[int, str]:
+    """Run the TypeScript port (compiled to dist/cli.js). Returns (exit_code, stdout).
+
+    Per PATCH_09 §D.3 the TS port is pure stdlib (Node built-ins only) and is
+    consumed via `node crates/sccgub-audit-ts/dist/cli.js`. The harness
+    expects `npm install && npx tsc` (or equivalent) to have produced
+    `dist/cli.js` ahead of time; CI handles this via the
+    `cross-language-conformance` job's build step.
+    """
+    if not TS_CLI_DIST.exists():
+        raise FileNotFoundError(
+            f"TS CLI not built: {TS_CLI_DIST} missing. "
+            f"Run `npm install && npx tsc` in {TS_PACKAGE_DIR} first "
+            f"(or rely on the CI job to build it)."
+        )
+    result = subprocess.run(
+        [
+            "node",
+            str(TS_CLI_DIST),
+            "verify-ceilings",
+            "--chain-state",
+            str(fixture_path),
+            "--conformance",
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode, result.stdout
+
+
 def main() -> int:
     if not FIXTURES_DIR.exists():
         print(
@@ -96,7 +129,11 @@ def main() -> int:
         return 2
 
     disagreements: list[str] = []
-    languages = [("rust", run_rust_verifier), ("python", run_python_verifier)]
+    languages = [
+        ("rust", run_rust_verifier),
+        ("python", run_python_verifier),
+        ("typescript", run_typescript_verifier),
+    ]
 
     print(
         f"cross-language-conformance: {len(json_fixtures)} fixture(s) × "

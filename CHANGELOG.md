@@ -2,6 +2,127 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.8.2] — Patch-09 §C — TypeScript port of the moat verifier (third language; web-deployment access path)
+
+Closes PATCH_09 §C, the third and final language port commitment in the
+cross-language verifier sequence (Python → TypeScript shipped; Go
+remains deferred per §B).
+
+After v0.8.1 the moat verifier had two independent implementations.
+v0.8.2 adds a third — TypeScript / Node.js — which extends the moat's
+trust surface to the runtime environments most institutional reviewers
+have at hand: regulator-friendly Python, production-Rust services, and
+JavaScript / TypeScript web tooling. Per POSITIONING §11, the moat is
+only as strong as the set of independently-runnable verifiers a third
+party can use to check it. v0.8.2 takes that set from two to three.
+
+The cross-language conformance harness now enforces **30 byte-identical
+runs per release** (10 fixtures × 3 language ports). A single
+disagreement is a hard CI failure per PATCH_09 §C semantic baseline.
+
+### New crate: `sccgub-audit-ts`
+
+Per PATCH_09.md §C + §D:
+
+- Pure Node built-ins — **zero third-party runtime dependencies** (§D.3).
+  TypeScript + tsx + @types/node are dev-time tooling only and do not
+  appear in the published artifact's runtime path.
+- Node.js 20+ (for `node:test`, `import.meta.url`, `pathToFileURL`).
+- TypeScript 5.x strict mode (every `tsc` flag from `noImplicitAny`
+  through `noUnusedParameters` enabled).
+- Library surface mirrors the Rust crate exactly:
+  - `verifyCeilingsUnchangedSinceGenesis(chain: ChainStateView): CeilingViolation | null`
+  - `JsonChainStateFixture` + `ChainStateView` interface
+  - `CeilingFieldId` (string-literal-tagged enum, 18 entries, canonical order)
+  - `CeilingViolation` discriminated union via `kind` literal + helpers
+- CLI: `sccgub-audit-ts verify-ceilings --chain-state <path>` with
+  `--json` and `--conformance` output modes. Exit codes 0 / 1 / 2 per
+  PATCH_08 §C.4. Same byte-identical conformance format as Rust + Python.
+- 36 unit tests via Node's built-in `node:test` runner — **no
+  third-party test framework**.
+
+### Real bug caught during the port: bigint precision in JSON parse
+
+JavaScript's `JSON.parse` returns IEEE-754 `number` for integer literals.
+Integers above 2^53 (`Number.MAX_SAFE_INTEGER`) are not exactly
+representable. Several ceilings (e.g., `min_effective_fee_floor` =
+10^16) exceed this boundary, so a 1-unit drift on those values would be
+**invisible to a naive port** — the Rust output `before_value=10000000000000000:after_value=9999999999999999`
+would collapse into `10000000000000000 === 10000000000000000` in JS.
+
+Fix: `parseJsonPreservingBigInts` — a regex pre-pass that wraps unsafe-
+range integer literals in a sentinel string, plus a standard-reviver
+post-pass that converts them to `bigint`. Pure stdlib; no third-party
+JSON parser. The CeilingValue type is `bigint` end-to-end on the value
+path. 4 explicit regression tests guard the fix in `chainState.test.ts`.
+
+This is exactly the class of bug the cross-language conformance harness
+exists to catch. The harness flagged the discrepancy on the very first
+3-language run, which is the whole point of multi-implementation moat
+verification.
+
+### Cross-language conformance baseline
+
+- 10 fixtures × 3 language ports = **30 byte-identical runs**.
+- Harness: `python scripts/cross-language-conformance.py`.
+- A single disagreement is a hard failure (exit 1) per PATCH_09 §C.
+
+### CI enforcement (extending v0.8.1)
+
+`.github/workflows/ci.yml` extended:
+- New `typescript-port` job: Node 20, `npm install` + `npx tsc --noEmit`
+  + `npm test` (36 tests via `node:test`). Mirrors the existing
+  `python-port` job's discipline.
+- `cross-language-conformance` job extended to build + invoke the TS
+  port alongside Rust + Python. Same hard-fail semantics: any byte
+  difference between any two ports → exit 1 → red CI.
+
+### Tests & conformance
+
+- Rust: workspace unchanged at 1320 tests; all pass.
+- Python: 30 unit tests, all pass on 3.10 / 3.11 / 3.12 / 3.13.
+- TypeScript: **36 new unit tests**, all pass on Node 20 (includes 4
+  bigint-precision regression cases).
+- Cross-language: 10 fixtures × 3 ports = **30 conformance runs, all
+  byte-identical**.
+
+### Release summary
+
+**1320 tests, 10 crates, persistent block log + snapshots, all CI green.**
+
+- 1320 tests across 10 crates (unchanged from v0.8.1 — Patch-09 §C is
+  additive via the new `crates/sccgub-audit-ts/` TypeScript crate,
+  which contributes 36 TypeScript tests + extends the cross-language
+  conformance from 20 runs to 30 runs).
+- 10th crate is `sccgub-audit`; sister ports live alongside it as
+  `sccgub-audit-py` (Python) and `sccgub-audit-ts` (TypeScript) — both
+  pure-stdlib, both independently installable.
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable from
+  Rust source in one command.
+
+### POSITIONING / PATCH cross-references
+
+Closes PATCH_09 §C directly. Two of the three §B language commitments
+(Python, TypeScript) are now HELD; only **Go remains** (deferred to a
+future v0.8.x). POSITIONING §11 "cross-language moat" is now
+substantially HELD: the verifier exists in three independent
+implementations producing byte-identical output, satisfying the
+"any two implementations agree" trust-surface property.
+
+### Not addressed in this release
+
+- Go port (PATCH_09 §B) — deferred to v0.8.3 or later. No environment
+  blocker; just not in scope here.
+- Binary snapshot reader (PATCH_09 §D binary-reading mode) — deferred.
+  JSON fixture format remains the v1 CLI input.
+- None of the Layer 2/3/4 fractures from the v0.5.0 DCA audit
+  (issues #50, #51, #53, #54, #55, #56). Those remain triaged-but-open
+  per the advisory cold-read discipline.
+
+---
+
 ## [v0.8.1] — Patch-09 §A.1 — Python port of the moat verifier (cross-language commitment, first language)
 
 Closes the first half of the PATCH_09.md cross-language verifier

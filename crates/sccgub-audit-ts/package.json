@@ -1,0 +1,40 @@
+{
+  "name": "sccgub-audit-ts",
+  "version": "0.8.2",
+  "description": "TypeScript port of the SCCGUB ceiling-immutability verifier (Patch-09 §C)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "sccgub-audit-ts": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test --import tsx \"tests/**/*.test.ts\"",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "cli": "node --import tsx src/cli.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
+  },
+  "comments": [
+    "Per PATCH_09.md §D.3 dependency policy: pure standard library only.",
+    "No third-party RUNTIME dependencies — `dependencies` is empty by design.",
+    "devDependencies (typescript, @types/node, tsx) are build/test tooling only;",
+    "they are not present in the published artifact's runtime path.",
+    "tsx is used to run TypeScript source directly with Node's built-in test runner",
+    "without a separate compile step in dev workflows; CI compiles via `tsc`."
+  ]
+}
