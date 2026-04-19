@@ -17,8 +17,8 @@ traversal and produce a causal receipt that proves what changed and why.
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
 - REST API with 27 versioned endpoints for state, blocks, receipts, governance, finality, v3 validator-set/ceilings/key-rotation views, and v4 full admission-history projection. v5 adds forgery-veto authorization, base-fee floor, declared fork-choice rule, pruning-contract predicates, and live-upgrade protocol types (see PATCH_06.md).
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 1320 Rust tests + 30 Python-port tests + 20 cross-language conformance runs, CI green on Ubuntu + Windows + security audit.
-- Cross-language moat verifier: `sccgub-audit-py` Python port (v0.8.1) produces byte-identical conformance output against the Rust reference on every fixture (PATCH_09.md §A.1). Go and TypeScript ports deferred to subsequent v0.8.x releases.
+- Hardening posture: 1320 Rust tests + 30 Python-port tests + 36 TypeScript-port tests + 30 cross-language conformance runs, CI green on Ubuntu + Windows + security audit.
+- Cross-language moat verifier: three independent implementations producing byte-identical output — Rust (`sccgub-audit`, reference), Python (`sccgub-audit-py`, v0.8.1, PATCH_09.md §A.1), TypeScript (`sccgub-audit-ts`, v0.8.2, PATCH_09.md §C). Go port deferred to a subsequent v0.8.x release. CI enforces 30 byte-identical runs per release per PATCH_09 §C semantic baseline.
 - Minimal p2p networking: peer registry, hello/heartbeat, block sync, tx gossip, vote propagation, and per-peer
   limits (no hardened peer discovery or deeper DoS protection).
 - Persistence: block log and periodic snapshots; state is replay-authoritative by default on restart, with optional redb-backed startup-authoritative mode.
