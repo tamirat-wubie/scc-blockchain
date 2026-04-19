@@ -21,7 +21,7 @@
     "cli": "node --import tsx src/cli.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {},
   "devDependencies": {

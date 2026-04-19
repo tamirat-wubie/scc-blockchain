@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Install dev tooling
         run: npm install --no-fund --no-audit
       - name: Type-check (strict)
@@ -113,7 +113,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Build sccgub-audit binaries
         run: cargo build -p sccgub-audit --bin sccgub-audit --bin sccgub-audit-conformance
       - name: Build sccgub-audit-ts (compile to dist/)

@@ -32,7 +32,7 @@ The TypeScript port is specifically the **web-deployment access path** per PATCH
 
 ## Requirements
 
-- Node.js **20+** (for `node:test`, top-level `bigint` literals, and `import.meta.url`).
+- Node.js **22+** (for `node:test`'s built-in glob support, top-level `bigint` literals, and `import.meta.url`). Node 20 lacks `--test` glob expansion, which the test runner relies on.
 - TypeScript **5.x** for compilation (dev-time only; not a runtime dep).
 - No third-party **runtime** dependencies. Pure Node built-ins per PATCH_09 §D.3.
 - `tsx` is used in dev workflow to run TypeScript sources directly under `node --test`; CI compiles with `tsc` and runs the output.
