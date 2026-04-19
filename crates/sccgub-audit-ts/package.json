@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test --import tsx \"tests/**/*.test.ts\"",
+    "test": "node --test --import tsx \"tests/*.test.ts\"",
     "lint": "tsc --noEmit -p tsconfig.json",
     "cli": "node --import tsx src/cli.ts"
   },
