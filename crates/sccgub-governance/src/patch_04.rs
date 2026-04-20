@@ -173,23 +173,63 @@ pub enum TypedParamProposalRejection {
     CeilingViolation(#[from] CeilingViolation),
     #[error("activation_height {activation} < current_height {current} + 1")]
     ActivationInPast { activation: u64, current: u64 },
+    /// PATCH_10 v0.8.4 addition: catches in-struct `ConsensusParams::validate()`
+    /// bounds the ceiling check does not evaluate (e.g., `confirmation_depth == 0`,
+    /// even `median_tension_window`, zero forgery-veto rate).
+    #[error("proposed ConsensusParams fails in-struct validation: {0}")]
+    ParamBounds(String),
+    /// PATCH_10 v0.8.4 FRACTURE-V084-04 closure: `activation_height` too far
+    /// in the future. Caps parking-attack surface where a Safety-level
+    /// proposer submits `activation_height: u64::MAX` to leave a sleeper
+    /// proposal that activates under unreviewable future state.
+    #[error(
+        "activation_height {activation} too far in future; max offset \
+         {max_offset} blocks from current_height {current}"
+    )]
+    ActivationTooFarInFuture {
+        activation: u64,
+        current: u64,
+        max_offset: u64,
+    },
 }
+
+/// PATCH_10 v0.8.4 FRACTURE-V084-04 cap on `activation_height` offset.
+///
+/// A typed `ModifyConsensusParam` proposal's declared `activation_height`
+/// must lie in `(current_height, current_height + MAX_ACTIVATION_HEIGHT_OFFSET]`.
+/// Closes the parking-attack vector per DCA pre-merge audit
+/// `docs/audits/2026-04-20-dca-pre-merge-v0.8.4-typed-modify-consensus-param.md`
+/// §FRACTURE-V084-04.
+///
+/// Value: 10 × CONSTITUTIONAL timelock = 2000 blocks. Rationale:
+/// 1. Admits the full constitutional timelock (200 blocks) with 9×
+///    additional scheduling headroom — enough for legitimate operator
+///    coordination across validators and clients.
+/// 2. Caps the attacker's parking horizon to ~33 minutes at 1s blocks —
+///    short enough that sleeper proposals are observable in normal
+///    governance review cadence.
+/// 3. Deterministic constant, no governance tunable (changing requires
+///    a new protocol release; matches the "constitutional" register).
+pub const MAX_ACTIVATION_HEIGHT_OFFSET: u64 = 10 * crate::proposals::timelocks::CONSTITUTIONAL;
 
 /// Validate a typed `ModifyConsensusParam` proposal at submission time.
 ///
-/// Steps per §25:
-/// 1. Apply the `(field, new_value)` pair to the current chain
+/// Steps per §25 + PATCH_10 v0.8.4 composition:
+/// 1. `activation_height` must be strictly in the future (> current_height).
+/// 2. Apply the `(field, new_value)` pair to the current chain
 ///    `ConsensusParams` to produce the hypothetical post-activation
 ///    params.
-/// 2. Validate the hypothetical params against the chain's current
+/// 3. Validate the hypothetical params against the chain's current
 ///    `ConstitutionalCeilings` via §17.4 (`ceilings.validate`).
-/// 3. `activation_height` must be strictly in the future (> current_height).
+/// 4. PATCH_10 v0.8.4: run `ConsensusParams::validate()` on the
+///    hypothetical params to catch in-struct bounds (`confirmation_depth > 0`,
+///    `median_tension_window` odd, `max_forgery_vetoes_per_block_param > 0`,
+///    etc.) that a pair-only check misses.
 ///
-/// INV-TYPED-PARAM-CEILING first half: ceiling violation at submission
-/// time rejects before the proposal enters the registry. The activation-
-/// time second half is enforced by the applier when the timelock
-/// expires and re-runs `ceilings.validate` against the hypothetical
-/// params under the ceilings as-of activation.
+/// Returns the hypothetical `ConsensusParams` on success — useful for the
+/// caller to record alongside the proposal and re-validate at activation time
+/// per §25.4 `INV-TYPED-PARAM-CEILING` (second half, applied in the state
+/// crate when the timelock expires).
 pub fn validate_typed_param_proposal(
     current: &ConsensusParams,
     ceilings: &ConstitutionalCeilings,
@@ -197,16 +237,30 @@ pub fn validate_typed_param_proposal(
     new_value: ConsensusParamValue,
     activation_height: u64,
     current_height: u64,
-) -> Result<(), TypedParamProposalRejection> {
+) -> Result<ConsensusParams, TypedParamProposalRejection> {
     if activation_height <= current_height {
         return Err(TypedParamProposalRejection::ActivationInPast {
             activation: activation_height,
             current: current_height,
         });
     }
+    // FRACTURE-V084-04 cap: activation_height must be within a bounded
+    // offset from current_height. Uses saturating_add so current_height
+    // near u64::MAX does not wrap.
+    let max_activation = current_height.saturating_add(MAX_ACTIVATION_HEIGHT_OFFSET);
+    if activation_height > max_activation {
+        return Err(TypedParamProposalRejection::ActivationTooFarInFuture {
+            activation: activation_height,
+            current: current_height,
+            max_offset: MAX_ACTIVATION_HEIGHT_OFFSET,
+        });
+    }
     let hypothetical = apply_typed_param(current, field, new_value)?;
     ceilings.validate(&hypothetical)?;
-    Ok(())
+    hypothetical
+        .validate()
+        .map_err(TypedParamProposalRejection::ParamBounds)?;
+    Ok(hypothetical)
 }
 
 /// Structural submission-time validation for a `KeyRotation`.

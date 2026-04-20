@@ -364,15 +364,56 @@ impl Chain {
 
             // Apply governance activations during replay (restart-safe).
             // from_blocks has no validator_set, so validator changes are no-ops.
-            replay_governance_from_transitions(
-                &block.body.transitions,
-                block.header.height,
-                &mut proposals,
-                &mut state.state.governance_state,
-                &mut governance_limits,
-                &mut finality_config,
-                &mut |_key, _value| Ok(()), // No validator set in replay context
-            );
+            // For ModifyConsensusParam: per FRACTURE-V084-R01 closure, replay
+            // MUST apply the mutation to consensus_params (and persist via
+            // commit_consensus_params) so the cold-replayed state_root
+            // matches the live-head state_root. An earlier draft made this
+            // a no-op on the claim that replay reconstructs params from
+            // genesis — that was wrong: post-genesis activations MUST apply
+            // during replay or state roots diverge.
+            let replay_ceilings =
+                sccgub_state::constitutional_ceilings_state::constitutional_ceilings_from_trie(
+                    &state,
+                )
+                .ok()
+                .flatten();
+            let mut replay_mutated_consensus_params = false;
+            {
+                let state_mut = &mut state;
+                let governance_state_mut = &mut state_mut.state.governance_state;
+                let consensus_params_mut = &mut state_mut.consensus_params;
+                replay_governance_from_transitions(
+                    &block.body.transitions,
+                    block.header.height,
+                    &mut proposals,
+                    governance_state_mut,
+                    &mut governance_limits,
+                    &mut finality_config,
+                    &mut |_key, _value| Ok(()), // No validator set in replay context
+                    &mut |field, new_value, _activation_height| {
+                        let hypothetical = sccgub_types::typed_params::apply_typed_param(
+                            consensus_params_mut,
+                            field,
+                            new_value,
+                        )
+                        .map_err(|e| format!("replay typed param apply: {}", e))?;
+                        if let Some(ref ceilings) = replay_ceilings {
+                            ceilings
+                                .validate(&hypothetical)
+                                .map_err(|e| format!("replay ceiling re-check: {}", e))?;
+                        }
+                        hypothetical
+                            .validate()
+                            .map_err(|e| format!("replay in-struct re-check: {}", e))?;
+                        *consensus_params_mut = hypothetical;
+                        replay_mutated_consensus_params = true;
+                        Ok(())
+                    },
+                );
+            }
+            if replay_mutated_consensus_params {
+                sccgub_state::world::commit_consensus_params(&mut state);
+            }
         }
 
         if let Some(last) = blocks.last() {
@@ -1021,16 +1062,75 @@ impl Chain {
         transitions: &[sccgub_types::transition::SymbolicTransition],
         height: u64,
     ) {
-        let vs = &mut self.validator_set;
-        replay_governance_from_transitions(
-            transitions,
-            height,
-            &mut self.proposals,
-            &mut self.state.state.governance_state,
-            &mut self.governance_limits,
-            &mut self.finality_config,
-            &mut |key, value| apply_validator_change(vs, key, value),
-        );
+        // PATCH_10 §25.4 INV-TYPED-PARAM-CEILING second half: read ceilings
+        // as-of activation height (they are genesis-write-once so this is
+        // equivalent to submission-time ceilings, but we snapshot explicitly
+        // for spec fidelity — if a future hard-fork changes ceilings, this
+        // path re-validates correctly).
+        let ceilings_snapshot =
+            sccgub_state::constitutional_ceilings_state::constitutional_ceilings_from_trie(
+                &self.state,
+            )
+            .ok()
+            .flatten();
+
+        // FRACTURE-V084-R01 persistence flag: set by the closure on
+        // successful consensus_params mutation. Read after the
+        // split-borrow scope ends so we can re-borrow `&mut self.state`
+        // for the trie commit.
+        let mut mutated_consensus_params = false;
+
+        // Split disjoint mutable borrows: ManagedWorldState has disjoint fields
+        // `state` (the WorldState containing governance_state) and
+        // `consensus_params`. The compiler permits splitting them into two
+        // non-overlapping mutable references.
+        {
+            let state_mut = &mut self.state;
+            let governance_state_mut = &mut state_mut.state.governance_state;
+            let consensus_params_mut = &mut state_mut.consensus_params;
+            let vs = &mut self.validator_set;
+
+            replay_governance_from_transitions(
+                transitions,
+                height,
+                &mut self.proposals,
+                governance_state_mut,
+                &mut self.governance_limits,
+                &mut self.finality_config,
+                &mut |key, value| apply_validator_change(vs, key, value),
+                &mut |field, new_value, _activation_height| {
+                    // Re-validate against the ceilings as-of activation height.
+                    let hypothetical = sccgub_types::typed_params::apply_typed_param(
+                        consensus_params_mut,
+                        field,
+                        new_value,
+                    )
+                    .map_err(|e| format!("live typed param apply: {}", e))?;
+                    if let Some(ref ceilings) = ceilings_snapshot {
+                        ceilings
+                            .validate(&hypothetical)
+                            .map_err(|e| format!("live ceiling re-check: {}", e))?;
+                    }
+                    // In-struct bounds re-check (catches confirmation_depth == 0, etc.).
+                    hypothetical
+                        .validate()
+                        .map_err(|e| format!("live in-struct re-check: {}", e))?;
+                    // All re-validations passed; commit the mutation to live state.
+                    *consensus_params_mut = hypothetical;
+                    mutated_consensus_params = true;
+                    Ok(())
+                },
+            );
+        } // Drop split borrows of self.state here so we can re-borrow below.
+
+        // FRACTURE-V084-R01 closure: persist the in-memory mutation to the
+        // state trie under ConsensusParams::TRIE_KEY. Without this, the
+        // post-activation state_root does not reflect the new params,
+        // breaking block-producer/validator determinism and cold-replay
+        // convergence. Idempotent when nothing mutated (guarded by flag).
+        if mutated_consensus_params {
+            sccgub_state::world::commit_consensus_params(&mut self.state);
+        }
     }
 
     /// Submit a transition to the mempool.
@@ -1859,7 +1959,7 @@ pub fn parse_finality_mode(value: &str) -> Result<FinalityMode, String> {
     Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
 }
 
-fn replay_governance_from_transitions<F>(
+fn replay_governance_from_transitions<F, G>(
     transitions: &[SymbolicTransition],
     height: u64,
     proposals: &mut sccgub_governance::proposals::ProposalRegistry,
@@ -1867,8 +1967,14 @@ fn replay_governance_from_transitions<F>(
     governance_limits: &mut GovernanceLimits,
     finality_config: &mut FinalityConfig,
     apply_validator_change: &mut F,
+    apply_consensus_params_change: &mut G,
 ) where
     F: FnMut(&str, &str) -> Result<(), String>,
+    G: FnMut(
+        sccgub_types::typed_params::ConsensusParamField,
+        sccgub_types::typed_params::ConsensusParamValue,
+        u64, // activation_height
+    ) -> Result<(), String>,
 {
     for tx in transitions {
         if let sccgub_types::transition::OperationPayload::ProposeNorm { name, description } =
@@ -1972,6 +2078,43 @@ fn replay_governance_from_transitions<F>(
                         governance_state.emergency_mode = false;
                     }
                     sccgub_governance::proposals::ProposalKind::AddNorm { .. } => {}
+                    sccgub_governance::proposals::ProposalKind::ModifyConsensusParam {
+                        ref field,
+                        ref new_value,
+                        activation_height,
+                    } => {
+                        // PATCH_10 §25 + v0.8.4 FRACTURE-V084-01/F-03 closure:
+                        // Apply the typed param mutation at timelock expiry.
+                        // The caller-supplied closure is responsible for:
+                        //   (a) re-validating against ceilings-as-of-activation
+                        //       (PATCH_05 §25.4 INV-TYPED-PARAM-CEILING second half)
+                        //   (b) mutating live ConsensusParams if re-validation passes
+                        // Failure is logged, not panicking — submission-time
+                        // validation should have caught all invalid proposals
+                        // (FRACTURE-V084-02 closure in submit_typed_consensus_param_proposal),
+                        // so a failure here indicates a ceiling change between
+                        // submission and activation (extremely rare; requires a
+                        // hard-fork between the two events).
+                        //
+                        // NOTE for v0.8.4 scope: `activation_height` is an
+                        // advisory scheduling hint. The mutation currently applies
+                        // at `timelock_until` regardless of `activation_height`
+                        // value. Strict separation of `timelock_until` from
+                        // `activation_height` per §25.3 requires tracking Activated
+                        // proposals pending their declared application height;
+                        // that refactor is deferred. The validator's
+                        // MAX_ACTIVATION_HEIGHT_OFFSET cap still constrains
+                        // `activation_height` to a reviewable range.
+                        if let Err(e) =
+                            apply_consensus_params_change(*field, *new_value, activation_height)
+                        {
+                            tracing::warn!(
+                                "ModifyConsensusParam activation at height {} rejected: {}",
+                                height,
+                                e
+                            );
+                        }
+                    }
                 },
                 Err(e) => {
                     tracing::warn!("Proposal activation failed: {}", e);

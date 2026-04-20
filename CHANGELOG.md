@@ -2,6 +2,142 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.8.4] — PATCH_05 §25 + PATCH_10 §38 — typed `ModifyConsensusParam` governance path
+
+Closes the PATCH_05 §25 implementation gap that the v0.8.4 pre-impl
+discovery surfaced (`docs/audits/2026-04-20-pre-v0.8.4-discovery-patch-05-section-25-gap.md`).
+Wires `ProposalKind::ModifyConsensusParam` through the full governance
+lifecycle (submit → vote → finalize → activate → live-param mutation)
+with submission-time ceiling validation (§38 symmetric composition) and
+activation-time re-validation (§25.4 INV-TYPED-PARAM-CEILING second
+half).
+
+Pre-merge DCA pass (`docs/audits/2026-04-20-dca-pre-merge-v0.8.4-\
+typed-modify-consensus-param.md`) initially found 4 fractures, 2
+blockers. All remediated in-PR before shipping.
+
+### Protocol hard-fork boundary
+
+**This release introduces a new `ProposalKind` enum variant. Bincode
+discriminant extension is backward-compatible for reading pre-v0.8.4
+state (the new variant appends to the tail), but a pre-v0.8.4 node
+encountering a v0.8.4-emitted `ProposalKind::ModifyConsensusParam` in
+block-propagated state will fail to decode.** Operators running mixed
+v0.8.3/v0.8.4 deployments must coordinate activation.
+
+### New: `ProposalKind::ModifyConsensusParam { field, new_value, activation_height }`
+
+Typed-governance proposal variant that supersedes string-based
+`ModifyParameter` for consensus-critical param modifications. Requires
+`PrecedenceLevel::Safety` and uses the CONSTITUTIONAL timelock (200
+blocks). Fields are type-checked at compile time against the
+`ConsensusParamField` enum (updated in v0.8.3 to cover all 31 params
+including the PATCH_10 §39.4 addition).
+
+### New: `ProposalRegistry::submit_typed_consensus_param_proposal`
+
+The only supported submission path for `ModifyConsensusParam`. Composes
+`validate_typed_param_proposal` (§17.8 ceiling + in-struct bounds + §38
+activation-height cap) with `submit()`. Known-invalid proposals never
+enter the registry. Returns `(proposal_id, hypothetical_params)` so the
+caller can pre-compute and record the activation-time state.
+
+### New: `MAX_ACTIVATION_HEIGHT_OFFSET` cap
+
+Closes FRACTURE-V084-04 parking-attack vector. Caps
+`activation_height - current_height` at `10 × CONSTITUTIONAL_TIMELOCK =
+2000 blocks`. Prevents sleeper proposals with `activation_height =
+u64::MAX` that would activate under unreviewable future state.
+`saturating_add` on `voting_deadline` and `timelock_until` computations
+additionally closes u64 overflow near the extremes.
+
+### Activation dispatcher (`sccgub-node/src/chain.rs`)
+
+The activation path now has a branch for `ProposalKind::ModifyConsensusParam`
+that:
+1. Re-reads `ConstitutionalCeilings` from the state trie as-of
+   activation height.
+2. Re-validates the hypothetical params against those ceilings and
+   runs `ConsensusParams::validate()` for in-struct bounds.
+3. On pass, commits the mutation to live `ConsensusParams` via
+   `apply_typed_param`.
+4. On fail, logs a warning and leaves state unchanged — failure here
+   indicates a ceiling change between submission and activation
+   (requires a hard-fork; extremely rare).
+
+The replay path (`from_blocks`) is a no-op for this variant — replay
+reconstructs `ConsensusParams` from genesis, not from governance
+events — matching the existing `ActivateEmergency` /
+`DeactivateEmergency` replay semantics.
+
+### Pre-merge DCA fracture remediation
+
+Per PATCH_10 §40.2 rule 4 Review cross-map:
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| **FRACTURE-V084-01** non-exhaustive match in chain.rs activation dispatcher | BLOCKER | remediated — new match arm with re-validation + live-state mutation |
+| **FRACTURE-V084-02** `submit()` admits new variant without ceiling check | BLOCKER | remediated — added `submit_typed_consensus_param_proposal` wrapper that validates before submit |
+| **FRACTURE-V084-03** §25.4 re-validation at activation undelivered | MAJOR | remediated — activation dispatcher re-validates against ceilings-as-of-activation |
+| **FRACTURE-V084-04** `activation_height` unbounded | MAJOR | remediated — `MAX_ACTIVATION_HEIGHT_OFFSET` cap + saturating_add |
+| Methodology: piped `cargo check` hides exit code | n/a | adopted — pre-merge sanity uses `cargo check --workspace` directly |
+
+### Tests & conformance
+
+- Rust: 1323 → 1333 tests (7 new integration tests at
+  `crates/sccgub-node/tests/patch_10_typed_consensus_param_lifecycle.rs`
+  covering full governance lifecycle, ceiling-violation rejection,
+  activation-height-cap rejection, u64::MAX rejection, in-struct bounds
+  rejection, validator return, same-height rejection).
+- Governance library tests: 74 → 79 (5 new in `proposals.rs` covering
+  precedence, submit, timelock class, activate, serde roundtrip —
+  carried over from v0.8.4 in-flight work).
+- Python port: 30 tests, unchanged.
+- TypeScript port: 36 tests, unchanged.
+- Cross-language conformance: 30 byte-identical runs, unchanged
+  (no ceiling-field change this release).
+
+### Release summary
+
+**1333 tests, 10 crates, persistent block log + snapshots, all CI green.**
+
+- 1333 tests across 10 crates (up from 1323 in v0.8.3; the +7 are the
+  typed-consensus-param lifecycle integration tests).
+- 10th crate is `sccgub-audit`; sibling ports at
+  `crates/sccgub-audit-py` and `crates/sccgub-audit-ts` synced to v0.8.4.
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes.
+
+### POSITIONING / PATCH cross-references
+
+- PATCH_05.md §25 — typed `ModifyConsensusParam` (this release
+  finally wires into the `ProposalKind` enum, 12+ months post-spec).
+- PATCH_10.md §38 — symmetric ceiling-param check at submission
+  (now meaningful because the typed variant carries real mutations).
+- PATCH_10.md §25.4 — INV-TYPED-PARAM-CEILING re-validation
+  (second half now delivered in the activation dispatcher).
+- PATCH_10.md §40 — DCA-before-merge discipline (third pre-merge
+  application found 4 fractures; all remediated in-PR).
+
+### Not addressed in this release
+
+- §39 evidence-layer `ForgeryVeto` admission (v0.8.5).
+- §39.6 deprecation of PATCH_06 §30 governance-routed `ForgeryVeto`
+  (v0.8.5).
+- Strict separation of `timelock_until` from `activation_height` per
+  §25.3 (currently applied at `timelock_until` regardless of
+  `activation_height` value — the cap still constrains scheduling).
+  Scheduled for a future patch.
+- PATCH_10 tracking issues #62, #63, #64 remain open.
+
+### Issue closures
+
+- Issue **#55** (ceiling-lowering attack) closed in the halt PR (#67)
+  as `wontfix-documented` with discovery cross-reference.
+
+---
+
 ## [v0.8.3] — PATCH_10 §39.4 — ConstitutionalCeilings field #19 + cross-port sync (types foundation)
 
 Foundation slice of PATCH_10 implementation. Introduces

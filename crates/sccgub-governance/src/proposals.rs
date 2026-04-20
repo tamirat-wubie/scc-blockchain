@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+use sccgub_types::consensus_params::ConsensusParams;
+use sccgub_types::constitutional_ceilings::ConstitutionalCeilings;
 use sccgub_types::governance::{Norm, PrecedenceLevel};
 use sccgub_types::tension::TensionValue;
+use sccgub_types::typed_params::{ConsensusParamField, ConsensusParamValue};
 use sccgub_types::{AgentId, Hash, NormId};
 
 /// Governance proposal lifecycle.
@@ -53,6 +56,21 @@ pub enum ProposalKind {
     ActivateEmergency,
     /// Deactivate emergency mode (requires SAFETY precedence).
     DeactivateEmergency,
+    /// PATCH_05 §25 typed `ConsensusParams` modification (requires SAFETY
+    /// precedence). Supersedes the string-based `ModifyParameter` path
+    /// for consensus-critical params: the typed `(field, new_value)` pair
+    /// is compile-time type-checked, submission-time ceiling-validated via
+    /// `validate_consensus_params_proposal`, and re-validated at activation
+    /// per PATCH_05 §25.4 `INV-TYPED-PARAM-CEILING`.
+    ///
+    /// The `activation_height` declares when the change takes effect if
+    /// the proposal survives voting + timelock. Separates governance
+    /// timelock from live-state cut-over per §25.3.
+    ModifyConsensusParam {
+        field: ConsensusParamField,
+        new_value: ConsensusParamValue,
+        activation_height: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +155,8 @@ impl ProposalRegistry {
             }
             ProposalKind::ModifyParameter { .. }
             | ProposalKind::ActivateEmergency
-            | ProposalKind::DeactivateEmergency => PrecedenceLevel::Safety,
+            | ProposalKind::DeactivateEmergency
+            | ProposalKind::ModifyConsensusParam { .. } => PrecedenceLevel::Safety,
         };
 
         if (proposer_level as u8) > (required as u8) {
@@ -167,13 +186,72 @@ impl ProposalRegistry {
             votes_for: 0,
             votes_against: 0,
             required_level: required,
-            voting_deadline: current_height + voting_period,
+            // saturating_add per DCA FRACTURE-V084-04: prevents u64 overflow
+            // when current_height is near u64::MAX.
+            voting_deadline: current_height.saturating_add(voting_period),
             voters: BTreeSet::new(),
             timelock_until: 0, // Set when accepted.
         });
         self.index.insert(id, self.proposals.len() - 1);
 
         Ok(id)
+    }
+
+    /// PATCH_05 §25 + PATCH_10 §38 + v0.8.4 FRACTURE-V084-02 closure:
+    /// the ONLY supported path for submitting a typed `ModifyConsensusParam`
+    /// proposal.
+    ///
+    /// Composes `validate_typed_param_proposal` (ceiling + in-struct bounds +
+    /// activation-height cap) with `submit()`. The typed variant is always
+    /// rejected at submission if the proposal would violate a constitutional
+    /// ceiling or the activation-height cap (FRACTURE-V084-04), so
+    /// known-invalid proposals never occupy a registry slot.
+    ///
+    /// Direct `submit()` of `ProposalKind::ModifyConsensusParam` is *technically*
+    /// permitted (required for replay paths that must accept proposals as
+    /// previously accepted by the chain, without re-running validation under
+    /// possibly-different current state). Production submission paths MUST
+    /// use this method; replay paths that bypass it document why explicitly.
+    ///
+    /// Returns `(proposal_id, hypothetical_params)`. The hypothetical params
+    /// are returned so the caller can record them alongside the proposal and
+    /// re-validate at activation per §25.4 `INV-TYPED-PARAM-CEILING`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_typed_consensus_param_proposal(
+        &mut self,
+        proposer: AgentId,
+        proposer_level: PrecedenceLevel,
+        current_params: &ConsensusParams,
+        current_ceilings: &ConstitutionalCeilings,
+        field: ConsensusParamField,
+        new_value: ConsensusParamValue,
+        activation_height: u64,
+        current_height: u64,
+        voting_period: u64,
+    ) -> Result<(Hash, ConsensusParams), String> {
+        // Pre-submission ceiling + bounds + cap validation.
+        let hypothetical = crate::patch_04::validate_typed_param_proposal(
+            current_params,
+            current_ceilings,
+            field,
+            new_value,
+            activation_height,
+            current_height,
+        )
+        .map_err(|e| format!("typed ModifyConsensusParam rejected: {}", e))?;
+        // If validated, enter the registry via the normal submit path.
+        let id = self.submit(
+            proposer,
+            proposer_level,
+            ProposalKind::ModifyConsensusParam {
+                field,
+                new_value,
+                activation_height,
+            },
+            current_height,
+            voting_period,
+        )?;
+        Ok((id, hypothetical))
     }
 
     /// Cast a vote on a proposal. Each agent can only vote once.
@@ -232,10 +310,13 @@ impl ProposalRegistry {
                 let timelock_duration = match &proposal.kind {
                     ProposalKind::ModifyParameter { .. }
                     | ProposalKind::ActivateEmergency
-                    | ProposalKind::DeactivateEmergency => timelocks::CONSTITUTIONAL,
+                    | ProposalKind::DeactivateEmergency
+                    | ProposalKind::ModifyConsensusParam { .. } => timelocks::CONSTITUTIONAL,
                     _ => timelocks::ORDINARY,
                 };
-                proposal.timelock_until = current_height + timelock_duration;
+                // saturating_add per DCA FRACTURE-V084-04: prevents u64 overflow
+                // when current_height is near u64::MAX.
+                proposal.timelock_until = current_height.saturating_add(timelock_duration);
                 proposal.status = ProposalStatus::Timelocked;
                 accepted.push(proposal.clone());
             } else {
@@ -535,5 +616,157 @@ mod tests {
         let result = registry.vote(&fake_id, [1u8; 32], PrecedenceLevel::Meaning, true, 10);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
+    }
+
+    // ── PATCH_05 §25 + PATCH_10 v0.8.4 wiring tests ───────────────
+
+    /// `ProposalKind::ModifyConsensusParam` requires Safety-level precedence,
+    /// matching the sibling Safety-class variants (`ModifyParameter`,
+    /// `ActivateEmergency`, `DeactivateEmergency`). A Meaning-level proposer
+    /// is rejected at submit.
+    #[test]
+    fn patch_10_modify_consensus_param_requires_safety_precedence() {
+        let mut registry = ProposalRegistry::default();
+        let result = registry.submit(
+            [1u8; 32],
+            PrecedenceLevel::Meaning,
+            ProposalKind::ModifyConsensusParam {
+                field: ConsensusParamField::MaxProofDepth,
+                new_value: ConsensusParamValue::U32(300),
+                activation_height: 500,
+            },
+            100,
+            10,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Insufficient authority"));
+    }
+
+    /// Safety-level proposer can submit a `ModifyConsensusParam` proposal.
+    /// Returns a proposal ID; the proposal enters `Voting` state.
+    #[test]
+    fn patch_10_modify_consensus_param_safety_submits() {
+        let mut registry = ProposalRegistry::default();
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyConsensusParam {
+                    field: ConsensusParamField::MaxProofDepth,
+                    new_value: ConsensusParamValue::U32(300),
+                    activation_height: 500,
+                },
+                100,
+                10,
+            )
+            .unwrap();
+        assert_eq!(registry.active_count(), 1);
+        assert_eq!(registry.proposals[0].id, id);
+        assert_eq!(registry.proposals[0].status, ProposalStatus::Voting);
+    }
+
+    /// `ModifyConsensusParam` is Constitutional-class: the finalize path
+    /// assigns it the 200-block CONSTITUTIONAL timelock, not the 50-block
+    /// ORDINARY timelock. This matches `ModifyParameter` sibling behavior.
+    #[test]
+    fn patch_10_modify_consensus_param_uses_constitutional_timelock() {
+        let mut registry = ProposalRegistry::default();
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyConsensusParam {
+                    field: ConsensusParamField::MaxProofDepth,
+                    new_value: ConsensusParamValue::U32(300),
+                    activation_height: 500,
+                },
+                100,
+                10,
+            )
+            .unwrap();
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Safety, true, 105)
+            .unwrap();
+        let accepted = registry.finalize(111);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].status, ProposalStatus::Timelocked);
+        // Constitutional timelock = 200 blocks from finalize height 111 = 311.
+        assert_eq!(accepted[0].timelock_until, 111 + timelocks::CONSTITUTIONAL);
+    }
+
+    /// `activate()` returns `Ok(None)` for `ModifyConsensusParam` — the
+    /// proposal's status flips to `Activated` but no norm is produced.
+    /// The caller (node crate) is expected to read the activated proposal's
+    /// kind and apply the typed param change to live `ConsensusParams` at
+    /// `activation_height`.
+    #[test]
+    fn patch_10_modify_consensus_param_activates_without_norm() {
+        let mut registry = ProposalRegistry::default();
+        let id = registry
+            .submit(
+                [1u8; 32],
+                PrecedenceLevel::Safety,
+                ProposalKind::ModifyConsensusParam {
+                    field: ConsensusParamField::MaxProofDepth,
+                    new_value: ConsensusParamValue::U32(300),
+                    activation_height: 1000,
+                },
+                100,
+                10,
+            )
+            .unwrap();
+        registry
+            .vote(&id, [1u8; 32], PrecedenceLevel::Safety, true, 105)
+            .unwrap();
+        registry.finalize(111);
+        // Activate after the CONSTITUTIONAL timelock expires.
+        let norm = registry
+            .activate(&id, 111 + timelocks::CONSTITUTIONAL)
+            .unwrap();
+        assert!(norm.is_none());
+        assert_eq!(registry.proposals[0].status, ProposalStatus::Activated);
+        // The proposal's kind is preserved for the node crate to read on apply.
+        match &registry.proposals[0].kind {
+            ProposalKind::ModifyConsensusParam {
+                field,
+                new_value,
+                activation_height,
+            } => {
+                assert_eq!(*field, ConsensusParamField::MaxProofDepth);
+                assert_eq!(*new_value, ConsensusParamValue::U32(300));
+                assert_eq!(*activation_height, 1000);
+            }
+            _ => panic!("expected ModifyConsensusParam kind"),
+        }
+    }
+
+    /// Sanity: `ProposalKind::ModifyConsensusParam` round-trips through
+    /// serde (JSON via serde_json here, but bincode round-trip is already
+    /// exercised by `sccgub-types::typed_params::tests`) — required for
+    /// proposal persistence and cross-node propagation. JSON is a
+    /// sufficient proxy because the bincode round-trip holds iff the
+    /// serde derives are present; JSON also exercises the variant tag
+    /// and field-name serialization consistency.
+    #[test]
+    fn patch_10_modify_consensus_param_serde_roundtrip() {
+        let original = ProposalKind::ModifyConsensusParam {
+            field: ConsensusParamField::MaxForgeryVetoesPerBlockParam,
+            new_value: ConsensusParamValue::U32(6),
+            activation_height: 12345,
+        };
+        let text = serde_json::to_string(&original).unwrap();
+        let back: ProposalKind = serde_json::from_str(&text).unwrap();
+        match back {
+            ProposalKind::ModifyConsensusParam {
+                field,
+                new_value,
+                activation_height,
+            } => {
+                assert_eq!(field, ConsensusParamField::MaxForgeryVetoesPerBlockParam);
+                assert_eq!(new_value, ConsensusParamValue::U32(6));
+                assert_eq!(activation_height, 12345);
+            }
+            _ => panic!("wrong variant after roundtrip"),
+        }
     }
 }
