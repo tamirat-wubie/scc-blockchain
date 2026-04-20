@@ -1959,6 +1959,12 @@ pub fn parse_finality_mode(value: &str) -> Result<FinalityMode, String> {
     Err("finality.mode must be 'deterministic' or 'bft:<quorum>'".into())
 }
 
+// PATCH_10 v0.8.4: 8-arg helper. The original 7-arg signature was already
+// at clippy's too_many_arguments threshold; extending with the typed-param
+// applier closure pushes it to 8. Refactoring into a context struct would
+// improve readability but changes every caller; allow-ed here as a
+// well-scoped exception. Tracked for cleanup in v0.8.5.
+#[allow(clippy::too_many_arguments)]
 fn replay_governance_from_transitions<F, G>(
     transitions: &[SymbolicTransition],
     height: u64,
