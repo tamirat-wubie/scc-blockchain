@@ -77,11 +77,12 @@ Findings and dispositions are documented in the PR description's
 
 ### Release summary
 
-**1320 tests, 10 crates, persistent block log + snapshots, all CI green.**
+**1323 tests, 10 crates, persistent block log + snapshots, all CI green.**
 
-- 1320 tests across 10 crates (unchanged — field addition does not
-  add new Rust tests; existing field-count assertions updated from
-  18 to 19).
+- 1323 tests across 10 crates (up from 1320 in v0.8.2; the +3 are
+  two typed-param regression tests closing DCA FRACTURE-V083-01 plus
+  one backward-compat test closing DCA FRACTURE-V083-02 via
+  `patch_10_legacy_v4_deserializes_with_forgery_veto_default`).
 - 10th crate is `sccgub-audit`; sibling ports at
   `crates/sccgub-audit-py` and `crates/sccgub-audit-ts` both at
   v0.8.3.

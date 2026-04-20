@@ -1120,6 +1120,59 @@ mod tests {
     }
 
     #[test]
+    fn patch_10_legacy_v4_deserializes_with_forgery_veto_default() {
+        // v0.5.0–v0.8.2 genesis consensus_params payload. V4 schema has
+        // all v4 (Patch-05) fields but not the PATCH_10 §39.4 addition;
+        // fallback must inject default `max_forgery_vetoes_per_block_param
+        // = 4` (matches new chain default).
+        let v4 = LegacyConsensusParamsV4 {
+            max_proof_depth: 256,
+            max_constraint_propagation_depth: 32,
+            max_constraint_propagation_steps: 10_000,
+            max_activated_symbols: 16,
+            max_scan_per_symbol: 1000,
+            max_constraints_per_symbol: 64,
+            default_max_steps: 10_000,
+            default_tx_gas_limit: 1_000_000,
+            default_block_gas_limit: 50_000_000,
+            gas_tx_base: 1_000,
+            gas_compute_step: 10,
+            gas_state_read: 100,
+            gas_state_write: 500,
+            gas_sig_verify: 3_000,
+            gas_hash_op: 50,
+            gas_proof_byte: 5,
+            gas_payload_byte: 2,
+            max_symbol_address_len: 4096,
+            max_state_entry_size: 1_048_576,
+            max_tension_swing: 2_000_000,
+            view_change_base_timeout_ms: 1_000,
+            view_change_max_timeout_ms: 60_000,
+            max_block_bytes: 2_097_152,
+            max_active_proposals: 128,
+            max_validator_set_size: 64,
+            max_validator_set_changes_per_block_param: 4,
+            median_tension_window: 7,
+            fee_tension_alpha: crate::tension::TensionValue::SCALE / 2,
+            confirmation_depth: 2,
+            max_equivocation_evidence_per_block_param: 4,
+        };
+        let bytes = bincode::serialize(&v4).unwrap();
+        let parsed = ConsensusParams::from_canonical_bytes(&bytes)
+            .expect("V4 legacy bytes must decode into post-PATCH_10 ConsensusParams");
+        let defaults = ConsensusParams::default();
+        // PATCH_10 field comes from defaults.
+        assert_eq!(
+            parsed.max_forgery_vetoes_per_block_param,
+            defaults.max_forgery_vetoes_per_block_param
+        );
+        assert_eq!(parsed.max_forgery_vetoes_per_block_param, 4);
+        // V4 fields preserved through migration.
+        assert_eq!(parsed.max_equivocation_evidence_per_block_param, 4);
+        assert_eq!(parsed.confirmation_depth, 2);
+    }
+
+    #[test]
     fn patch_05_current_bytes_preserve_v4_fields() {
         let p = ConsensusParams {
             median_tension_window: 11,
