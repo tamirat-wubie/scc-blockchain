@@ -2,7 +2,7 @@
 
 **Version:** 0.8.4
 **Date:** 2026-04-20
-**Repo:** 10 crates, 1333 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`) + two cross-language ports of that verifier (`sccgub-audit-py`, PATCH_09.md §A.1; `sccgub-audit-ts`, PATCH_09.md §C) producing byte-identical output with 30 Python unit tests + 36 TypeScript unit tests + 30 cross-language conformance runs (10 fixtures × 3 ports). PATCH_10 rollout ongoing: v0.8.3 = types foundation (field #19 added); v0.8.4 = PATCH_05 §25 typed `ModifyConsensusParam` wired + §38 submission validation + §25.4 activation re-validation. All under DCA-before-merge discipline per PATCH_10 §40 (third pre-merge application found 4 fractures, all remediated in-PR).
+**Repo:** 10 crates, 1338 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`) + two cross-language ports of that verifier (`sccgub-audit-py`, PATCH_09.md §A.1; `sccgub-audit-ts`, PATCH_09.md §C) producing byte-identical output with 30 Python unit tests + 36 TypeScript unit tests + 30 cross-language conformance runs (10 fixtures × 3 ports). PATCH_10 rollout ongoing: v0.8.3 = types foundation (field #19 added); v0.8.4 = PATCH_05 §25 typed `ModifyConsensusParam` wired + §38 submission validation + §25.4 activation re-validation. All under DCA-before-merge discipline per PATCH_10 §40 (third pre-merge application found 4 fractures, all remediated in-PR).
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees

@@ -84,7 +84,7 @@ Per PATCH_10 §40.2 rule 4 Review cross-map:
 
 ### Tests & conformance
 
-- Rust: 1323 → 1333 tests (7 new integration tests at
+- Rust: 1323 → 1338 tests (7 new integration tests at
   `crates/sccgub-node/tests/patch_10_typed_consensus_param_lifecycle.rs`
   covering full governance lifecycle, ceiling-violation rejection,
   activation-height-cap rejection, u64::MAX rejection, in-struct bounds
@@ -99,9 +99,9 @@ Per PATCH_10 §40.2 rule 4 Review cross-map:
 
 ### Release summary
 
-**1333 tests, 10 crates, persistent block log + snapshots, all CI green.**
+**1338 tests, 10 crates, persistent block log + snapshots, all CI green.**
 
-- 1333 tests across 10 crates (up from 1323 in v0.8.3; the +7 are the
+- 1338 tests across 10 crates (up from 1323 in v0.8.3; the +7 are the
   typed-consensus-param lifecycle integration tests).
 - 10th crate is `sccgub-audit`; sibling ports at
   `crates/sccgub-audit-py` and `crates/sccgub-audit-ts` synced to v0.8.4.

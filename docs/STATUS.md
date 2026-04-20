@@ -17,7 +17,7 @@ traversal and produce a causal receipt that proves what changed and why.
 - Governance proposals: submit -> vote -> timelock -> activate into live governance state.
 - REST API with 27 versioned endpoints for state, blocks, receipts, governance, finality, v3 validator-set/ceilings/key-rotation views, and v4 full admission-history projection. v5 adds forgery-veto authorization, base-fee floor, declared fork-choice rule, pruning-contract predicates, and live-upgrade protocol types (see PATCH_06.md).
 - Consensus-critical values live in `ConsensusParams` embedded at genesis (no hardcoded drift).
-- Hardening posture: 1333 Rust tests + 30 Python-port tests + 36 TypeScript-port tests + 30 cross-language conformance runs, CI green on Ubuntu + Windows + security audit.
+- Hardening posture: 1338 Rust tests + 30 Python-port tests + 36 TypeScript-port tests + 30 cross-language conformance runs, CI green on Ubuntu + Windows + security audit.
 - Cross-language moat verifier: three independent implementations producing byte-identical output — Rust (`sccgub-audit`, reference), Python (`sccgub-audit-py`, PATCH_09.md §A.1), TypeScript (`sccgub-audit-ts`, PATCH_09.md §C). All three at v0.8.3, with CeilingFieldId updated to 19 variants per PATCH_10 §39.4. Go port (PATCH_09 §B) deferred. CI enforces 30 byte-identical runs per release per PATCH_09 §C semantic baseline + cross-port version-sync per PR #61.
 - PATCH_10 rollout (v0.8.3 = types foundation; v0.8.4 = §38 symmetric governance check; v0.8.5 = §39 evidence-layer ForgeryVeto admission). Each under its own DCA-before-merge pre-review per PATCH_10 §40.
 - Minimal p2p networking: peer registry, hello/heartbeat, block sync, tx gossip, vote propagation, and per-peer
