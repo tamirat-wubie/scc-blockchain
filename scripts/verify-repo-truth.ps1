@@ -252,6 +252,54 @@ Assert-GeneratedOpenApiArtifactMatches -RequestedTargetDir $TargetDir
 
 Assert-Contains -Path $openApi -Needle "version: $version"
 
+# PATCH_09 §C.4: cross-language ports' version numbers must match the
+# Rust workspace. A desync means one of three language ports is
+# "released" at a different version than the others, which violates
+# the cross-language moat commitment (POSITIONING §11) and will
+# surface as a confusing mismatch in operator tooling. This block
+# extends verify-repo-truth's scope from "Rust workspace truth" to
+# "cross-port version truth."
+
+function Get-PythonPortVersion {
+    $pyproject = Join-Path $repoRoot "crates/sccgub-audit-py/pyproject.toml"
+    if (-not (Test-Path $pyproject)) {
+        throw "sccgub-audit-py/pyproject.toml not found (expected path: $pyproject)"
+    }
+    $text = Get-Content -Path $pyproject -Raw
+    $match = [regex]::Match($text, '(?m)^version\s*=\s*"([^"]+)"')
+    if (-not $match.Success) {
+        throw "Failed to locate version in crates/sccgub-audit-py/pyproject.toml"
+    }
+    $match.Groups[1].Value
+}
+
+function Get-TypeScriptPortVersion {
+    $packageJson = Join-Path $repoRoot "crates/sccgub-audit-ts/package.json"
+    if (-not (Test-Path $packageJson)) {
+        throw "sccgub-audit-ts/package.json not found (expected path: $packageJson)"
+    }
+    $text = Get-Content -Path $packageJson -Raw
+    # Anchor on line-start + optional indentation to avoid matching a
+    # hypothetical "version" key nested inside a dependency sub-object.
+    # Top-level keys in package.json conventionally appear at 2-space
+    # indent after the opening brace.
+    $match = [regex]::Match($text, '(?m)^\s*"version"\s*:\s*"([^"]+)"')
+    if (-not $match.Success) {
+        throw "Failed to locate version in crates/sccgub-audit-ts/package.json"
+    }
+    $match.Groups[1].Value
+}
+
+$pyVersion = Get-PythonPortVersion
+$tsVersion = Get-TypeScriptPortVersion
+
+if ($pyVersion -ne $version) {
+    throw "sccgub-audit-py version ($pyVersion) does not match Rust workspace version ($version). Bump crates/sccgub-audit-py/pyproject.toml to $version."
+}
+if ($tsVersion -ne $version) {
+    throw "sccgub-audit-ts version ($tsVersion) does not match Rust workspace version ($version). Bump crates/sccgub-audit-ts/package.json to $version."
+}
+
 Write-Host "Repo truth verified:"
 Write-Host "  Version: $version"
 Write-Host "  Crates: $crateCount"
@@ -259,3 +307,5 @@ Write-Host "  CLI commands: $cliCount"
 Write-Host "  Versioned routes: $routeCount"
 Write-Host "  ErrorCode variants: $errorCodeCount"
 Write-Host "  Workspace tests: $testCount"
+Write-Host "  sccgub-audit-py: $pyVersion (matches)"
+Write-Host "  sccgub-audit-ts: $tsVersion (matches)"
