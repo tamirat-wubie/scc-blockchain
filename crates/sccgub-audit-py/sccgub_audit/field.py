@@ -43,6 +43,8 @@ class CeilingFieldId(Enum):
     MAX_CONFIRMATION_DEPTH = "max_confirmation_depth_ceiling"
     MAX_EQUIVOCATION_EVIDENCE_PER_BLOCK = "max_equivocation_evidence_per_block"
     MIN_EFFECTIVE_FEE_FLOOR = "min_effective_fee_floor"
+    # PATCH_10 §39.4: per-block forgery-veto rate ceiling.
+    MAX_FORGERY_VETOES_PER_BLOCK = "max_forgery_vetoes_per_block_ceiling"
 
     @classmethod
     def all(cls) -> list["CeilingFieldId"]:
@@ -73,6 +75,7 @@ class CeilingFieldId(Enum):
             cls.MAX_CONFIRMATION_DEPTH,
             cls.MAX_EQUIVOCATION_EVIDENCE_PER_BLOCK,
             cls.MIN_EFFECTIVE_FEE_FLOOR,
+            cls.MAX_FORGERY_VETOES_PER_BLOCK,
         ]
 
     def as_str(self) -> str:
@@ -127,4 +130,4 @@ class _CompileTimeFieldCheck:
     the same PR or the cross-language conformance harness fails.
     """
 
-    expected_field_count: int = 18
+    expected_field_count: int = 19

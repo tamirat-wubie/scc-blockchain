@@ -36,13 +36,16 @@ function defaultCeilings(): Record<string, number> {
     max_confirmation_depth_ceiling: 8,
     max_equivocation_evidence_per_block: 16,
     min_effective_fee_floor: 10_000,
+    max_forgery_vetoes_per_block_ceiling: 8,
   };
 }
 
 describe("CeilingFieldId", () => {
   test("patch_08_all_field_count_matches_struct_field_count", () => {
+    // Bumped from 18 to 19 in PATCH_10 §39.4 (adds
+    // max_forgery_vetoes_per_block_ceiling).
     assert.equal(ALL_CEILING_FIELDS.length, EXPECTED_FIELD_COUNT);
-    assert.equal(ALL_CEILING_FIELDS.length, 18);
+    assert.equal(ALL_CEILING_FIELDS.length, 19);
   });
 
   test("patch_08_all_variants_distinct", () => {

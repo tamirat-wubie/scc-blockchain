@@ -1,6 +1,6 @@
 {
   "name": "sccgub-audit-ts",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "TypeScript port of the SCCGUB ceiling-immutability verifier (Patch-09 §C)",
   "license": "MIT",
   "type": "module",

@@ -72,6 +72,9 @@ pub enum ConsensusParamField {
     FeeTensionAlpha,
     ConfirmationDepth,
     MaxEquivocationEvidencePerBlockParam,
+
+    // PATCH_10 §39.4 addition
+    MaxForgeryVetoesPerBlockParam,
 }
 
 /// Typed value for a `ModifyConsensusParam` proposal. Each variant
@@ -231,6 +234,9 @@ pub fn apply_typed_param(
         ConsensusParamField::ConfirmationDepth => expect_u64!(U64, out.confirmation_depth),
         ConsensusParamField::MaxEquivocationEvidencePerBlockParam => {
             expect_u32!(U32, out.max_equivocation_evidence_per_block_param)
+        }
+        ConsensusParamField::MaxForgeryVetoesPerBlockParam => {
+            expect_u32!(U32, out.max_forgery_vetoes_per_block_param)
         }
     }
     Ok(out)
@@ -406,10 +412,47 @@ mod tests {
             ConsensusParamField::MaxValidatorSetChangesPerBlockParam,
             ConsensusParamField::MedianTensionWindow,
             ConsensusParamField::MaxEquivocationEvidencePerBlockParam,
+            ConsensusParamField::MaxForgeryVetoesPerBlockParam,
         ] {
             // Accept a safe mid-range u32 to avoid secondary validate() bounds.
             apply_typed_param(&base, f, ConsensusParamValue::U32(7))
                 .unwrap_or_else(|e| panic!("field {:?} rejected U32(7): {}", f, e));
         }
+    }
+
+    /// PATCH_10 §39.4 + DCA pre-merge FRACTURE-V083-01 closure:
+    /// the new `max_forgery_vetoes_per_block_param` field has a typed-
+    /// governance variant and the apply path writes through correctly.
+    #[test]
+    fn patch_10_typed_apply_max_forgery_vetoes_per_block_param() {
+        let base = ConsensusParams::default();
+        let out = apply_typed_param(
+            &base,
+            ConsensusParamField::MaxForgeryVetoesPerBlockParam,
+            ConsensusParamValue::U32(6),
+        )
+        .expect("U32(6) must apply to max_forgery_vetoes_per_block_param");
+        assert_eq!(out.max_forgery_vetoes_per_block_param, 6);
+    }
+
+    /// PATCH_10 §39.4 + DCA pre-merge FRACTURE-V083-01 closure:
+    /// type mismatch on the new field is rejected, matching sibling
+    /// u32-typed fields' behavior.
+    #[test]
+    fn patch_10_typed_apply_max_forgery_vetoes_rejects_u64() {
+        let base = ConsensusParams::default();
+        let result = apply_typed_param(
+            &base,
+            ConsensusParamField::MaxForgeryVetoesPerBlockParam,
+            ConsensusParamValue::U64(6),
+        );
+        assert!(matches!(
+            result,
+            Err(TypedParamApplyError::TypeMismatch {
+                field: ConsensusParamField::MaxForgeryVetoesPerBlockParam,
+                expected: "u32",
+                actual: "u64",
+            })
+        ));
     }
 }

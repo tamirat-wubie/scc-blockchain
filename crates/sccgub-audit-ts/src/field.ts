@@ -38,6 +38,8 @@ export const CeilingFieldId = {
   MaxConfirmationDepth: "max_confirmation_depth_ceiling",
   MaxEquivocationEvidencePerBlock: "max_equivocation_evidence_per_block",
   MinEffectiveFeeFloor: "min_effective_fee_floor",
+  // PATCH_10 §39.4: per-block forgery-veto rate ceiling.
+  MaxForgeryVetoesPerBlock: "max_forgery_vetoes_per_block_ceiling",
 } as const;
 
 /** Type of a single CeilingFieldId value (the underlying string). */
@@ -71,6 +73,7 @@ export const ALL_CEILING_FIELDS: readonly CeilingFieldId[] = [
   CeilingFieldId.MaxConfirmationDepth,
   CeilingFieldId.MaxEquivocationEvidencePerBlock,
   CeilingFieldId.MinEffectiveFeeFloor,
+  CeilingFieldId.MaxForgeryVetoesPerBlock,
 ] as const;
 
 /**
@@ -145,4 +148,4 @@ export function fieldValue(
  * TypeScript variant in the same PR or the cross-language
  * conformance harness fails.
  */
-export const EXPECTED_FIELD_COUNT = 18;
+export const EXPECTED_FIELD_COUNT = 19;

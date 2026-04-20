@@ -1,8 +1,8 @@
 # SCCGUB External Audit Preparation Guide
 
-**Version:** 0.8.2
-**Date:** 2026-04-19
-**Repo:** 10 crates, 1320 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`) + two cross-language ports of that verifier (`sccgub-audit-py`, PATCH_09.md §A.1; `sccgub-audit-ts`, PATCH_09.md §C) producing byte-identical output with 30 Python unit tests + 36 TypeScript unit tests + 30 cross-language conformance runs (10 fixtures × 3 ports).
+**Version:** 0.8.3
+**Date:** 2026-04-20
+**Repo:** 10 crates, 1323 tests, hardening-stage reference runtime with optional p2p alpha + externally-runnable moat verifier (`sccgub-audit`) + two cross-language ports of that verifier (`sccgub-audit-py`, PATCH_09.md §A.1; `sccgub-audit-ts`, PATCH_09.md §C) producing byte-identical output with 30 Python unit tests + 36 TypeScript unit tests + 30 cross-language conformance runs (10 fixtures × 3 ports). Foundation slice of PATCH_10 landed: ConstitutionalCeilings field #19 `max_forgery_vetoes_per_block_ceiling` + cross-port CeilingFieldId sync, under DCA-before-merge discipline per PATCH_10 §40.
 
 **Companion documents:**
 - [THREAT_MODEL.md](THREAT_MODEL.md) — formal threat model, adversary assumptions, and safety guarantees
