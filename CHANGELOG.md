@@ -2,6 +2,112 @@
 
 All notable changes to SCCGUB are documented here.
 
+## [v0.8.3] — PATCH_10 §39.4 — ConstitutionalCeilings field #19 + cross-port sync (types foundation)
+
+Foundation slice of PATCH_10 implementation. Introduces
+`max_forgery_vetoes_per_block_ceiling` as field #19 in
+`ConstitutionalCeilings`, plus the companion `max_forgery_vetoes_per_block_param`
+in `ConsensusParams`, plus coordinated variant additions in the three
+`sccgub-audit*` language ports' `CeilingFieldId` enums. No semantic
+validation rule change yet — §38 (symmetric-ceiling governance check)
+and §39 (evidence-layer ForgeryVeto admission) land in follow-up
+releases v0.8.4 and v0.8.5 respectively, each under its own DCA-before-
+merge pre-review.
+
+The new ceiling and param pair is inert in v5 pre-PATCH_10 chains —
+their `BlockBody` cannot carry `forgery_vetoes`, so the per-block rate
+is never consumed. v0.8.3 ships the structural foundation only; the
+admission path that uses the rate ceiling arrives in v0.8.5.
+
+### New field: `ConstitutionalCeilings.max_forgery_vetoes_per_block_ceiling: u32`
+
+- Default: 8 (×2 headroom over companion default 4).
+- Enforced by `ConstitutionalCeilings::validate()` against
+  `ConsensusParams.max_forgery_vetoes_per_block_param`.
+- Canonical bincode field order: appended as field #19, after
+  `min_effective_fee_floor`.
+- Backward compat: `LegacyConstitutionalCeilingsV2` (pre-PATCH_10 v5
+  schema, 18 fields) loads via the fallback cascade current → V2 → V1.
+
+### New companion: `ConsensusParams.max_forgery_vetoes_per_block_param: u32`
+
+- Default: 4. Zero is a legitimate operator choice (disables the
+  forgery-veto admission path entirely).
+- Validate rejects only on ceiling violation; no lower-bound check.
+- Backward compat: `LegacyConsensusParamsV4` (pre-PATCH_10 v5 schema,
+  30 fields) loads via the fallback cascade current → V4 → V3 → V2 → V1.
+
+### Cross-language port sync: `CeilingFieldId` field #19
+
+All three sibling moat-verifier ports updated in lockstep:
+
+- Rust `sccgub-audit`: `CeilingFieldId::MaxForgeryVetoesPerBlock` added
+  to enum + `ALL` slice; `field_value` exhaustive match extended;
+  `assert_eq!(ALL.len(), 19)` replaces the former 18-field assertion.
+- Python `sccgub-audit-py`: `CeilingFieldId.MAX_FORGERY_VETOES_PER_BLOCK`
+  + `all()` list + `expected_field_count = 19`.
+- TypeScript `sccgub-audit-ts`: `CeilingFieldId.MaxForgeryVetoesPerBlock`
+  + `ALL_CEILING_FIELDS` + `EXPECTED_FIELD_COUNT = 19`.
+
+CI enforces the cross-port version-sync discipline (PR #61); the
+`Verify repo truth` step catches any port that lags workspace version.
+
+### Conformance fixtures regenerated
+
+All 10 fixtures in `crates/sccgub-audit/conformance-fixtures/` now
+include the new field at its default value (8). Cross-language
+conformance harness: **10 fixtures × 3 language ports = 30
+byte-identical runs**, all green on Rust + Python + TypeScript.
+
+### DCA pre-merge review
+
+Per PATCH_10 §40, this release's implementation diff was reviewed by
+an independent DCA agent before merge. Artifact:
+`docs/audits/2026-04-20-dca-pre-merge-v0.8.3-ceiling-field-19.md`.
+Findings and dispositions are documented in the PR description's
+"Review cross-map" section per §40.2 rule 4.
+
+### Tests & conformance
+
+- Rust: 1320 workspace tests + 27 sccgub-audit tests (unchanged count,
+  all pass after field count assertions updated 18→19).
+- Python: 30 `sccgub-audit-py` tests (all pass on 3.10/3.11/3.12/3.13).
+- TypeScript: 36 `sccgub-audit-ts` tests (all pass on Node 22).
+- Cross-language: 30 byte-identical conformance runs.
+
+### Release summary
+
+**1320 tests, 10 crates, persistent block log + snapshots, all CI green.**
+
+- 1320 tests across 10 crates (unchanged — field addition does not
+  add new Rust tests; existing field-count assertions updated from
+  18 to 19).
+- 10th crate is `sccgub-audit`; sibling ports at
+  `crates/sccgub-audit-py` and `crates/sccgub-audit-ts` both at
+  v0.8.3.
+- 27 versioned REST endpoints with CORS.
+- 14 machine-readable ErrorCode variants.
+- OpenAPI contract for the 27 versioned API routes, refreshable
+  from Rust source in one command.
+
+### POSITIONING / PATCH cross-references
+
+Implements PATCH_10.md §39.4 (ceiling declaration) and the cross-port
+sync discipline PATCH_10 §41 requires for field #19. Does NOT yet
+implement §38 (governance-layer symmetric check — v0.8.4) or §39.3
+(evidence-layer ForgeryVeto admission rules — v0.8.5). This release
+is the **foundational types layer** of PATCH_10.
+
+### Not addressed in this release
+
+- §38 symmetric governance submission check (coming in v0.8.4).
+- §39 evidence-layer ForgeryVeto admission (coming in v0.8.5).
+- §39.6 deprecation of governance-routed ForgeryVeto (coming in v0.8.5).
+- Tracking issues #62, #63, #64 remain open per PATCH_10 §41.N cross-map.
+- v0.5.0 DCA audit fractures outside PATCH_10 scope (#51, #53, #54, #56).
+
+---
+
 ## [v0.8.2] — Patch-09 §C — TypeScript port of the moat verifier (third language; web-deployment access path)
 
 Closes PATCH_09 §C, the third and final language port commitment in the

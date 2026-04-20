@@ -56,6 +56,8 @@ pub enum CeilingFieldId {
     MaxEquivocationEvidencePerBlock,
     /// `min_effective_fee_floor: i128`
     MinEffectiveFeeFloor,
+    /// `max_forgery_vetoes_per_block_ceiling: u32` (PATCH_10 §39.4)
+    MaxForgeryVetoesPerBlock,
 }
 
 impl CeilingFieldId {
@@ -86,6 +88,7 @@ impl CeilingFieldId {
         Self::MaxConfirmationDepth,
         Self::MaxEquivocationEvidencePerBlock,
         Self::MinEffectiveFeeFloor,
+        Self::MaxForgeryVetoesPerBlock,
     ];
 
     /// Human-readable name (the Rust struct field name) — used in CLI
@@ -110,6 +113,7 @@ impl CeilingFieldId {
             Self::MaxConfirmationDepth => "max_confirmation_depth_ceiling",
             Self::MaxEquivocationEvidencePerBlock => "max_equivocation_evidence_per_block",
             Self::MinEffectiveFeeFloor => "min_effective_fee_floor",
+            Self::MaxForgeryVetoesPerBlock => "max_forgery_vetoes_per_block_ceiling",
         }
     }
 }
@@ -190,6 +194,9 @@ pub fn field_value(ceilings: &ConstitutionalCeilings, field: CeilingFieldId) -> 
         CeilingFieldId::MinEffectiveFeeFloor => {
             CeilingValue::I128(ceilings.min_effective_fee_floor)
         }
+        CeilingFieldId::MaxForgeryVetoesPerBlock => {
+            CeilingValue::U32(ceilings.max_forgery_vetoes_per_block_ceiling)
+        }
     }
 }
 
@@ -199,13 +206,13 @@ mod tests {
 
     #[test]
     fn patch_08_all_field_count_matches_struct_field_count() {
-        // ConstitutionalCeilings has 18 fields per PATCH_08 §B.4
-        // enumeration. ALL slice MUST have 18 entries. If a new field
-        // is added without updating ALL, this test fires before the
-        // verifier silently skips the field.
+        // ConstitutionalCeilings has 19 fields as of PATCH_10 §39.4
+        // (up from 18 in PATCH_08 §B.4). ALL slice MUST match. If a
+        // new field is added without updating ALL, this test fires
+        // before the verifier silently skips the field.
         assert_eq!(
             CeilingFieldId::ALL.len(),
-            18,
+            19,
             "ALL slice length must match ConstitutionalCeilings field count"
         );
     }

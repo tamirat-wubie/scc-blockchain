@@ -79,6 +79,16 @@ pub struct ConstitutionalCeilings {
     /// the effective fee below a viable spam-resistance threshold.
     /// Default `TensionValue::SCALE / 100` (= 0.01 fee units).
     pub min_effective_fee_floor: i128,
+
+    // ── PATCH_10 §39.4 additions ──────────────────────────────────────
+    /// Upper bound on `max_forgery_vetoes_per_block` param. Default 8.
+    /// Caps per-block admission of phase-12 `ForgeryVeto` records per
+    /// PATCH_10 §39.4. Headroom ×2 over default param (4). Raising this
+    /// ceiling is a governance operation bounded by §17.8-symmetric
+    /// (PATCH_10 §38). The rate is a trade-off between veto-admission
+    /// latency and mass-forgery-attack DoS surface; see PATCH_10 §39.4
+    /// rationale and tracking issue #64.
+    pub max_forgery_vetoes_per_block_ceiling: u32,
 }
 
 impl Default for ConstitutionalCeilings {
@@ -125,6 +135,8 @@ impl Default for ConstitutionalCeilings {
             // be a no-op on healthy chains (default base_fee = 1.0), large
             // enough to block a multi-block collapse to near-zero.
             min_effective_fee_floor: crate::tension::TensionValue::SCALE / 100,
+            // PATCH_10 §39.4: default 8 (×2 over default param 4).
+            max_forgery_vetoes_per_block_ceiling: 8,
         }
     }
 }
@@ -175,6 +187,13 @@ pub enum CeilingViolation {
          max_equivocation_evidence_per_block {ceiling}"
     )]
     MaxEquivocationEvidencePerBlock { value: u32, ceiling: u32 },
+
+    // ── PATCH_10 §39.4 additions ──────────────────────────────────────
+    #[error(
+        "max_forgery_vetoes_per_block_param {value} exceeds \
+         max_forgery_vetoes_per_block_ceiling {ceiling}"
+    )]
+    MaxForgeryVetoesPerBlock { value: u32, ceiling: u32 },
 }
 
 impl ConstitutionalCeilings {
@@ -185,15 +204,21 @@ impl ConstitutionalCeilings {
         bincode::serialize(self).expect("ConstitutionalCeilings serialization is infallible")
     }
 
-    /// Fallback cascade: current struct → `LegacyConstitutionalCeilingsV1`
-    /// (pre-Patch-06 schema, no v5 fields). A successful legacy parse
-    /// promotes to the current struct by filling v5 fields with defaults.
-    /// This lets a v3/v4 genesis continue to load under v5 code; the
-    /// fee-floor default is a no-op for any chain with `base_fee >=
-    /// floor` (i.e., every chain using the default `EconomicState`).
+    /// Fallback cascade: current struct → `LegacyConstitutionalCeilingsV2`
+    /// (pre-PATCH_10 schema) → `LegacyConstitutionalCeilingsV1` (pre-Patch-06
+    /// schema). A successful legacy parse promotes to the current struct by
+    /// filling newer fields with defaults. This lets a v3/v4 genesis (V1
+    /// shape) and a v5-pre-PATCH_10 genesis (V2 shape) both continue to
+    /// load under post-PATCH_10 code; the new forgery-veto-rate ceiling
+    /// default (8) is a no-op for any chain where
+    /// `max_forgery_vetoes_per_block_param <= 8`, which includes every
+    /// chain using default `ConsensusParams` (param = 4).
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
         if let Ok(current) = bincode::deserialize::<ConstitutionalCeilings>(bytes) {
             return Ok(current);
+        }
+        if let Ok(v2) = bincode::deserialize::<LegacyConstitutionalCeilingsV2>(bytes) {
+            return Ok(ConstitutionalCeilings::from(v2));
         }
         bincode::deserialize::<LegacyConstitutionalCeilingsV1>(bytes)
             .map(ConstitutionalCeilings::from)
@@ -313,6 +338,13 @@ impl ConstitutionalCeilings {
                 ceiling: self.max_equivocation_evidence_per_block,
             });
         }
+        // PATCH_10 §39.4: forgery-veto-per-block ceiling check.
+        if params.max_forgery_vetoes_per_block_param > self.max_forgery_vetoes_per_block_ceiling {
+            return Err(CeilingViolation::MaxForgeryVetoesPerBlock {
+                value: params.max_forgery_vetoes_per_block_param,
+                ceiling: self.max_forgery_vetoes_per_block_ceiling,
+            });
+        }
         Ok(())
     }
 }
@@ -364,6 +396,63 @@ impl From<LegacyConstitutionalCeilingsV1> for ConstitutionalCeilings {
             max_confirmation_depth_ceiling: v.max_confirmation_depth_ceiling,
             max_equivocation_evidence_per_block: v.max_equivocation_evidence_per_block,
             min_effective_fee_floor: defaults.min_effective_fee_floor,
+            max_forgery_vetoes_per_block_ceiling: defaults.max_forgery_vetoes_per_block_ceiling,
+        }
+    }
+}
+
+/// Pre-PATCH_10 `ConstitutionalCeilings` layout (v5 schema with Patch-06
+/// fee-floor but without PATCH_10 §39 forgery-veto-rate ceiling). Retained
+/// so a v5 genesis serialized before PATCH_10 activation continues to
+/// deserialize under post-PATCH_10 code. The new field is filled from
+/// `ConstitutionalCeilings::default()`, identical discipline to V1.
+///
+/// `from_canonical_bytes` tries current → V2 → V1 in that order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConstitutionalCeilingsV2 {
+    max_proof_depth_ceiling: u32,
+    max_tx_gas_ceiling: u64,
+    max_block_gas_ceiling: u64,
+    max_contract_steps_ceiling: u64,
+    max_address_length_ceiling: u32,
+    max_state_entry_size_ceiling: u32,
+    max_tension_swing_ceiling: i64,
+    max_block_bytes_ceiling: u32,
+    max_active_proposals_ceiling: u32,
+    max_view_change_base_timeout_ms: u32,
+    max_view_change_max_timeout_ms: u32,
+    max_validator_set_size_ceiling: u32,
+    max_validator_set_changes_per_block: u32,
+    max_fee_tension_alpha_ceiling: i128,
+    max_median_tension_window_ceiling: u32,
+    max_confirmation_depth_ceiling: u64,
+    max_equivocation_evidence_per_block: u32,
+    min_effective_fee_floor: i128,
+}
+
+impl From<LegacyConstitutionalCeilingsV2> for ConstitutionalCeilings {
+    fn from(v: LegacyConstitutionalCeilingsV2) -> Self {
+        let defaults = ConstitutionalCeilings::default();
+        Self {
+            max_proof_depth_ceiling: v.max_proof_depth_ceiling,
+            max_tx_gas_ceiling: v.max_tx_gas_ceiling,
+            max_block_gas_ceiling: v.max_block_gas_ceiling,
+            max_contract_steps_ceiling: v.max_contract_steps_ceiling,
+            max_address_length_ceiling: v.max_address_length_ceiling,
+            max_state_entry_size_ceiling: v.max_state_entry_size_ceiling,
+            max_tension_swing_ceiling: v.max_tension_swing_ceiling,
+            max_block_bytes_ceiling: v.max_block_bytes_ceiling,
+            max_active_proposals_ceiling: v.max_active_proposals_ceiling,
+            max_view_change_base_timeout_ms: v.max_view_change_base_timeout_ms,
+            max_view_change_max_timeout_ms: v.max_view_change_max_timeout_ms,
+            max_validator_set_size_ceiling: v.max_validator_set_size_ceiling,
+            max_validator_set_changes_per_block: v.max_validator_set_changes_per_block,
+            max_fee_tension_alpha_ceiling: v.max_fee_tension_alpha_ceiling,
+            max_median_tension_window_ceiling: v.max_median_tension_window_ceiling,
+            max_confirmation_depth_ceiling: v.max_confirmation_depth_ceiling,
+            max_equivocation_evidence_per_block: v.max_equivocation_evidence_per_block,
+            min_effective_fee_floor: v.min_effective_fee_floor,
+            max_forgery_vetoes_per_block_ceiling: defaults.max_forgery_vetoes_per_block_ceiling,
         }
     }
 }

@@ -51,7 +51,8 @@
     "max_median_tension_window_ceiling": 64,
     "max_confirmation_depth_ceiling": 8,
     "max_equivocation_evidence_per_block": 16,
-    "min_effective_fee_floor": 10000000000000000
+    "min_effective_fee_floor": 10000000000000000,
+    "max_forgery_vetoes_per_block_ceiling": 8
   },
   "chain_version_history": [],
   "ceilings_by_height": []

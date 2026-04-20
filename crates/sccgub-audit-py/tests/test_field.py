@@ -32,13 +32,16 @@ def _default_ceilings() -> dict:
         "max_confirmation_depth_ceiling": 8,
         "max_equivocation_evidence_per_block": 16,
         "min_effective_fee_floor": 10_000,
+        "max_forgery_vetoes_per_block_ceiling": 8,
     }
 
 
 class TestCeilingFieldId(unittest.TestCase):
     def test_patch_08_all_field_count_matches_struct_field_count(self):
         # Mirrors Rust patch_08_all_field_count_matches_struct_field_count.
-        self.assertEqual(len(CeilingFieldId.all()), 18)
+        # Bumped from 18 to 19 in PATCH_10 §39.4 (adds
+        # max_forgery_vetoes_per_block_ceiling).
+        self.assertEqual(len(CeilingFieldId.all()), 19)
 
     def test_patch_08_all_variants_distinct(self):
         # Mirrors Rust patch_08_all_variants_distinct.

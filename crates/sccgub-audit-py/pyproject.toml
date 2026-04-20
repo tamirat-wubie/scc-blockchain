@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sccgub-audit-py"
-version = "0.8.2"
+version = "0.8.3"
 description = "Python port of the SCCGUB ceiling-immutability verifier (Patch-09 §A)"
 readme = "README.md"
 requires-python = ">=3.10"

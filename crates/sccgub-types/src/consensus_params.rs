@@ -104,6 +104,20 @@ pub struct ConsensusParams {
     /// Patch-05 §29: maximum `EquivocationEvidence` records per block.
     /// Default 4.
     pub max_equivocation_evidence_per_block_param: u32,
+
+    /// PATCH_10 §39.4: maximum `ForgeryVeto` records per block.
+    /// Default 4. Companion ceiling `max_forgery_vetoes_per_block_ceiling`
+    /// = 8 (×2 headroom). Raising this param is a governance operation
+    /// bounded by §17.8-symmetric (PATCH_10 §38); the typed-governance
+    /// route is `ConsensusParamField::MaxForgeryVetoesPerBlockParam`.
+    ///
+    /// Must be `> 0` — validated in `ConsensusParams::validate()`. Zero
+    /// would silently disable the evidence-layer forgery-veto admission
+    /// path introduced by PATCH_10 §39, leaving honest validators under
+    /// library-compromise slashing waves with no remediation. See
+    /// `docs/audits/2026-04-20-dca-pre-merge-v0.8.3-ceiling-field-19.md`
+    /// FRACTURE-V083-02.
+    pub max_forgery_vetoes_per_block_param: u32,
 }
 
 impl Default for ConsensusParams {
@@ -142,6 +156,8 @@ impl Default for ConsensusParams {
             fee_tension_alpha: crate::tension::TensionValue::SCALE / 2, // 0.5
             confirmation_depth: 2,
             max_equivocation_evidence_per_block_param: 4,
+            // PATCH_10 §39.4: default 4 (ceiling 8).
+            max_forgery_vetoes_per_block_param: 4,
         }
     }
 }
@@ -177,6 +193,9 @@ impl ConsensusParams {
     /// continue to replay under Patch-05 code.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
         let params: Self = bincode::deserialize(bytes)
+            .or_else(|_| {
+                bincode::deserialize::<LegacyConsensusParamsV4>(bytes).map(ConsensusParams::from)
+            })
             .or_else(|_| {
                 bincode::deserialize::<LegacyConsensusParamsV3>(bytes).map(ConsensusParams::from)
             })
@@ -335,6 +354,27 @@ impl ConsensusParams {
         if self.max_equivocation_evidence_per_block_param == 0 {
             return Err("max_equivocation_evidence_per_block_param must be > 0".into());
         }
+        // PATCH_10 §39.4: `max_forgery_vetoes_per_block_param` must be > 0.
+        //
+        // Earlier drafts allowed `= 0` as an "operator-disables-forgery-veto"
+        // knob. The pre-merge DCA pass (artifact
+        // `docs/audits/2026-04-20-dca-pre-merge-v0.8.3-ceiling-field-19.md`
+        // §1, §6, §9 fracture FRACTURE-V083-02) flagged this as a one-way
+        // door: once set at genesis, honest validators who need to file a
+        // legitimate forgery veto (e.g., to escape a signature-library-
+        // compromise slashing wave) have no path to rescue themselves. The
+        // companion typed-param route (ConsensusParamField::
+        // MaxForgeryVetoesPerBlockParam) raises the value, but cannot be
+        // exercised from 0 because zero would already have disabled the
+        // admission pipeline at the evidence layer.
+        //
+        // Forbidding `= 0` restores symmetry with the equivocation-evidence
+        // rate check above and matches PATCH_10 §39.5 INV-FORGERY-VETO-
+        // FEASIBLE — which requires the veto path be structurally invocable
+        // within activation_delay, not disabled by parameterization.
+        if self.max_forgery_vetoes_per_block_param == 0 {
+            return Err("max_forgery_vetoes_per_block_param must be > 0".into());
+        }
         Ok(())
     }
 }
@@ -398,6 +438,8 @@ impl From<LegacyConsensusParamsV1> for ConsensusParams {
             confirmation_depth: defaults.confirmation_depth,
             max_equivocation_evidence_per_block_param: defaults
                 .max_equivocation_evidence_per_block_param,
+            // PATCH_10 field gets default on migration from V1.
+            max_forgery_vetoes_per_block_param: defaults.max_forgery_vetoes_per_block_param,
         }
     }
 }
@@ -466,6 +508,8 @@ impl From<LegacyConsensusParamsV2> for ConsensusParams {
             confirmation_depth: defaults.confirmation_depth,
             max_equivocation_evidence_per_block_param: defaults
                 .max_equivocation_evidence_per_block_param,
+            // PATCH_10 field gets default on migration from V2.
+            max_forgery_vetoes_per_block_param: defaults.max_forgery_vetoes_per_block_param,
         }
     }
 }
@@ -541,6 +585,92 @@ impl From<LegacyConsensusParamsV3> for ConsensusParams {
             confirmation_depth: defaults.confirmation_depth,
             max_equivocation_evidence_per_block_param: defaults
                 .max_equivocation_evidence_per_block_param,
+            // PATCH_10 field gets default on migration from V3.
+            max_forgery_vetoes_per_block_param: defaults.max_forgery_vetoes_per_block_param,
+        }
+    }
+}
+
+/// v0.5.0–v0.8.2 schema of `ConsensusParams` (pre-PATCH_10). Retained
+/// as a deserialization fallback so v5 chains whose genesis was written
+/// before PATCH_10 activation continue to replay under post-PATCH_10
+/// code. The one PATCH_10 field (`max_forgery_vetoes_per_block_param`)
+/// is filled with `ConsensusParams::default()` on migration — default 4,
+/// which matches the pre-PATCH_10 behavior of "no forgery-veto rate
+/// cap" because pre-PATCH_10 chains had no evidence-layer `ForgeryVeto`
+/// admission path that could saturate a rate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyConsensusParamsV4 {
+    max_proof_depth: u32,
+    max_constraint_propagation_depth: u32,
+    max_constraint_propagation_steps: u64,
+    max_activated_symbols: u32,
+    max_scan_per_symbol: u64,
+    max_constraints_per_symbol: u64,
+    default_max_steps: u64,
+    default_tx_gas_limit: u64,
+    default_block_gas_limit: u64,
+    gas_tx_base: u64,
+    gas_compute_step: u64,
+    gas_state_read: u64,
+    gas_state_write: u64,
+    gas_sig_verify: u64,
+    gas_hash_op: u64,
+    gas_proof_byte: u64,
+    gas_payload_byte: u64,
+    max_symbol_address_len: u32,
+    max_state_entry_size: u32,
+    max_tension_swing: i64,
+    view_change_base_timeout_ms: u32,
+    view_change_max_timeout_ms: u32,
+    max_block_bytes: u32,
+    max_active_proposals: u32,
+    max_validator_set_size: u32,
+    max_validator_set_changes_per_block_param: u32,
+    median_tension_window: u32,
+    fee_tension_alpha: i128,
+    confirmation_depth: u64,
+    max_equivocation_evidence_per_block_param: u32,
+}
+
+impl From<LegacyConsensusParamsV4> for ConsensusParams {
+    fn from(value: LegacyConsensusParamsV4) -> Self {
+        let defaults = Self::default();
+        Self {
+            max_proof_depth: value.max_proof_depth,
+            max_constraint_propagation_depth: value.max_constraint_propagation_depth,
+            max_constraint_propagation_steps: value.max_constraint_propagation_steps,
+            max_activated_symbols: value.max_activated_symbols,
+            max_scan_per_symbol: value.max_scan_per_symbol,
+            max_constraints_per_symbol: value.max_constraints_per_symbol,
+            default_max_steps: value.default_max_steps,
+            default_tx_gas_limit: value.default_tx_gas_limit,
+            default_block_gas_limit: value.default_block_gas_limit,
+            gas_tx_base: value.gas_tx_base,
+            gas_compute_step: value.gas_compute_step,
+            gas_state_read: value.gas_state_read,
+            gas_state_write: value.gas_state_write,
+            gas_sig_verify: value.gas_sig_verify,
+            gas_hash_op: value.gas_hash_op,
+            gas_proof_byte: value.gas_proof_byte,
+            gas_payload_byte: value.gas_payload_byte,
+            max_symbol_address_len: value.max_symbol_address_len,
+            max_state_entry_size: value.max_state_entry_size,
+            max_tension_swing: value.max_tension_swing,
+            view_change_base_timeout_ms: value.view_change_base_timeout_ms,
+            view_change_max_timeout_ms: value.view_change_max_timeout_ms,
+            max_block_bytes: value.max_block_bytes,
+            max_active_proposals: value.max_active_proposals,
+            max_validator_set_size: value.max_validator_set_size,
+            max_validator_set_changes_per_block_param: value
+                .max_validator_set_changes_per_block_param,
+            median_tension_window: value.median_tension_window,
+            fee_tension_alpha: value.fee_tension_alpha,
+            confirmation_depth: value.confirmation_depth,
+            max_equivocation_evidence_per_block_param: value
+                .max_equivocation_evidence_per_block_param,
+            // PATCH_10 field gets default on migration from V4.
+            max_forgery_vetoes_per_block_param: defaults.max_forgery_vetoes_per_block_param,
         }
     }
 }
